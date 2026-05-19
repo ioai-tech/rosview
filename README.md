@@ -1,10 +1,12 @@
-# ROSView &nbsp;·&nbsp; [Live Demo →](https://rosview.com) &nbsp;·&nbsp; [npm: @ioai/rosview](https://www.npmjs.com/package/@ioai/rosview) &nbsp;·&nbsp; [Simplified Chinese README](README.zh.md)
+# ROSView &nbsp;·&nbsp; [Live Demo →](https://rosview.com) 
+
+[简体中文文档 - README.zh.md](README.zh.md)
 
 [![CI](https://github.com/ioai-tech/rosview/actions/workflows/ci.yml/badge.svg)](https://github.com/ioai-tech/rosview/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@ioai/rosview)](https://www.npmjs.com/package/@ioai/rosview)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> High-performance, browser-native robotics data visualization. A modern alternative to Foxglove Studio — built from scratch on React 19, Vite 8, and Web Workers.
+> High-performance, browser-native robotics data visualization. Built from scratch on React 19, Vite 8, and Web Workers.
 
 Supports **MCAP**, **ROS 1 bag**, **ROS 2 db3**, **HDF5**, and **BVH** files. Available as a standalone SPA (zero-install, runs at [rosview.com](https://rosview.com)) or as an embeddable npm package.
 
@@ -34,7 +36,6 @@ Supports **MCAP**, **ROS 1 bag**, **ROS 2 db3**, **HDF5**, and **BVH** files. Av
 - **HTTP Range streaming** — load remote files without downloading them in full
 - **Multi-panel layout** — draggable, dockable panels powered by DockView
 - **Visualization panels** — Image (H.264), 3D (point clouds, URDF, TF), Plot (uPlot), Joints, Map, Audio, RawMessages, TopicGraph, Pose
-- **Foxglove layout compatibility** — import / export layouts from Foxglove Studio
 - **Internationalization** — English · Simplified Chinese · Japanese
 - **Dark / light / system** theme
 - **Extension API** — register third-party sidebar tabs and playback-track overlay regions
