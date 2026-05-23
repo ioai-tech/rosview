@@ -1,4 +1,30 @@
 {
   "schemaVersion": 1,
-  "datasets": []
+  "baseUrl": "https://rosview-samples-1328702871.cos.accelerate.myqcloud.com/",
+  "datasets": [
+    {
+      "id": "gripper-table-clearing",
+      "title": "Gripper Table Clearing",
+      "archiveFile": "Gripper_TableClearing.mcap",
+      "coverImageFile": "Gripper_TableClearing.webp"
+    },
+    {
+      "id": "human-standup",
+      "title": "Human Standup",
+      "archiveFile": "Human_Standup.mcap",
+      "coverImageFile": "Human_Standup.webp"
+    },
+    {
+      "id": "realman-picknplace",
+      "title": "RealMan Pick and Place",
+      "archiveFile": "RealMan_PicknPlace.mcap",
+      "coverImageFile": "RealMan_PicknPlace.webp"
+    },
+    {
+      "id": "human-walk",
+      "title": "Human Walk",
+      "archiveFile": "Human_Walk.bvh",
+      "coverImageFile": "Human_Walk.webp"
+    }
+  ]
 }

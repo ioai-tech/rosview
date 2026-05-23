@@ -48,7 +48,7 @@ export interface IMessageCursor<T = unknown> {
   next(): Promise<IteratorResult<MessageEvent<T>>>;
   nextBatch(
     durationMs: number,
-    options?: { maxMessages?: number; maxWallTimeMs?: number },
+    options?: { maxMessages?: number; maxWallTimeMs?: number; endTime?: Time },
   ): Promise<MessageEvent<T>[]>;
   end(): Promise<void>;
 }

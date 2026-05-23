@@ -2,7 +2,7 @@
 
 > Simplified Chinese: [API.zh.md](API.zh.md)
 
-This document covers the complete public API of `@ioai/rosview` v1.0.0.
+This document covers the complete public API of `@ioai/rosview` v1.0.1.
 
 Before using this package, install peer dependencies in your host app: `react`, `react-dom`, `three`, `@react-three/fiber`, and `@react-three/drei`.
 

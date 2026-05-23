@@ -1,5 +1,5 @@
 // ============================================================================
-// @ioai/rosview — Public API (v1.0.0)
+// @ioai/rosview — Public API (v1.0.1)
 // ============================================================================
 // Only symbols exported here are part of the stable public contract and
 // subject to semver guarantees. Internal modules may change without notice.

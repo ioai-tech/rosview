@@ -7,6 +7,7 @@ import { useSampleDatasets } from '@/hooks/useSampleDatasets';
 import { DatasetSourceSelector } from '@/features/workspace/welcome/DatasetSourceSelector';
 import { SampleDatasetList } from '@/features/workspace/welcome/SampleDatasetList';
 import { Button } from '@/shared/ui/button';
+import { Separator } from '@/shared/ui/separator';
 import { Spinner } from '@/shared/ui/spinner';
 
 interface WelcomeScreenProps {
@@ -71,9 +72,10 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
   return (
     <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="relative mx-auto flex min-h-0 w-full min-w-0 max-w-6xl flex-1 flex-col overflow-y-auto px-4 pb-10 pt-8 sm:px-6 sm:pb-14 sm:pt-12 lg:pt-14">
-        <header className="mb-10 text-center sm:mb-12">
-          <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl lg:text-6xl">
+      <div className="relative mx-auto flex min-h-[100dvh] w-full min-w-0 max-w-6xl flex-1 flex-col overflow-y-auto px-4 pb-12 pt-8 sm:px-6 sm:pb-16 sm:pt-12 lg:pb-20 lg:pt-14">
+        <div className="flex flex-1 flex-col">
+          <header className="mb-10 text-center sm:mb-12">
+            <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl lg:text-6xl">
             {formatMessage({ id: 'common.productName' })}
           </h1>
           <p
@@ -81,51 +83,42 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             data-readability
           >
             {formatMessage({ id: 'welcome.heroSubtitle' })}
-          </p>
-        </header>
+            </p>
+          </header>
 
-        <div
-          className={
-            showSamplesSection
-              ? 'grid gap-12 lg:grid-cols-2 lg:items-start lg:gap-16'
-              : 'mx-auto w-full max-w-xl sm:max-w-2xl'
-          }
-        >
-          {showSamplesSection ? (
-            <section className="lg:min-h-[26rem]">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                {formatMessage({ id: 'welcome.samplesSectionTitle' })}
-              </h2>
-              <p className="mt-1 text-xs text-muted-foreground/90">
-                {formatMessage({ id: 'welcome.samplesSectionHint' })}
-              </p>
-              <div className="mt-5 min-h-[200px]">
-                <SampleDatasetList samples={samples} loading={samplesLoading} onSelect={onSelectSample} variant="grid" />
-              </div>
-            </section>
+          <section className="mx-auto w-full max-w-xl sm:max-w-2xl">
+          {manualOpenHint ? (
+            <p className="mt-4 text-center text-sm text-muted-foreground">{manualOpenHint}</p>
           ) : null}
+          <div className="mt-5">
+            <DatasetSourceSelector
+              onOpenFile={onOpenFile}
+              onOpenDirectory={onOpenDirectory}
+              onOpenTarPicker={onOpenTarPicker}
+              onSubmitRemoteUrl={(u) => void onSubmitRemoteUrl(u)}
+              remoteSubmitLoading={remoteSubmitLoading}
+              historyItems={historyItems}
+              onReplayHistory={onReplayHistory}
+            />
+          </div>
+        </section>
 
-          <section className={showSamplesSection ? 'lg:min-h-[26rem]' : ''}>
-            {manualOpenHint ? (
-              <p className={`mt-4 text-sm text-muted-foreground ${!showSamplesSection ? 'text-center' : ''}`}>
-                {manualOpenHint}
-              </p>
-            ) : null}
-            <div className="mt-5">
-              <DatasetSourceSelector
-                onOpenFile={onOpenFile}
-                onOpenDirectory={onOpenDirectory}
-                onOpenTarPicker={onOpenTarPicker}
-                onSubmitRemoteUrl={(u) => void onSubmitRemoteUrl(u)}
-                remoteSubmitLoading={remoteSubmitLoading}
-                historyItems={historyItems}
-                onReplayHistory={onReplayHistory}
+          {showSamplesSection ? (
+            <section className="mt-auto shrink-0 pb-4 pt-12 sm:pt-14">
+            <Separator />
+            <div className="mt-8">
+              <SampleDatasetList
+                samples={samples}
+                loading={samplesLoading}
+                onSelect={onSelectSample}
+                variant="bottom"
               />
             </div>
-          </section>
+            </section>
+          ) : null}
         </div>
 
-        <footer className="mt-16 text-center">
+        <footer className="mt-8 shrink-0 pb-2 text-center sm:mt-10">
           <p className="text-xs text-muted-foreground sm:text-sm">
             <span>{formatMessage({ id: 'welcome.footerDevelopedBy' })}</span>
             <a

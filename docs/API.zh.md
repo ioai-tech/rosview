@@ -2,7 +2,7 @@
 
 > English: [API.md](API.md)
 
-本文档描述 `@ioai/rosview` v1.0.0 的完整公开 API。
+本文档描述 `@ioai/rosview` v1.0.1 的完整公开 API。
 
 在使用该包前，请先在宿主应用安装 peer 依赖：`react`、`react-dom`、`three`、`@react-three/fiber`、`@react-three/drei`。
 

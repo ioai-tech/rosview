@@ -703,7 +703,7 @@ export default defineConfig({
 ```json
 {
   "name": "@ioai/rosview",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main":   "./dist-lib/rosview.es.js",
   "module": "./dist-lib/rosview.es.js",
   "types":  "./dist-lib/rosview.d.ts",

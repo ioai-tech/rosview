@@ -806,6 +806,7 @@ interface RobotProps {
   tfMessagesRef: React.MutableRefObject<TFMessage[]>;
   tfVersion: number;
   resetVersion: number;
+  startTime?: Time;
   urdfRootScale: number;
   fallbackMeshColor: string;
   meshOutlineColor: string;
@@ -824,6 +825,7 @@ const RobotComponent: React.FC<RobotProps> = ({
   tfMessagesRef,
   tfVersion,
   resetVersion,
+  startTime,
   urdfRootScale,
   fallbackMeshColor,
   meshOutlineColor,
@@ -831,7 +833,8 @@ const RobotComponent: React.FC<RobotProps> = ({
 }) => {
   const [robotModel, setRobotModel] = useState<RobotRenderable | null>(null);
   const appliedTfCountRef = useRef(0);
-  const playbackTimeRef = useRef<bigint>(0n);
+  const initialPlaybackTimeNs = startTime ? toNanoSec(startTime.sec, startTime.nsec) : 0n;
+  const playbackTimeRef = useRef<bigint>(initialPlaybackTimeNs);
   const jointStateRef = useRef<JointStateMsg | null>(jointState);
   const jointStateDirtyRef = useRef(false);
   const applyPendingRef = useRef(false);
@@ -858,6 +861,11 @@ const RobotComponent: React.FC<RobotProps> = ({
       invalidate();
     });
   }, [robotModel, invalidate]);
+
+  useEffect(() => {
+    playbackTimeRef.current = initialPlaybackTimeNs;
+    schedulePoseApply();
+  }, [initialPlaybackTimeNs, schedulePoseApply]);
 
   useEffect(() => {
     return () => {
@@ -1407,6 +1415,7 @@ const Scene = ({
           tfMessagesRef={tfMessagesRef}
           tfVersion={tfVersion}
           resetVersion={resetVersion}
+          startTime={startTime}
           urdfRootScale={urdfRootScale}
           fallbackMeshColor={colors.fallbackMeshColor}
           meshOutlineColor={colors.meshOutlineColor}

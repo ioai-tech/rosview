@@ -100,7 +100,7 @@ export interface Player {
   unregisterSubscriptions(panelId: string): void;
   registerHighFrequencyConsumer(consumerId: string, consumer: HighFrequencyConsumer): void;
   unregisterHighFrequencyConsumer(consumerId: string): void;
-  /** Playback time updates without going through React state (rAF path). */
+  /** Playback time updates without going through React state (rAF path). Immediately emits the current time. */
   subscribeCurrentTime(cb: (time: Time) => void): Unsubscribe;
   play(): void;
   pause(): void;

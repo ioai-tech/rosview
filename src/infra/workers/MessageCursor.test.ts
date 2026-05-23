@@ -159,4 +159,35 @@ describe('MessageCursor', () => {
 
     await cursor.end();
   });
+
+  it('does not return messages beyond an explicit batch end time', async () => {
+    let nextSec = 0;
+    const iterator: AsyncIterableIterator<MessageEvent> = {
+      async next() {
+        if (nextSec >= 4) {
+          return { done: true, value: undefined };
+        }
+        const value = message(nextSec);
+        nextSec += 1;
+        return { done: false, value };
+      },
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    };
+
+    const cursor = new MessageCursor(iterator, {
+      mode: 'comlink',
+      binaryPayloadThresholdBytes: 64 * 1024,
+    });
+    await flushAsyncWork();
+
+    const firstBatch = await cursor.nextBatch(10_000, { endTime: { sec: 1, nsec: 0 } });
+    expect(firstBatch.map((event) => (event.message as { value: number }).value)).toEqual([0, 1]);
+
+    const secondBatch = await cursor.nextBatch(10_000, { endTime: { sec: 3, nsec: 0 } });
+    expect(secondBatch.map((event) => (event.message as { value: number }).value)).toEqual([2, 3]);
+
+    await cursor.end();
+  });
 });

@@ -13,6 +13,7 @@ import { addMs, toNano } from '@/shared/utils/time';
 import { useMessagePipelineStore } from '@/core/pipeline/store';
 import { messageBus } from '@/core/pipeline/messageBus';
 import type { Range } from '@/shared/utils/ranges';
+import { PlaybackClock } from './PlaybackClock';
 
 const PIPELINE_EMIT_INTERVAL_MS = 200;
 const DEFAULT_SAMPLING_FPS = 30;
@@ -24,7 +25,6 @@ const EMPTY_BATCH_BACKFILL_TRIGGER = 4;
 const BACKFILL_STALE_THRESHOLD_NS = 1_000_000_000n;
 const STALE_TOPIC_REFRESH_COOLDOWN_MS = 500;
 const SLOW_DISTRIBUTION_MS = 16;
-const MAX_TICK_CATCHUP_STEPS = 2;
 
 function isSameRanges(nextValue?: Range[], prevValue?: Range[]): boolean {
   if (nextValue === prevValue) {
@@ -137,7 +137,7 @@ export class IterablePlayer implements Player {
   private _currentTime: Time = { sec: 0, nsec: 0 };
   private _initialization?: Initialization;
   private _cursor?: IMessageCursor<unknown>;
-  private _lastTickTime?: number;
+  private _clock = new PlaybackClock(this._currentTime);
   private _isFetching: boolean = false;
   private _timeSubscribers = new Set<(time: Time) => void>();
   private _rafId: number | undefined;
@@ -145,7 +145,8 @@ export class IterablePlayer implements Player {
   private _loadProgressPollId: ReturnType<typeof globalThis.setInterval> | undefined;
   private _samplingFps = DEFAULT_SAMPLING_FPS;
   private _lastTransportDiagnosticsMs = 0;
-  private _tickAccumulatorMs = 0;
+  private _lastTickWallMs = 0;
+  private _pageSuspended = false;
   private _emptyBatchStreak = 0;
   private _cursorRebuildCount = 0;
   private _fallbackBackfillCount = 0;
@@ -159,6 +160,7 @@ export class IterablePlayer implements Player {
 
   constructor(source: WorkerSerializedSource) {
     this._source = source;
+    this._attachPageLifecycleListeners();
   }
 
   setListener(listener: (state: PlayerState) => void): void {
@@ -168,6 +170,7 @@ export class IterablePlayer implements Player {
 
   subscribeCurrentTime(cb: (time: Time) => void): () => void {
     this._timeSubscribers.add(cb);
+    cb(this._currentTime);
     return () => {
       this._timeSubscribers.delete(cb);
     };
@@ -347,7 +350,6 @@ export class IterablePlayer implements Player {
       const hinted = this._initialization.preferredSamplingFps;
       if (typeof hinted === "number" && Number.isFinite(hinted) && hinted > 0) {
         this._samplingFps = Math.max(1, Math.min(MAX_SAMPLING_FPS, Math.round(hinted)));
-        this._tickAccumulatorMs = 0;
       }
       const publishersByTopic = new Map<string, Set<string>>(
         Object.entries(this._initialization.publishersByTopic).map(([k, v]) => [k, new Set(v)]),
@@ -416,19 +418,30 @@ export class IterablePlayer implements Player {
   play(): void {
     if (this._isPlaying) return;
     this._isPlaying = true;
-    this._lastTickTime = performance.now();
-    this._tickAccumulatorMs = 0;
+    const now = performance.now();
+    this._clock.play(this._currentTime, this._speedFactor(), now);
+    this._lastTickWallMs = now;
+    this._pageSuspended = typeof document !== "undefined" && document.hidden;
+    if (this._pageSuspended) {
+      this._clock.suspend(now);
+    }
     if (this._state.presence === "ready") {
       this._startLoadProgressPolling();
       void this._refreshLoadProgress();
     }
     this._emitState();
     this._cancelRaf();
-    this._rafId = requestAnimationFrame(() => this._tickLoop());
+    if (!this._pageSuspended) {
+      this._rafId = requestAnimationFrame(this._tickLoop);
+    }
   }
 
   pause(): void {
+    const now = performance.now();
+    this._clock.pause(now);
+    this._currentTime = this._clock.getTime(now);
     this._isPlaying = false;
+    this._pageSuspended = false;
     this._cancelRaf();
     this._stopLoadProgressPolling();
     this._emitState();
@@ -451,6 +464,7 @@ export class IterablePlayer implements Player {
 
   private async _seekAsync(time: Time): Promise<void> {
     this._currentTime = this._clampToRange(time);
+    this._clock.seek(this._currentTime, performance.now());
     this._topicLastMessageNs.clear();
     if (this._cursor) {
       await this._cursor.end();
@@ -492,6 +506,7 @@ export class IterablePlayer implements Player {
         this._cursor = undefined;
       }
       this._currentTime = this._clampToRange(msg.receiveTime);
+      this._clock.seek(this._currentTime, performance.now());
       this._topicLastMessageNs.clear();
       this._distributeMessages([msg], this._currentTime);
       this._notifyTimeSubscribers(this._currentTime);
@@ -508,13 +523,17 @@ export class IterablePlayer implements Player {
     } else {
       this._speed = Math.min(8, Math.max(0.1, speed));
     }
+    this._clock.setSpeed(this._speedFactor(), performance.now());
     this._emitState();
+  }
+
+  private _speedFactor(): number {
+    return this._speed === PLAYBACK_SPEED_MAX ? 64 : this._speed;
   }
 
   setSamplingFps(fps: number): void {
     const clamped = Math.max(1, Math.min(MAX_SAMPLING_FPS, Math.round(fps)));
     this._samplingFps = clamped;
-    this._tickAccumulatorMs = 0;
     this._state.progress = {
       ...this._state.progress,
       samplingFps: this._samplingFps,
@@ -532,14 +551,18 @@ export class IterablePlayer implements Player {
   }
 
   close(): void {
+    this._clock.pause(performance.now());
     this._isPlaying = false;
+    this._pageSuspended = false;
     this._cancelRaf();
+    this._detachPageLifecycleListeners();
     this._stopLoadProgressPolling();
     this._source.terminate();
     this._state.presence = "closed";
     this._state.progress = {};
     this._state.activeData = undefined;
     this._initialization = undefined;
+    this._clock = new PlaybackClock();
     this._cursor = undefined;
     this._topicLastMessageNs.clear();
     this._highFrequencyConsumersById.clear();
@@ -730,35 +753,96 @@ export class IterablePlayer implements Player {
     void this._tickAsync();
   };
 
-  private async _tickAsync(): Promise<void> {
-    if (!this._isPlaying) return;
-    if (this._isFetching) {
-      if (this._isPlaying) {
-        this._rafId = requestAnimationFrame(this._tickLoop);
-      }
-      return;
+  private _handleVisibilityChange = (): void => {
+    if (typeof document === "undefined") return;
+    if (document.hidden) {
+      this._suspendForPageLifecycle();
+    } else {
+      this._resumeFromPageLifecycle();
     }
+  };
 
+  private _handlePageHide = (): void => {
+    this._suspendForPageLifecycle();
+  };
+
+  private _handlePageShow = (): void => {
+    if (typeof document !== "undefined" && document.hidden) return;
+    this._resumeFromPageLifecycle();
+  };
+
+  private _attachPageLifecycleListeners(): void {
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this._handleVisibilityChange);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("pagehide", this._handlePageHide);
+      window.addEventListener("pageshow", this._handlePageShow);
+    }
+  }
+
+  private _detachPageLifecycleListeners(): void {
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this._handleVisibilityChange);
+    }
+    if (typeof window !== "undefined") {
+      window.removeEventListener("pagehide", this._handlePageHide);
+      window.removeEventListener("pageshow", this._handlePageShow);
+    }
+  }
+
+  private _suspendForPageLifecycle(): void {
+    if (!this._isPlaying || this._pageSuspended) return;
     const now = performance.now();
-    const elapsedMs = now - (this._lastTickTime || now);
-    this._lastTickTime = now;
-    this._tickAccumulatorMs += elapsedMs;
-    const tickDurationMs = 1000 / this._samplingFps;
-    if (this._tickAccumulatorMs < tickDurationMs) {
+    this._clock.suspend(now);
+    this._currentTime = this._clock.getTime(now);
+    this._lastTickWallMs = now;
+    this._pageSuspended = true;
+    this._cancelRaf();
+    this._notifyTimeSubscribers(this._currentTime);
+    this._maybeEmitPipelineState();
+  }
+
+  private _resumeFromPageLifecycle(): void {
+    if (!this._isPlaying || !this._pageSuspended) return;
+    const now = performance.now();
+    this._clock.resume(now);
+    this._lastTickWallMs = now;
+    this._pageSuspended = false;
+    this._cancelRaf();
+    this._rafId = requestAnimationFrame(this._tickLoop);
+  }
+
+  private async _tickAsync(): Promise<void> {
+    if (!this._isPlaying || this._pageSuspended) return;
+    const now = performance.now();
+    if (this._isFetching) {
+      this._clock.seek(this._currentTime, now);
       if (this._isPlaying) {
         this._rafId = requestAnimationFrame(this._tickLoop);
       }
       return;
     }
-    const elapsedPlaybackTickMs = Math.min(
-      this._tickAccumulatorMs,
-      tickDurationMs * MAX_TICK_CATCHUP_STEPS,
-    );
-    this._tickAccumulatorMs = Math.max(0, this._tickAccumulatorMs - elapsedPlaybackTickMs);
 
-    const speedFactor = this._speed === PLAYBACK_SPEED_MAX ? 64 : this._speed;
-    const advanceMs = Math.max(1, elapsedPlaybackTickMs * speedFactor);
-    const nextTime = addMs(this._currentTime, advanceMs);
+    const tickDurationMs = 1000 / this._samplingFps;
+    if (now - this._lastTickWallMs < tickDurationMs) {
+      if (this._isPlaying) {
+        this._rafId = requestAnimationFrame(this._tickLoop);
+      }
+      return;
+    }
+
+    this._lastTickWallMs = now;
+    const nextTime = this._clampToRange(this._clock.getTime(now));
+    const currentNs = toNano(this._currentTime);
+    const nextNs = toNano(nextTime);
+    if (nextNs <= currentNs) {
+      if (this._isPlaying) {
+        this._rafId = requestAnimationFrame(this._tickLoop);
+      }
+      return;
+    }
+    const batchDurationMs = Math.max(1, Number(nextNs - currentNs) / 1e6);
 
     if (!this._cursor) {
       const topics = this._currentTopics();
@@ -774,8 +858,7 @@ export class IterablePlayer implements Player {
     if (this._cursor) {
       this._isFetching = true;
       try {
-        const batchDurationMs = Math.max(1, Math.round(advanceMs));
-        const messages = await this._cursor.nextBatch(batchDurationMs);
+        const messages = await this._cursor.nextBatch(batchDurationMs, { endTime: nextTime });
         if (messages.length > 0) {
           this._emptyBatchStreak = 0;
           this._distributeMessages(messages);
@@ -797,11 +880,13 @@ export class IterablePlayer implements Player {
     }
 
     this._currentTime = nextTime;
+    this._clock.seek(this._currentTime, performance.now());
     await this._refreshStaleTopicsFromBackfill(now);
 
     if (this._initialization && toNano(this._currentTime) >= toNano(this._initialization.end)) {
       if (this._isLooping) {
         this._currentTime = this._initialization.start;
+        this._clock.seek(this._currentTime, performance.now());
         if (this._cursor) {
           await this._cursor.end();
           this._cursor = undefined;
@@ -819,6 +904,7 @@ export class IterablePlayer implements Player {
         return;
       }
       this._currentTime = this._initialization.end;
+      this._clock.seek(this._currentTime, performance.now());
       this.pause();
       this._notifyTimeSubscribers(this._currentTime);
       return;

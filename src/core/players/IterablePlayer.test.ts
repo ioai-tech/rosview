@@ -223,6 +223,133 @@ describe('IterablePlayer high-frequency lane', () => {
   });
 });
 
+describe('IterablePlayer playback clock', () => {
+  it('emits the current time immediately when subscribing', async () => {
+    const source = makeSource([]);
+    const player = new IterablePlayer(source);
+    const seenTimes: number[] = [];
+
+    vi.mocked(source.initialize).mockResolvedValueOnce({
+      ...makeInitialization(),
+      start: { sec: 2, nsec: 500_000_000 },
+    });
+    await player.initialize({});
+    const unsubscribe = player.subscribeCurrentTime((time) => {
+      seenTimes.push(time.sec + time.nsec / 1e9);
+    });
+
+    expect(seenTimes).toEqual([2.5]);
+
+    unsubscribe();
+    player.close();
+  });
+
+  it('does not catch up wall time elapsed while the page is hidden', async () => {
+    let now = 0;
+    const oldPerformanceNow = performance.now;
+    const oldRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const oldCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    const oldDocument = globalThis.document;
+    const oldWindow = globalThis.window;
+    const listeners = new Map<string, EventListener[]>();
+    let hidden = false;
+    let nextRafId = 1;
+    const rafCallbacks = new Map<number, FrameRequestCallback>();
+    const fakeDocument = {
+      get hidden() {
+        return hidden;
+      },
+      addEventListener: vi.fn((type: string, listener: EventListener) => {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+      }),
+      removeEventListener: vi.fn((type: string, listener: EventListener) => {
+        listeners.set(type, (listeners.get(type) ?? []).filter((entry) => entry !== listener));
+      }),
+    };
+    const fakeWindow = {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      location: { search: '' },
+    };
+    Object.defineProperty(performance, 'now', {
+      configurable: true,
+      value: () => now,
+    });
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: fakeDocument,
+    });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: fakeWindow,
+    });
+    globalThis.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
+      const id = nextRafId++;
+      rafCallbacks.set(id, cb);
+      return id;
+    });
+    globalThis.cancelAnimationFrame = vi.fn((id: number) => {
+      rafCallbacks.delete(id);
+    });
+    const source = makeSource([]);
+    const cursor = {
+      nextBatch: vi.fn(async () => []),
+      end: vi.fn(),
+    };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source);
+    const seenTimes: number[] = [];
+
+    try {
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.subscribeCurrentTime((time) => {
+        seenTimes.push(time.sec + time.nsec / 1e9);
+      });
+      player.play();
+
+      now = 1000;
+      rafCallbacks.get(1)?.(now);
+      await flushAsyncWork();
+      expect(seenTimes.at(-1)).toBeCloseTo(1, 3);
+
+      hidden = true;
+      for (const listener of listeners.get('visibilitychange') ?? []) {
+        listener(new Event('visibilitychange'));
+      }
+      now = 11_000;
+      hidden = false;
+      for (const listener of listeners.get('visibilitychange') ?? []) {
+        listener(new Event('visibilitychange'));
+      }
+
+      const nextVisibleRaf = Math.max(...rafCallbacks.keys());
+      now = 11_050;
+      rafCallbacks.get(nextVisibleRaf)?.(now);
+      await flushAsyncWork();
+
+      expect(seenTimes.at(-1)).toBeLessThan(1.2);
+    } finally {
+      player.close();
+      Object.defineProperty(performance, 'now', {
+        configurable: true,
+        value: oldPerformanceNow,
+      });
+      Object.defineProperty(globalThis, 'document', {
+        configurable: true,
+        value: oldDocument,
+      });
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: oldWindow,
+      });
+      globalThis.requestAnimationFrame = oldRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = oldCancelAnimationFrame;
+    }
+  });
+});
+
 describe('IterablePlayer topic metadata', () => {
   it('merges duration and count from topic stats into active topics', async () => {
     const source = {

@@ -8,8 +8,8 @@ interface SampleDatasetListProps {
   samples?: SampleDataset[];
   loading?: boolean;
   onSelect: (sample: SampleDataset) => void | Promise<void>;
-  /** `grid` for welcome page (many image cards); `list` for dialogs and compact views. */
-  variant?: 'list' | 'grid';
+  /** `grid` for welcome page (many image cards); `bottom` for homepage footer cards; `list` for dialogs. */
+  variant?: 'list' | 'grid' | 'bottom';
 }
 
 export const SampleDatasetList: React.FC<SampleDatasetListProps> = ({
@@ -33,6 +33,16 @@ export const SampleDatasetList: React.FC<SampleDatasetListProps> = ({
     return (
       <div className="rounded-lg bg-muted/20 px-4 py-10 text-center">
         <p className="text-sm text-muted-foreground">{formatMessage({ id: 'welcome.samplesEmpty' })}</p>
+      </div>
+    );
+  }
+
+  if (variant === 'bottom') {
+    return (
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        {samples.map((s) => (
+          <SampleDatasetCard key={s.id} sample={s} onSelect={onSelect} layout="grid" />
+        ))}
       </div>
     );
   }

@@ -1,5 +1,5 @@
 import * as Comlink from "comlink";
-import type { MessageEvent } from '@/core/types/ros';
+import type { MessageEvent, Time } from '@/core/types/ros';
 import type { IMessageCursor } from "./types";
 import { toNano } from '@/shared/utils/time';
 import type { WorkerTransportConfig } from "./transport";
@@ -39,6 +39,7 @@ export class MessageCursor implements IMessageCursor<unknown> {
   private _pumpError: unknown;
   private _queueWaiters: Array<() => void> = [];
   private _capacityWaiters: Array<() => void> = [];
+  private _pendingMessage: MessageEvent | undefined;
 
   constructor(
     iterator: AsyncIterableIterator<MessageEvent>,
@@ -67,7 +68,7 @@ export class MessageCursor implements IMessageCursor<unknown> {
 
   async nextBatch(
     durationMs: number,
-    options?: { maxMessages?: number; maxWallTimeMs?: number },
+    options?: { maxMessages?: number; maxWallTimeMs?: number; endTime?: Time },
   ): Promise<MessageEvent[]> {
     const batchStart = performance.now();
     const maxMessages = Math.max(1, options?.maxMessages ?? MessageCursor.DEFAULT_MAX_BATCH_MESSAGES);
@@ -79,20 +80,27 @@ export class MessageCursor implements IMessageCursor<unknown> {
     if (this._pumpError) {
       throw toThrownError(this._pumpError);
     }
-    const first = this._dequeue();
+    const first = this._takeNextQueuedMessage();
     if (!first) return [];
+    if (options?.endTime && toNano(first.receiveTime) > toNano(options.endTime)) {
+      this._pendingMessage = first;
+      return [];
+    }
     messages.push(first);
 
     const dataStartNano = toNano(first.receiveTime);
-    const dataEndNano = dataStartNano + BigInt(Math.round(durationMs * 1000000));
+    const dataEndNano = options?.endTime ? toNano(options.endTime) : dataStartNano + BigInt(Math.round(durationMs * 1000000));
 
     while (Date.now() - startTime < maxWallTimeMs) {
-      const result = this._dequeue();
+      const result = this._takeNextQueuedMessage();
       if (!result) break;
 
+      if (toNano(result.receiveTime) > dataEndNano) {
+        this._pendingMessage = result;
+        break;
+      }
       messages.push(result);
       if (messages.length >= maxMessages) break;
-      if (toNano(result.receiveTime) > dataEndNano) break;
     }
 
     workerPerf.record("cursor.nextBatch.total", performance.now() - batchStart);
@@ -147,6 +155,15 @@ export class MessageCursor implements IMessageCursor<unknown> {
     this._queueBytes = Math.max(0, this._queueBytes - this._estimateMessageBytes(message));
     this._notifyCapacityWaiters();
     return message;
+  }
+
+  private _takeNextQueuedMessage(): MessageEvent | undefined {
+    const pending = this._pendingMessage;
+    if (pending) {
+      this._pendingMessage = undefined;
+      return pending;
+    }
+    return this._dequeue();
   }
 
   private async _waitForQueue(timeoutMs?: number): Promise<void> {
