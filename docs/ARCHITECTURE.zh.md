@@ -635,33 +635,34 @@ function PlaybackProgressSlider() {
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 import path from 'path';
 
 export default defineConfig({
-  plugins: [react(), wasm(), topLevelAwait()],
+  plugins: [react()],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
   },
   worker: {
     format: 'es',
-    plugins: () => [wasm(), topLevelAwait()],
+    plugins: () => [wasm()],
   },
   build: {
-    rollupOptions: {
+    target: 'esnext',
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          'vendor-dockview': ['dockview'],
-          'vendor-three': ['three', '@react-three/fiber', '@react-three/drei'],
-          'vendor-uplot': ['uplot'],
-          'vendor-mcap': ['@mcap/core'],
-          'vendor-rosbag': ['@foxglove/rosbag', '@foxglove/rosbag2-web'],
+        codeSplitting: true,
+        manualChunks(id) {
+          if (id.includes('dockview')) return 'vendor-dockview';
+          if (id.includes('three')) return 'vendor-three';
+          // ...
         },
       },
     },
   },
 });
 ```
+
+> Worker  bundle（含 `@ioai/hdf5` Emscripten glue 的原生 top-level await）依赖 `build.target: 'esnext'` 与 ES Module Worker，面向 Chrome/Edge 目标时无需 `vite-plugin-top-level-await` polyfill。
 
 ### 7.2 库构建（嵌入式组件）
 
@@ -674,7 +675,6 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import dts from 'vite-plugin-dts';
 import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 
@@ -685,7 +685,6 @@ export default defineConfig({
   plugins: [
     react(),
     wasm(),
-    topLevelAwait(),
     dts({
       compilerOptions: { rootDir: path.join(packageDir, 'src') },
       include: ['src/**/*.ts', 'src/**/*.tsx'],
@@ -703,7 +702,7 @@ export default defineConfig({
   },
   worker: {
     format: 'es',
-    plugins: () => [wasm(), topLevelAwait()],
+    plugins: () => [wasm()],
   },
   build: {
     outDir: 'dist-lib',
@@ -927,7 +926,6 @@ rosview/
     "typescript-eslint": "^8.58.0",
     "vite": "^8.0.4",
     "vite-plugin-dts": "^4.5.4",
-    "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.5.0",
     "vitest": "^4.0.0"
   }
