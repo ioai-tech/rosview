@@ -132,6 +132,7 @@
     "flatbuffers": "^25.9.23",
     "fzstd": "^0.1.1",
     "globals": "^17.4.0",
+    "happy-dom": "^20.9.0",
     "intervals-fn": "^3.0.3",
     "lucide-react": "^0.474.0",
     "lz4js": "^0.2.0",

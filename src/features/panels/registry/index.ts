@@ -22,6 +22,8 @@ import { alignPanelDefinition } from '../Align';
 import { alignFoxgloveAdapter } from '../Align/foxgloveAdapter';
 import { audioPanelDefinition } from '../Audio';
 import { audioFoxgloveAdapter } from '../Audio/foxgloveAdapter';
+import { urdfDebugPanelDefinition } from '../UrdfDebug';
+import { urdfDebugFoxgloveAdapter } from '../UrdfDebug/foxgloveAdapter';
 import { unavailablePanelDefinition } from '../Unavailable';
 import { unavailableFoxgloveAdapter } from '../Unavailable/foxgloveAdapter';
 
@@ -35,6 +37,7 @@ const definitions = [
   topicGraphPanelDefinition,
   alignPanelDefinition,
   audioPanelDefinition,
+  urdfDebugPanelDefinition,
   unavailablePanelDefinition,
 ] as unknown as readonly PanelDefinition<unknown>[];
 
@@ -61,6 +64,7 @@ const foxgloveAdapters = new Map<string, PanelFoxgloveAdapter<unknown>>([
   ['TopicGraph', topicGraphFoxgloveAdapter],
   ['Align', alignFoxgloveAdapter],
   ['Audio', audioFoxgloveAdapter],
+  ['UrdfDebug', urdfDebugFoxgloveAdapter],
   ['Unavailable', unavailableFoxgloveAdapter],
 ]);
 
