@@ -14,5 +14,6 @@ export const PANEL_TYPE_MESSAGE_SLUG: Record<PanelType, string> = {
   TopicGraph: 'topicGraph',
   Align: 'align',
   Audio: 'audio',
+  UrdfDebug: 'urdfDebug',
   Unavailable: 'unavailable',
 };

@@ -136,7 +136,7 @@ export function PanelRuntimeShell<TConfig>({
 
   return (
     <PanelErrorBoundary panelName={definition.type} panelId={panelId} onReset={resetPanel}>
-      <div key={resetKey} className="h-full w-full">
+      <div key={resetKey} className="h-full min-h-0 w-full overflow-hidden">
         {definition.render({
           player,
           panelId,

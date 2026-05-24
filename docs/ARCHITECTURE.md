@@ -631,24 +631,26 @@ function PlaybackProgressSlider() {
 
 ```typescript
 export default defineConfig({
-  plugins: [react(), wasm(), topLevelAwait()],
+  plugins: [react()],
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
-  worker: { format: 'es', plugins: () => [wasm(), topLevelAwait()] },
+  worker: { format: 'es', plugins: () => [wasm()] },
   build: {
-    rollupOptions: {
+    target: 'esnext',
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          'vendor-dockview': ['dockview'],
-          'vendor-three':    ['three', '@react-three/fiber', '@react-three/drei'],
-          'vendor-uplot':    ['uplot'],
-          'vendor-mcap':     ['@mcap/core'],
-          'vendor-rosbag':   ['@foxglove/rosbag', '@foxglove/rosbag2-web'],
+        codeSplitting: true,
+        manualChunks(id) {
+          if (id.includes('dockview')) return 'vendor-dockview';
+          if (id.includes('three')) return 'vendor-three';
+          // ...
         },
       },
     },
   },
 });
 ```
+
+> Worker bundles (including `@ioai/hdf5` Emscripten glue with native top-level await) rely on `build.target: 'esnext'` and ES module workers — no `vite-plugin-top-level-await` polyfill is required for Chrome/Edge targets.
 
 ### 7.2 Library Build (Embeddable Component)
 
@@ -665,7 +667,6 @@ export default defineConfig({
   plugins: [
     react(),
     wasm(),
-    topLevelAwait(),
     dts({
       compilerOptions: { rootDir: path.join(packageDir, 'src') },
       include: ['src/**/*.ts', 'src/**/*.tsx'],

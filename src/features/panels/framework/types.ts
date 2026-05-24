@@ -17,6 +17,7 @@ export type PanelType =
   | 'TopicGraph'
   | 'Align'
   | 'Audio'
+  | 'UrdfDebug'
   | 'Unavailable';
 
 /**

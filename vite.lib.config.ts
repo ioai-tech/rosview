@@ -16,7 +16,6 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import dts from 'vite-plugin-dts';
 import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,7 +38,6 @@ export default defineConfig({
   plugins: [
     react(),
     wasm(),
-    topLevelAwait(),
     dts({
       /** Align with TS `rootDir: src` so declarations are not mirrored under `dist-lib/src/...` (insertTypesEntry vs emittedFiles). */
       compilerOptions: {
@@ -69,7 +67,7 @@ export default defineConfig({
   optimizeDeps: {},
   worker: {
     format: 'es',
-    plugins: () => [wasm(), topLevelAwait()],
+    plugins: () => [wasm()],
     rollupOptions: {
       output: {
         sourcemap: false,
