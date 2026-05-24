@@ -78,8 +78,8 @@ export class MinimalPlayer implements Player {
 
   stepMessage(_direction: -1 | 1): void {}
 
-  async getMessagesInTimeRange(_args: GetMessagesInTimeRangeArgs): Promise<MessageEvent[]> {
-    return [];
+  getMessagesInTimeRange(_args: GetMessagesInTimeRangeArgs): Promise<MessageEvent[]> {
+    return Promise.resolve([]);
   }
 
   startDataQualityScan?(): void {}

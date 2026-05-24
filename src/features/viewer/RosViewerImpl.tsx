@@ -364,8 +364,9 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
   datasetsRef.current = datasets;
 
   const onFatalErrorRef = useRef(props.onFatalError);
-  // eslint-disable-next-line react-hooks/refs -- latest onFatalError for worker callbacks
-  onFatalErrorRef.current = props.onFatalError;
+  useEffect(() => {
+    onFatalErrorRef.current = props.onFatalError;
+  }, [props.onFatalError]);
 
   const [activeId, setActiveId] = useState<string | null>(null);
   /** When fallback loads a non-selected dataset, highlights it in the sidebar without re-running the activeId load effect. */
@@ -503,7 +504,9 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
   const sourceLoading = hasSource && player == null && lastLoadError == null;
 
   const onPlayerReadyRef = useRef(props.onPlayerReady);
-  onPlayerReadyRef.current = props.onPlayerReady;
+  useEffect(() => {
+    onPlayerReadyRef.current = props.onPlayerReady;
+  }, [props.onPlayerReady]);
   const playerReadyFiredRef = useRef(false);
 
   useEffect(() => {
@@ -523,7 +526,9 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
   }, [player, hasSource]);
 
   const onSourceLoadingChangeRef = useRef(props.onSourceLoadingChange);
-  onSourceLoadingChangeRef.current = props.onSourceLoadingChange;
+  useEffect(() => {
+    onSourceLoadingChangeRef.current = props.onSourceLoadingChange;
+  }, [props.onSourceLoadingChange]);
 
   useEffect(() => {
     onSourceLoadingChangeRef.current?.(sourceLoading);
