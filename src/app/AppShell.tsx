@@ -8,6 +8,8 @@ import type { PreferencePersistence } from '@/core/preferences/types';
 import type { SampleDataset } from '@/services/sampleDatasets';
 import type { DatasetHistoryListItem } from '@/shared/utils/datasetHistory';
 import type { RosViewExtension } from '@/core/extensions/types';
+import type { FoxgloveLayoutData } from '@/core/preferences/foxgloveLayout';
+import type { OpenPanelInput } from '@/features/layout/dockviewController';
 
 import { useKeyboardShortcuts } from '@/shared/hooks/useKeyboardShortcuts';
 import { SampleDatasetDialog } from '@/features/workspace/common/SampleDatasetDialog';
@@ -47,6 +49,16 @@ interface AppShellProps {
   extensions?: RosViewExtension[];
   /** Opaque value forwarded to extension context (`hostContext`). */
   hostContext?: unknown;
+  showNavbar?: boolean;
+  showSidebar?: boolean;
+  showPlaybackBar?: boolean;
+  hideOpenFileMenus?: boolean;
+  initialLayout?: FoxgloveLayoutData;
+  defaultPanel?: OpenPanelInput;
+  layoutPersistence?: PreferencePersistence;
+  layoutStorageKey?: string;
+  suppressWelcomePanel?: boolean;
+  onLayoutReady?: (info: { panelCount: number }) => void;
 }
 
 export const AppShell: React.FC<AppShellProps> = ({
@@ -82,56 +94,67 @@ export const AppShell: React.FC<AppShellProps> = ({
   onDropRosRecordingFiles,
   extensions,
   hostContext,
+  showNavbar = true,
+  showSidebar = true,
+  showPlaybackBar = true,
+  hideOpenFileMenus = false,
+  initialLayout,
+  defaultPanel,
+  layoutPersistence,
+  layoutStorageKey,
+  suppressWelcomePanel,
+  onLayoutReady,
 }) => {
   useKeyboardShortcuts(player);
   const [sampleDialogOpen, setSampleDialogOpen] = useState(false);
   const handleDragOver = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
+      if (hideOpenFileMenus) return;
       if (!Array.from(event.dataTransfer.types).includes('Files')) {
         return;
       }
       event.preventDefault();
       event.dataTransfer.dropEffect = 'copy';
     },
-    [],
+    [hideOpenFileMenus],
   );
 
   const handleDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      if (!Array.from(event.dataTransfer.types).includes('Files')) {
-        return;
-      }
+      if (hideOpenFileMenus) return;
       event.preventDefault();
       void onDropRosRecordingFiles(Array.from(event.dataTransfer.files), event.dataTransfer.items);
     },
-    [onDropRosRecordingFiles],
+    [hideOpenFileMenus, onDropRosRecordingFiles],
   );
 
   return (
     <div
       className={cn('flex h-screen flex-col overflow-hidden bg-background text-foreground', className)}
       style={style}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
+      onDragOver={hideOpenFileMenus ? undefined : handleDragOver}
+      onDrop={hideOpenFileMenus ? undefined : handleDrop}
     >
-      <Navbar
-        sourceName={loadingSourceName}
-        sourceLoading={sourceLoading}
-        theme={theme}
-        language={language}
-        onThemeChange={onThemeChange}
-        onLanguageChange={onLanguageChange}
-        showLanguageSwitcher={showLanguageSwitcher}
-        showThemeSwitcher={showThemeSwitcher}
-        onBrandClick={onBrandClick}
-        onOpenFilePick={onOpenFilePick}
-        onOpenDirectory={onOpenDirectory}
-        onOpenTarPick={onOpenTarPick}
-        onOpenRemotePrompt={onOpenRemotePrompt}
-        onOpenSampleDialog={() => setSampleDialogOpen(true)}
-        recentHistoryItems={historyItems.slice(0, 10)}
-        onReplayHistory={onReplayHistory}
-      />
+      {showNavbar && (
+        <Navbar
+          sourceName={loadingSourceName}
+          sourceLoading={sourceLoading}
+          theme={theme}
+          language={language}
+          onThemeChange={onThemeChange}
+          onLanguageChange={onLanguageChange}
+          showLanguageSwitcher={showLanguageSwitcher}
+          showThemeSwitcher={showThemeSwitcher}
+          onBrandClick={onBrandClick}
+          onOpenFilePick={hideOpenFileMenus ? undefined : onOpenFilePick}
+          onOpenDirectory={hideOpenFileMenus ? undefined : onOpenDirectory}
+          onOpenTarPick={hideOpenFileMenus ? undefined : onOpenTarPick}
+          onOpenRemotePrompt={hideOpenFileMenus ? undefined : onOpenRemotePrompt}
+          onOpenSampleDialog={hideOpenFileMenus ? undefined : () => setSampleDialogOpen(true)}
+          recentHistoryItems={hideOpenFileMenus ? [] : historyItems.slice(0, 10)}
+          onReplayHistory={hideOpenFileMenus ? undefined : onReplayHistory}
+        />
+      )}
       <RosViewContent
         player={player}
         loadingSourceName={loadingSourceName}
@@ -158,8 +181,19 @@ export const AppShell: React.FC<AppShellProps> = ({
         locale={language}
         theme={theme}
         activeDataset={datasets.find((item) => item.id === activeDatasetId)}
+        showSidebar={showSidebar}
+        showPlaybackBar={showPlaybackBar}
+        hideOpenFileMenus={hideOpenFileMenus}
+        initialLayout={initialLayout}
+        defaultPanel={defaultPanel}
+        layoutPersistence={layoutPersistence}
+        layoutStorageKey={layoutStorageKey}
+        suppressWelcomePanel={suppressWelcomePanel}
+        onLayoutReady={onLayoutReady}
       />
-      <SampleDatasetDialog open={sampleDialogOpen} onOpenChange={setSampleDialogOpen} onSelect={onSelectSample} />
+      {!hideOpenFileMenus && (
+        <SampleDatasetDialog open={sampleDialogOpen} onOpenChange={setSampleDialogOpen} onSelect={onSelectSample} />
+      )}
     </div>
   );
 };

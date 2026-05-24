@@ -1,5 +1,5 @@
 // ============================================================================
-// @ioai/rosview — Public API (v1.0.1)
+// @ioai/rosview — Public API (v1.2.0)
 // ============================================================================
 // Only symbols exported here are part of the stable public contract and
 // subject to semver guarantees. Internal modules may change without notice.
@@ -20,6 +20,14 @@ export type { RosViewerProps } from '../features/viewer/RosViewer';
 // ---------------------------------------------------------------------------
 export { RosViewProvider, useRosViewTheme } from '../features/viewer/RosViewProvider';
 export type { RosViewProviderProps } from '../features/viewer/RosViewProvider';
+
+// ---------------------------------------------------------------------------
+// Embed helpers
+// ---------------------------------------------------------------------------
+export { resolveEmbedChrome } from '../features/viewer/embedChrome';
+export type { RosViewerChrome, RosViewerMode, ResolvedEmbedChrome } from '../features/viewer/embedChrome';
+export { MinimalPlayer } from '../core/players/MinimalPlayer';
+export { createSinglePanelLayout } from '../core/preferences/createSinglePanelLayout';
 
 // ---------------------------------------------------------------------------
 // Preference types and read/write utilities
@@ -75,6 +83,7 @@ export {
   importDockviewLayout,
   openDockviewPanel,
 } from '../features/layout/dockviewController';
+export type { OpenPanelInput } from '../features/layout/dockviewController';
 
 // ---------------------------------------------------------------------------
 // Extension API
@@ -106,6 +115,7 @@ export type {
   PlayerProblem,
 } from '../core/types/ros';
 export type {
+  Player,
   PlayerPresence,
   PlayerState,
   Subscription,

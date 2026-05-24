@@ -2,7 +2,7 @@
 
 > English: [API.md](API.md)
 
-本文档描述 `@ioai/rosview` v1.0.1 的完整公开 API。
+本文档描述 `@ioai/rosview` v1.2.0 的完整公开 API。
 
 在使用该包前，请先在宿主应用安装 peer 依赖：`react`、`react-dom`、`three`、`@react-three/fiber`、`@react-three/drei`。
 
@@ -58,8 +58,23 @@ import '@ioai/rosview/style.css';
 
 | Prop | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `preferencePersistence` | `'localStorage' \| 'off'` | `'localStorage'` | 控制主题、语言、布局等偏好的保存位置；`'off'` 表示不自动写入，由宿主自行管理。 |
+| `preferencePersistence` | `'localStorage' \| 'off'` | `'localStorage'` | 控制主题、语言、侧栏宽度等 UI 偏好；`'off'` 表示不自动写入 localStorage。 |
+| `layoutPersistence` | `'localStorage' \| 'off' \| 'inherit'` | `'inherit'` | 面板布局持久化；`'inherit'` 跟随 `preferencePersistence`；`'off'` 不读写 `ioai.rosview.layout`。 |
+| `layoutStorageKey` | `string` | `'ioai.rosview.layout'` | 布局 localStorage 键，供多 embed 实例隔离。 |
 | `urlState` | `'spa' \| 'off'` | `'off'` | `'spa'`：与独立 SPA 一致，用 `history.pushState` 同步地址栏 `?url=`；加载时从 IndexedDB **最近打开** 恢复 `file://` / `folder://`，或通过示例清单解析 `sample://`。`'off'`：npm 嵌入默认 — 不写地址栏，上述自定义定位符不会自动恢复。 |
+
+#### 嵌入 / 工具模式（v1.2.0）
+
+| Prop | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `mode` | `'viewer' \| 'tool'` | `'viewer'` | `'tool'`：无 MCAP 也可进入工作区（内部使用 `MinimalPlayer`），默认 `panels-only` chrome。 |
+| `requireSource` | `boolean` | `mode !== 'tool'` | 为 `false` 时无 `url`/`file` 仍挂载面板区。 |
+| `chrome` | `'full' \| 'minimal' \| 'panels-only'` | 随 `mode` | Chrome 预设；可被下方细粒度 props 覆盖。 |
+| `showNavbar` / `showSidebar` / `showPlaybackBar` | `boolean` | 随 `chrome` | 显式控制 Navbar、侧栏、播放条。 |
+| `hideOpenFileMenus` | `boolean` | `false` | 隐藏 Navbar 打开文件菜单并禁用录制文件拖放。 |
+| `initialLayout` | `FoxgloveLayoutData` | — | mount 时优先于 localStorage 的布局。 |
+| `defaultPanel` | `OpenPanelInput` | — | 单面板语法糖（与 `initialLayout` 二选一，后者优先）。 |
+| `suppressWelcomePanel` | `boolean` | `mode === 'tool'` | 跳过 Dockview Welcome 占位面板。 |
 
 #### 事件回调
 
@@ -68,6 +83,9 @@ import '@ioai/rosview/style.css';
 | `onFatalError` | `(error: Error) => void` | 文件加载失败且无可用回退时调用。 |
 | `onThemeChange` | `(theme: 'light' \| 'dark' \| 'system') => void` | 用户通过导航栏切换主题时调用。 |
 | `onLanguageChange` | `(language: 'en' \| 'zh' \| 'ja') => void` | 用户通过导航栏切换语言时调用。 |
+| `onPlayerReady` | `({ player, hasSource }) => void` | 播放器 `presence` 首次变为 `ready` 时调用。 |
+| `onLayoutReady` | `({ panelCount }) => void` | Dockview 布局 hydration 完成时调用。 |
+| `onSourceLoadingChange` | `(loading: boolean) => void` | 远程/本地源正在初始化时通知宿主。 |
 | `extensions` | `RosViewExtension[]` | 可选宿主扩展：侧边栏 Tab、播放条/时间轴叠加层等。 |
 | `hostContext` | `unknown` | 不透明上下文，原样出现在 `context.hostContext`（如数据集 id、权限标记）。 |
 
@@ -90,6 +108,25 @@ const [lang, setLang] = React.useState<'en' | 'zh' | 'ja'>('en');
   preferencePersistence="off"
   onThemeChange={setTheme}
   onLanguageChange={setLang}
+/>
+```
+
+### 工具模式：单 UrdfDebug 面板（无 MCAP）
+
+```tsx
+import {
+  RosViewer,
+  createSinglePanelLayout,
+} from '@ioai/rosview';
+import '@ioai/rosview/style.css';
+
+<RosViewer
+  mode="tool"
+  preferencePersistence="off"
+  layoutPersistence="off"
+  initialLayout={createSinglePanelLayout({ type: 'UrdfDebug', id: 'UrdfDebug!embed' })}
+  theme="dark"
+  language="zh"
 />
 ```
 
@@ -305,6 +342,8 @@ import { exportDockviewLayout, importDockviewLayout, openDockviewPanel } from '@
 | `exportDockviewLayout()` | 导出当前面板布局为 `FoxgloveLayoutData`；无活动布局时返回 `null`。 |
 | `importDockviewLayout(layout)` | 将先前导出的布局应用到当前 DockView。 |
 | `openDockviewPanel(input)` | 按类型程序化打开面板；返回新面板 ID 或 `null`。 |
+| `createSinglePanelLayout(input)` | 由 `OpenPanelInput` 构建单面板 `FoxgloveLayoutData`。 |
+| `MinimalPlayer` | 无录制源时的 stub `Player`（工具模式内部使用，也可供高级宿主直接使用）。 |
 
 ---
 

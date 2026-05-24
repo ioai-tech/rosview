@@ -27,6 +27,8 @@ import {
 } from '../panels/registry';
 import { PanelTabHeader } from './PanelTabHeader';
 import { readSavedDockviewLayout } from '@/core/preferences/layoutStorage';
+import { createSinglePanelLayout } from '@/core/preferences/createSinglePanelLayout';
+import type { PreferencePersistence } from '@/core/preferences/types';
 import { useSidebarStore } from '@/shared/hooks/useSidebarStore';
 import {
   buildFoxgloveLayout,
@@ -89,9 +91,28 @@ function layoutHasUnknownTopicReferences(layout: FoxgloveLayoutData, topics: Rea
 interface DockviewLayoutProps {
   player: Player;
   preferAutoLayout?: boolean;
+  /** Declarative layout applied on mount before localStorage. */
+  initialLayout?: FoxgloveLayoutData;
+  /** Shorthand for a single panel when `initialLayout` is omitted. */
+  defaultPanel?: OpenPanelInput;
+  /** When `'off'`, skip reading/writing layout localStorage. @default 'localStorage' */
+  layoutPersistence?: PreferencePersistence;
+  layoutStorageKey?: string;
+  /** Skip Welcome placeholder and do not restore it when all panels close. */
+  suppressWelcomePanel?: boolean;
+  onLayoutReady?: (info: { panelCount: number }) => void;
 }
 
-export const DockviewLayout: React.FC<DockviewLayoutProps> = ({ player, preferAutoLayout = false }) => {
+export const DockviewLayout: React.FC<DockviewLayoutProps> = ({
+  player,
+  preferAutoLayout = false,
+  initialLayout,
+  defaultPanel,
+  layoutPersistence = 'localStorage',
+  layoutStorageKey,
+  suppressWelcomePanel = false,
+  onLayoutReady,
+}) => {
   const { resolvedTheme } = useRosViewTheme();
   const dockviewTheme = useMemo(
     () => (resolvedTheme === 'dark' ? rosDockviewThemeDark : rosDockviewThemeLight),
@@ -108,10 +129,40 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({ player, preferAu
   const dockviewEventDisposablesRef = useRef<{ dispose: () => void }[]>([]);
   /** Kept in a ref so callbacks capturing it see the latest value without recreating. */
   const preferAutoLayoutRef = useRef(preferAutoLayout);
+  const suppressWelcomePanelRef = useRef(suppressWelcomePanel);
+  const layoutPersistenceRef = useRef(layoutPersistence);
+  const layoutStorageKeyRef = useRef(layoutStorageKey);
+  const initialLayoutRef = useRef(initialLayout);
+  const defaultPanelRef = useRef(defaultPanel);
+  const onLayoutReadyRef = useRef(onLayoutReady);
 
   useEffect(() => {
     preferAutoLayoutRef.current = preferAutoLayout;
   }, [preferAutoLayout]);
+
+  useEffect(() => {
+    suppressWelcomePanelRef.current = suppressWelcomePanel;
+  }, [suppressWelcomePanel]);
+
+  useEffect(() => {
+    layoutPersistenceRef.current = layoutPersistence;
+  }, [layoutPersistence]);
+
+  useEffect(() => {
+    layoutStorageKeyRef.current = layoutStorageKey;
+  }, [layoutStorageKey]);
+
+  useEffect(() => {
+    initialLayoutRef.current = initialLayout;
+  }, [initialLayout]);
+
+  useEffect(() => {
+    defaultPanelRef.current = defaultPanel;
+  }, [defaultPanel]);
+
+  useEffect(() => {
+    onLayoutReadyRef.current = onLayoutReady;
+  }, [onLayoutReady]);
 
   useEffect(() => {
     return () => {
@@ -376,7 +427,7 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({ player, preferAu
         if (suppressWelcomeRestoreRef.current) {
           return;
         }
-        if (preferAutoLayoutRef.current) {
+        if (preferAutoLayoutRef.current || suppressWelcomePanelRef.current) {
           return;
         }
         queueMicrotask(() => {
@@ -406,16 +457,36 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({ player, preferAu
       sidebarStore.setActivePanelId(initialActive);
     }
 
-    const stored = readSavedDockviewLayout();
-    if (stored && !layoutHasUnknownTopicReferences(stored, topicsRef.current)) {
-      importLayoutState(stored);
+    const declarativeLayout =
+      initialLayoutRef.current ??
+      (defaultPanelRef.current ? createSinglePanelLayout(defaultPanelRef.current) : null);
+
+    if (declarativeLayout && !layoutHasUnknownTopicReferences(declarativeLayout, topicsRef.current)) {
+      importLayoutState(declarativeLayout);
       if (event.api.panels.length > 0) {
         hasAutoInitializedRef.current = true;
         layoutDatasetSignatureRef.current = topicsRef.current
           .map((topic) => `${topic.name}:${topic.type}`)
           .sort()
           .join('|');
+        onLayoutReadyRef.current?.({ panelCount: event.api.panels.length });
         return;
+      }
+    }
+
+    if (layoutPersistenceRef.current === 'localStorage') {
+      const stored = readSavedDockviewLayout(layoutStorageKeyRef.current);
+      if (stored && !layoutHasUnknownTopicReferences(stored, topicsRef.current)) {
+        importLayoutState(stored);
+        if (event.api.panels.length > 0) {
+          hasAutoInitializedRef.current = true;
+          layoutDatasetSignatureRef.current = topicsRef.current
+            .map((topic) => `${topic.name}:${topic.type}`)
+            .sort()
+            .join('|');
+          onLayoutReadyRef.current?.({ panelCount: event.api.panels.length });
+          return;
+        }
       }
     }
 
@@ -431,6 +502,7 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({ player, preferAu
             .map((topic) => `${topic.name}:${topic.type}`)
             .sort()
             .join('|');
+          onLayoutReadyRef.current?.({ panelCount: event.api.panels.length });
         } finally {
           suppressWelcomeRestoreRef.current = false;
         }
@@ -438,11 +510,14 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({ player, preferAu
       return;
     }
 
-    event.api.addPanel({
-      id: WELCOME_PANEL_ID,
-      component: 'default',
-      title: 'Welcome',
-    });
+    if (!suppressWelcomePanelRef.current) {
+      event.api.addPanel({
+        id: WELCOME_PANEL_ID,
+        component: 'default',
+        title: 'Welcome',
+      });
+    }
+    onLayoutReadyRef.current?.({ panelCount: event.api.panels.length });
   }, [openPanel, duplicatePanel, exportLayoutState, importLayoutState, reapplyAutoLayout]);
 
   return (

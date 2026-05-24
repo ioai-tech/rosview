@@ -20,18 +20,20 @@ function isLegacyV1Payload(value: unknown): boolean {
 }
 
 /** Load the saved Foxglove layout, or `null` when absent/corrupt/legacy. */
-export function readSavedDockviewLayout(): FoxgloveLayoutData | null {
+export function readSavedDockviewLayout(
+  storageKey: string = ROS_VIEW_LAYOUT_STORAGE_KEY,
+): FoxgloveLayoutData | null {
   if (typeof globalThis === 'undefined' || !('localStorage' in globalThis)) {
     return null;
   }
   try {
-    const raw = globalThis.localStorage.getItem(ROS_VIEW_LAYOUT_STORAGE_KEY);
+    const raw = globalThis.localStorage.getItem(storageKey);
     if (raw == null || raw === '') {
       return null;
     }
     const parsed: unknown = JSON.parse(raw);
     if (isLegacyV1Payload(parsed)) {
-      globalThis.localStorage.removeItem(ROS_VIEW_LAYOUT_STORAGE_KEY);
+      globalThis.localStorage.removeItem(storageKey);
       return null;
     }
     return parseFoxgloveLayout(parsed);
@@ -41,24 +43,27 @@ export function readSavedDockviewLayout(): FoxgloveLayoutData | null {
 }
 
 /** Persist a Foxglove-compatible layout payload. */
-export function saveDockviewLayoutToStorage(payload: FoxgloveLayoutData): void {
+export function saveDockviewLayoutToStorage(
+  payload: FoxgloveLayoutData,
+  storageKey: string = ROS_VIEW_LAYOUT_STORAGE_KEY,
+): void {
   if (typeof globalThis === 'undefined' || !('localStorage' in globalThis)) {
     return;
   }
   try {
-    globalThis.localStorage.setItem(ROS_VIEW_LAYOUT_STORAGE_KEY, JSON.stringify(payload));
+    globalThis.localStorage.setItem(storageKey, JSON.stringify(payload));
   } catch (e) {
     console.warn('[layoutStorage] Failed to save layout', e);
   }
 }
 
 /** Clear the persisted layout so the next mount falls back to auto-layout. */
-export function clearSavedDockviewLayout(): void {
+export function clearSavedDockviewLayout(storageKey: string = ROS_VIEW_LAYOUT_STORAGE_KEY): void {
   if (typeof globalThis === 'undefined' || !('localStorage' in globalThis)) {
     return;
   }
   try {
-    globalThis.localStorage.removeItem(ROS_VIEW_LAYOUT_STORAGE_KEY);
+    globalThis.localStorage.removeItem(storageKey);
   } catch (e) {
     console.warn('[layoutStorage] Failed to clear layout', e);
   }

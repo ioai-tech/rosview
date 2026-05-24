@@ -21,6 +21,8 @@ import type { DatasetHistoryListItem } from '@/shared/utils/datasetHistory';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/shared/ui/resizable';
 import type { RosViewExtension } from '@/core/extensions/types';
 import { buildExtensionContext } from '@/core/extensions/buildContext';
+import type { FoxgloveLayoutData } from '@/core/preferences/foxgloveLayout';
+import type { OpenPanelInput } from '@/features/layout/dockviewController';
 
 const DEFAULT_SIDEBAR_WIDTH = 288;
 const MIN_SIDEBAR_WIDTH = 240;
@@ -79,6 +81,15 @@ interface RosViewContentProps {
   activeDataset?: DatasetItem;
   /** Passed through to extension context as opaque `hostContext`. */
   hostContext?: unknown;
+  showSidebar?: boolean;
+  showPlaybackBar?: boolean;
+  hideOpenFileMenus?: boolean;
+  initialLayout?: FoxgloveLayoutData;
+  defaultPanel?: OpenPanelInput;
+  layoutPersistence?: PreferencePersistence;
+  layoutStorageKey?: string;
+  suppressWelcomePanel?: boolean;
+  onLayoutReady?: (info: { panelCount: number }) => void;
 }
 
 export const RosViewContent: React.FC<RosViewContentProps> = ({
@@ -107,6 +118,15 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
   theme,
   activeDataset,
   hostContext,
+  showSidebar = true,
+  showPlaybackBar = true,
+  hideOpenFileMenus = false,
+  initialLayout,
+  defaultPanel,
+  layoutPersistence,
+  layoutStorageKey,
+  suppressWelcomePanel,
+  onLayoutReady,
 }) => {
   const { formatMessage } = useIntl();
   const presence = useMessagePipeline((state: MessagePipelineState) => state.playerState.presence);
@@ -210,6 +230,9 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
 
   const handleMainDragOver = useCallback(
     (event: React.DragEvent<HTMLElement>) => {
+      if (hideOpenFileMenus && Array.from(event.dataTransfer.types).includes('Files')) {
+        return;
+      }
       if (Array.from(event.dataTransfer.types).includes('Files')) {
         event.preventDefault();
         event.stopPropagation();
@@ -218,11 +241,14 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
       }
       handleTopicDragOver(event);
     },
-    [handleTopicDragOver],
+    [handleTopicDragOver, hideOpenFileMenus],
   );
 
   const handleMainDrop = useCallback(
     (event: React.DragEvent<HTMLElement>) => {
+      if (hideOpenFileMenus && Array.from(event.dataTransfer.types).includes('Files')) {
+        return;
+      }
       if (Array.from(event.dataTransfer.types).includes('Files')) {
         event.preventDefault();
         event.stopPropagation();
@@ -231,7 +257,7 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
       }
       handleTopicDrop(event);
     },
-    [handleTopicDrop, onDropRosRecordingFiles],
+    [handleTopicDrop, hideOpenFileMenus, onDropRosRecordingFiles],
   );
 
   const handleLayoutChanged = useCallback((layout: Record<string, number>) => {
@@ -290,33 +316,37 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
           <ResizablePanelGroup
             orientation="horizontal"
             className="min-h-0 min-w-0 flex-1"
-            onLayoutChanged={handleLayoutChanged}
+            onLayoutChanged={showSidebar ? handleLayoutChanged : undefined}
           >
-            <ResizablePanel
-              id="sidebar"
-              className="flex h-full min-h-0 min-w-0 flex-col"
-              defaultSize={`${sidebarPanelPercent}%`}
-              minSize={`${MIN_SIDEBAR_PANEL_PERCENT}%`}
-              maxSize={`${MAX_SIDEBAR_PANEL_PERCENT}%`}
-            >
-              <Sidebar
-                player={player}
-                datasets={datasets}
-                activeDatasetId={activeDatasetId}
-                onDatasetSelect={onDatasetSelect}
-                autoDataQualityScan={autoDataQualityScan}
-                onAutoDataQualityScanChange={setAutoDataQualityScan}
-                preferencePersistence={preferencePersistence}
-                extensionContext={extensionContext}
-                extensions={extensions}
-              />
-            </ResizablePanel>
-            <ResizableHandle withHandle aria-label={formatMessage({ id: 'viewer.resizeSidebar' })} />
+            {showSidebar && (
+              <>
+                <ResizablePanel
+                  id="sidebar"
+                  className="flex h-full min-h-0 min-w-0 flex-col"
+                  defaultSize={`${sidebarPanelPercent}%`}
+                  minSize={`${MIN_SIDEBAR_PANEL_PERCENT}%`}
+                  maxSize={`${MAX_SIDEBAR_PANEL_PERCENT}%`}
+                >
+                  <Sidebar
+                    player={player}
+                    datasets={datasets}
+                    activeDatasetId={activeDatasetId}
+                    onDatasetSelect={onDatasetSelect}
+                    autoDataQualityScan={autoDataQualityScan}
+                    onAutoDataQualityScanChange={setAutoDataQualityScan}
+                    preferencePersistence={preferencePersistence}
+                    extensionContext={extensionContext}
+                    extensions={extensions}
+                  />
+                </ResizablePanel>
+                <ResizableHandle withHandle aria-label={formatMessage({ id: 'viewer.resizeSidebar' })} />
+              </>
+            )}
             <ResizablePanel
               id="main"
               className="flex h-full min-h-0 min-w-0 flex-col"
-              defaultSize={`${100 - sidebarPanelPercent}%`}
-              minSize={`${100 - MAX_SIDEBAR_PANEL_PERCENT}%`}
+              defaultSize={showSidebar ? `${100 - sidebarPanelPercent}%` : '100%'}
+              minSize={showSidebar ? `${100 - MAX_SIDEBAR_PANEL_PERCENT}%` : '100%'}
             >
               <main
                 className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background [contain:strict] ${
@@ -343,13 +373,21 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
                   key={activeDatasetId ?? 'dataset'}
                   player={player}
                   preferAutoLayout={preferAutoLayout}
+                  initialLayout={initialLayout}
+                  defaultPanel={defaultPanel}
+                  layoutPersistence={layoutPersistence}
+                  layoutStorageKey={layoutStorageKey}
+                  suppressWelcomePanel={suppressWelcomePanel}
+                  onLayoutReady={onLayoutReady}
                 />
               </main>
             </ResizablePanel>
           </ResizablePanelGroup>
         </div>
       )}
-      <PlaybackBar player={player} extensionContext={extensionContext} extensions={extensions} />
+      {showPlaybackBar && (
+        <PlaybackBar player={player} extensionContext={extensionContext} extensions={extensions} />
+      )}
     </div>
   );
 };

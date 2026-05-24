@@ -9,6 +9,9 @@ import type { SampleDataset } from '@/services/sampleDatasets';
 import { extractRosFilesFromTarArchive } from '@/shared/utils/tarRosRecordings';
 import { WorkerSerializedSource } from '@/infra/workers/WorkerSerializedSource';
 import { IterablePlayer } from '@/core/players/IterablePlayer';
+import { MinimalPlayer } from '@/core/players/MinimalPlayer';
+import type { Player } from '@/core/types/player';
+import { useMessagePipelineStore } from '@/core/pipeline/store';
 import { Navbar } from '@/features/workspace/navbar/Navbar';
 import { WelcomeScreen } from '@/features/workspace/common/WelcomeScreen';
 import type { DatasetItem, FileListItem } from '@/shared/utils/datasetSources';
@@ -55,6 +58,11 @@ import {
   readUiPreferenceParamsFromSearch,
 } from '@/core/preferences/mergeInitialUiPreferences';
 import type { PreferencePersistence } from '@/core/preferences/types';
+import type { FoxgloveLayoutData } from '@/core/preferences/foxgloveLayout';
+import { ROS_VIEW_LAYOUT_STORAGE_KEY } from '@/core/preferences/storageKeys';
+import type { OpenPanelInput } from '@/features/layout/dockviewController';
+import { resolveEmbedChrome, type RosViewerChrome, type RosViewerMode } from './embedChrome';
+import { RosViewerLayoutProvider } from './RosViewerLayoutContext';
 import type { RosViewExtension } from '@/core/extensions/types';
 import { toast } from 'sonner';
 import sqlWasmUrl from "@foxglove/sql.js/dist/sql-wasm.wasm?url";
@@ -249,6 +257,45 @@ export interface RosViewerProps {
    * RosView does not read or validate this object.
    */
   hostContext?: unknown;
+  /**
+   * Embed preset. `tool` opens panels without a recording source (MinimalPlayer) and defaults to panels-only chrome.
+   * @default 'viewer'
+   */
+  mode?: RosViewerMode;
+  /** When false, mount MinimalPlayer and workspace without url/file. @default true (false when mode='tool'). */
+  requireSource?: boolean;
+  /** Chrome preset; overridden by explicit showNavbar/showSidebar/showPlaybackBar. */
+  chrome?: RosViewerChrome;
+  showNavbar?: boolean;
+  showSidebar?: boolean;
+  showPlaybackBar?: boolean;
+  /** Hide navbar file menus and disable recording drag-and-drop in the workspace. */
+  hideOpenFileMenus?: boolean;
+  /**
+   * `'inherit'`: follow `preferencePersistence`. `'off'`: never read/write layout localStorage.
+   * @default 'inherit'
+   */
+  layoutPersistence?: PreferencePersistence | 'inherit';
+  layoutStorageKey?: string;
+  /** Applied on mount before saved layout. */
+  initialLayout?: FoxgloveLayoutData;
+  /** Shorthand single-panel layout when `initialLayout` is omitted. */
+  defaultPanel?: OpenPanelInput;
+  /** When true (default for mode='tool'), skip Dockview Welcome placeholder. */
+  suppressWelcomePanel?: boolean;
+  onLayoutReady?: (info: { panelCount: number }) => void;
+  onPlayerReady?: (ctx: { player: Player; hasSource: boolean }) => void;
+  onSourceLoadingChange?: (loading: boolean) => void;
+}
+
+function resolveLayoutPersistence(
+  layoutPersistence: PreferencePersistence | 'inherit' | undefined,
+  preferencePersistence: PreferencePersistence,
+): PreferencePersistence {
+  if (layoutPersistence === undefined || layoutPersistence === 'inherit') {
+    return preferencePersistence;
+  }
+  return layoutPersistence;
 }
 
 function datasetItemToSourceLocator(ds: DatasetItem): SourceLocator | null {
@@ -334,7 +381,7 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
 
   const [currentTheme, setCurrentTheme] = useState<'light' | 'dark' | 'system'>(() => initialUiFromProps(props).theme);
   const [currentLanguage, setCurrentLanguage] = useState<'en' | 'zh' | 'ja'>(() => initialUiFromProps(props).language);
-  const [player, setPlayer] = useState<IterablePlayer | null>(null);
+  const [player, setPlayer] = useState<Player | null>(null);
   const [sampleDialogOpen, setSampleDialogOpen] = useState(false);
   const [remoteUrlBusy, setRemoteUrlBusy] = useState(false);
   const [historyItems, setHistoryItems] = useState<DatasetHistoryListItem[]>([]);
@@ -380,6 +427,21 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
   );
 
   const persistence: PreferencePersistence = props.preferencePersistence ?? 'localStorage';
+  const requireSource = props.requireSource ?? props.mode !== 'tool';
+  const embedChrome = useMemo(
+    () =>
+      resolveEmbedChrome({
+        mode: props.mode,
+        chrome: props.chrome,
+        showNavbar: props.showNavbar,
+        showSidebar: props.showSidebar,
+        showPlaybackBar: props.showPlaybackBar,
+      }),
+    [props.mode, props.chrome, props.showNavbar, props.showSidebar, props.showPlaybackBar],
+  );
+  const resolvedLayoutPersistence = resolveLayoutPersistence(props.layoutPersistence, persistence);
+  const layoutStorageKey = props.layoutStorageKey ?? ROS_VIEW_LAYOUT_STORAGE_KEY;
+  const suppressWelcomePanel = props.suppressWelcomePanel ?? props.mode === 'tool';
   const onThemeChangeProp = props.onThemeChange;
   const onLanguageChangeProp = props.onLanguageChange;
 
@@ -439,6 +501,43 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
 
   const hasSource = datasets.length > 0;
   const sourceLoading = hasSource && player == null && lastLoadError == null;
+
+  const onPlayerReadyRef = useRef(props.onPlayerReady);
+  onPlayerReadyRef.current = props.onPlayerReady;
+  const playerReadyFiredRef = useRef(false);
+
+  useEffect(() => {
+    playerReadyFiredRef.current = false;
+  }, [player]);
+
+  useEffect(() => {
+    if (!player) return;
+    const fireIfReady = () => {
+      if (playerReadyFiredRef.current) return;
+      if (useMessagePipelineStore.getState().playerState.presence !== 'ready') return;
+      playerReadyFiredRef.current = true;
+      onPlayerReadyRef.current?.({ player, hasSource });
+    };
+    fireIfReady();
+    return useMessagePipelineStore.subscribe(fireIfReady);
+  }, [player, hasSource]);
+
+  const onSourceLoadingChangeRef = useRef(props.onSourceLoadingChange);
+  onSourceLoadingChangeRef.current = props.onSourceLoadingChange;
+
+  useEffect(() => {
+    onSourceLoadingChangeRef.current?.(sourceLoading);
+  }, [sourceLoading]);
+
+  useEffect(() => {
+    if (requireSource || hasSource) return;
+    const minimal = new MinimalPlayer();
+    setPlayer(minimal);
+    return () => {
+      minimal.close();
+      setPlayer(null);
+    };
+  }, [requireSource, hasSource]);
 
   useEffect(() => {
     fileInputDomIdRef.current = hasSource ? 'rosview-inline-file' : 'rosview-landing-file';
@@ -579,6 +678,9 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
   );
 
   useEffect(() => {
+    if (!requireSource && !hasSource) {
+      return;
+    }
     if (!hasSource || !activeId) {
       setPlayer(null);
       return;
@@ -666,7 +768,7 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
       createdPlayer?.close();
       setPlayer(null);
     };
-  }, [activeId, clearOpenFeedback, hasSource, offlineIntl, persistence, showOpenError, urlState]);
+  }, [activeId, clearOpenFeedback, hasSource, offlineIntl, persistence, requireSource, showOpenError, urlState]);
 
   const onDatasetSelect = useCallback(
     (id: string) => {
@@ -998,8 +1100,72 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
     }
   }, [clearOpenFeedback, onSpaUrlQuerySync, urlState]);
 
+  const layoutProvider = (children: React.ReactNode) => (
+    <RosViewerLayoutProvider
+      layoutPersistence={resolvedLayoutPersistence}
+      layoutStorageKey={layoutStorageKey}
+    >
+      {children}
+    </RosViewerLayoutProvider>
+  );
+
+  const appShellElement = player ? (
+    <AppShell
+      player={player}
+      loadingSourceName={effectiveSourceName}
+      manualOpenHint={manualOpenHint}
+      sourceLoading={sourceLoading}
+      className={props.className}
+      style={props.style}
+      theme={currentTheme}
+      language={currentLanguage}
+      onThemeChange={handleThemeChange}
+      onLanguageChange={handleLanguageChange}
+      showLanguageSwitcher={props.showLanguageSwitcher ?? true}
+      showThemeSwitcher={props.showThemeSwitcher ?? true}
+      onBrandClick={handleGoHome}
+      preferAutoLayout={props.preferAutoLayout ?? false}
+      preferencePersistence={persistence}
+      datasets={datasets}
+      activeDatasetId={resolvedDatasetId ?? undefined}
+      onDatasetSelect={onDatasetSelect}
+      onAddFilesFromPicker={onAddFilesFromPicker}
+      onOpenDirectory={handleOpenDirectory}
+      onOpenFilePick={() => void handleOpenRecordingFiles()}
+      onOpenTarPick={() => document.getElementById('rosview-inline-tar')?.click()}
+      onLocalTarSelected={handleLocalTarFile}
+      onOpenRemotePrompt={openRemotePrompt}
+      onSubmitRemoteUrl={handleOpenRemoteRecordingUrl}
+      remoteSubmitLoading={remoteUrlBusy}
+      onSelectSample={handleSelectSample}
+      historyItems={historyItems}
+      onReplayHistory={(id) => void handleReplayHistory(id)}
+      onDropRosRecordingFiles={handleDropRosRecordingFiles}
+      extensions={props.extensions}
+      hostContext={props.hostContext}
+      showNavbar={embedChrome.showNavbar}
+      showSidebar={embedChrome.showSidebar}
+      showPlaybackBar={embedChrome.showPlaybackBar}
+      hideOpenFileMenus={props.hideOpenFileMenus ?? false}
+      initialLayout={props.initialLayout}
+      defaultPanel={props.defaultPanel}
+      layoutPersistence={resolvedLayoutPersistence}
+      layoutStorageKey={layoutStorageKey}
+      suppressWelcomePanel={suppressWelcomePanel}
+      onLayoutReady={props.onLayoutReady}
+    />
+  ) : null;
+
+  if (!hasSource && !requireSource && player) {
+    return layoutProvider(
+      <RosViewProvider theme={currentTheme} language={currentLanguage}>
+        {appShellElement}
+      </RosViewProvider>,
+    );
+  }
+
   if (!hasSource) {
-    return (
+    return layoutProvider(
       <RosViewProvider theme={currentTheme} language={currentLanguage}>
         <div
           className={cn('flex h-screen flex-col overflow-hidden bg-background text-foreground', props.className)}
@@ -1072,11 +1238,11 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
             onSelect={handleSelectSample}
           />
         </div>
-      </RosViewProvider>
+      </RosViewProvider>,
     );
   }
 
-  return (
+  return layoutProvider(
     <RosViewProvider theme={currentTheme} language={currentLanguage}>
       <>
         <input
@@ -1155,42 +1321,9 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
             />
           </div>
         ) : (
-          <AppShell
-            player={player}
-            loadingSourceName={effectiveSourceName}
-            manualOpenHint={manualOpenHint}
-            sourceLoading={sourceLoading}
-            className={props.className}
-            style={props.style}
-            theme={currentTheme}
-            language={currentLanguage}
-            onThemeChange={handleThemeChange}
-            onLanguageChange={handleLanguageChange}
-            showLanguageSwitcher={props.showLanguageSwitcher ?? true}
-            showThemeSwitcher={props.showThemeSwitcher ?? true}
-            onBrandClick={handleGoHome}
-            preferAutoLayout={props.preferAutoLayout ?? false}
-            preferencePersistence={persistence}
-            datasets={datasets}
-            activeDatasetId={resolvedDatasetId ?? undefined}
-            onDatasetSelect={onDatasetSelect}
-            onAddFilesFromPicker={onAddFilesFromPicker}
-            onOpenDirectory={handleOpenDirectory}
-            onOpenFilePick={() => void handleOpenRecordingFiles()}
-            onOpenTarPick={() => document.getElementById('rosview-inline-tar')?.click()}
-            onLocalTarSelected={handleLocalTarFile}
-            onOpenRemotePrompt={openRemotePrompt}
-            onSubmitRemoteUrl={handleOpenRemoteRecordingUrl}
-            remoteSubmitLoading={remoteUrlBusy}
-            onSelectSample={handleSelectSample}
-            historyItems={historyItems}
-            onReplayHistory={(id) => void handleReplayHistory(id)}
-            onDropRosRecordingFiles={handleDropRosRecordingFiles}
-            extensions={props.extensions}
-            hostContext={props.hostContext}
-          />
+          appShellElement
         )}
       </>
-    </RosViewProvider>
+    </RosViewProvider>,
   );
 };

@@ -2,7 +2,7 @@
 
 > Simplified Chinese: [API.zh.md](API.zh.md)
 
-This document covers the complete public API of `@ioai/rosview` v1.0.1.
+This document covers the complete public API of `@ioai/rosview` v1.2.0.
 
 Before using this package, install peer dependencies in your host app: `react`, `react-dom`, `three`, `@react-three/fiber`, and `@react-three/drei`.
 
@@ -58,8 +58,23 @@ All source props may be combined. Duplicates are deduplicated automatically. Fil
 
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
-| `preferencePersistence` | `'localStorage' \| 'off'` | `'localStorage'` | Controls where user preferences (theme, language, layout) are saved. Use `'off'` to disable all automatic storage and manage state externally. |
+| `preferencePersistence` | `'localStorage' \| 'off'` | `'localStorage'` | UI preferences (theme, language, sidebar width). `'off'` disables automatic localStorage writes. |
+| `layoutPersistence` | `'localStorage' \| 'off' \| 'inherit'` | `'inherit'` | Panel layout persistence; `'inherit'` follows `preferencePersistence`; `'off'` skips `ioai.rosview.layout`. |
+| `layoutStorageKey` | `string` | `'ioai.rosview.layout'` | localStorage key for layout JSON (multi-embed isolation). |
 | `urlState` | `'spa' \| 'off'` | `'off'` | `'spa'`: sync browser `?url=` with the active dataset and restore `file://` / `folder://` / `sample://` from IndexedDB **Recent** or the sample manifest (standalone SPA). `'off'`: default for npm embedding — no `history.pushState`, and custom locators in `url` do not auto-restore. |
+
+#### Embed / tool mode (v1.2.0)
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `mode` | `'viewer' \| 'tool'` | `'viewer'` | `'tool'`: workspace without MCAP (`MinimalPlayer`), default `panels-only` chrome. |
+| `requireSource` | `boolean` | `mode !== 'tool'` | When `false`, mounts panels without `url`/`file`. |
+| `chrome` | `'full' \| 'minimal' \| 'panels-only'` | per `mode` | Chrome preset; overridable via `showNavbar` / `showSidebar` / `showPlaybackBar`. |
+| `showNavbar` / `showSidebar` / `showPlaybackBar` | `boolean` | per `chrome` | Explicit chrome toggles. |
+| `hideOpenFileMenus` | `boolean` | `false` | Hide navbar file menus and disable recording drag-and-drop. |
+| `initialLayout` | `FoxgloveLayoutData` | — | Declarative layout applied on mount (before localStorage). |
+| `defaultPanel` | `OpenPanelInput` | — | Single-panel shorthand (ignored when `initialLayout` is set). |
+| `suppressWelcomePanel` | `boolean` | `mode === 'tool'` | Skip Dockview Welcome placeholder. |
 
 #### Event callbacks
 
@@ -68,6 +83,9 @@ All source props may be combined. Duplicates are deduplicated automatically. Fil
 | `onFatalError` | `(error: Error) => void` | Called when a file fails to load and no fallback succeeds. |
 | `onThemeChange` | `(theme: 'light' \| 'dark' \| 'system') => void` | Called when the user changes the theme via the navbar. |
 | `onLanguageChange` | `(language: 'en' \| 'zh' \| 'ja') => void` | Called when the user changes the language via the navbar. |
+| `onPlayerReady` | `({ player, hasSource }) => void` | Fired once when player `presence` becomes `ready`. |
+| `onLayoutReady` | `({ panelCount }) => void` | Fired after Dockview layout hydration. |
+| `onSourceLoadingChange` | `(loading: boolean) => void` | Notifies host while a source is initializing. |
 | `extensions` | `RosViewExtension[]` | Optional host contributions: sidebar tabs plus timeline/playback overlays. |
 | `hostContext` | `unknown` | Opaque value forwarded to every extension as `context.hostContext`. RosView does not interpret it (pass dataset ids, feature flags, etc.). |
 
@@ -90,6 +108,25 @@ const [lang, setLang] = React.useState<'en' | 'zh' | 'ja'>('en');
   preferencePersistence="off"
   onThemeChange={setTheme}
   onLanguageChange={setLang}
+/>
+```
+
+### Tool mode: single UrdfDebug panel (no MCAP)
+
+```tsx
+import {
+  RosViewer,
+  createSinglePanelLayout,
+} from '@ioai/rosview';
+import '@ioai/rosview/style.css';
+
+<RosViewer
+  mode="tool"
+  preferencePersistence="off"
+  layoutPersistence="off"
+  initialLayout={createSinglePanelLayout({ type: 'UrdfDebug', id: 'UrdfDebug!embed' })}
+  theme="dark"
+  language="zh"
 />
 ```
 
@@ -305,6 +342,8 @@ import { exportDockviewLayout, importDockviewLayout, openDockviewPanel } from '@
 | `exportDockviewLayout()` | Export the current panel layout as `FoxgloveLayoutData`. Returns `null` if no layout is active. |
 | `importDockviewLayout(layout)` | Apply a previously exported layout to the current DockView instance. |
 | `openDockviewPanel(input)` | Programmatically open a panel by type. Returns the new panel ID or `null`. |
+| `createSinglePanelLayout(input)` | Build single-panel `FoxgloveLayoutData` from `OpenPanelInput`. |
+| `MinimalPlayer` | Stub `Player` for tool mode / advanced hosts (no recording source). |
 
 ---
 

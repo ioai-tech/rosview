@@ -35,6 +35,7 @@ import {
   reapplyAutoDockviewLayout,
 } from '../../layout/dockviewController';
 import { clearSavedDockviewLayout, saveDockviewLayoutToStorage } from '@/core/preferences/layoutStorage';
+import { useRosViewerLayoutContext } from '@/features/viewer/RosViewerLayoutContext';
 import type { DatasetHistoryListItem } from '@/shared/utils/datasetHistory';
 
 const MENUBAR_FILE = 'menubar-file';
@@ -112,6 +113,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onReplayHistory,
 }) => {
   const { formatMessage } = useIntl();
+  const { layoutPersistence, layoutStorageKey } = useRosViewerLayoutContext();
   const leftMenubarRef = useRef<HTMLDivElement>(null);
   const rightMenubarRef = useRef<HTMLDivElement>(null);
   const [leftMenubarValue, setLeftMenubarValue] = useState('');
@@ -143,14 +145,16 @@ export const Navbar: React.FC<NavbarProps> = ({
   }, []);
 
   const handleSaveLayout = useCallback(() => {
+    if (layoutPersistence === 'off') return;
     const payload = exportDockviewLayout();
     if (!payload) return;
-    saveDockviewLayoutToStorage(payload);
-  }, []);
+    saveDockviewLayoutToStorage(payload, layoutStorageKey);
+  }, [layoutPersistence, layoutStorageKey]);
 
   const handleResetLayout = useCallback(() => {
-    clearSavedDockviewLayout();
-  }, []);
+    if (layoutPersistence === 'off') return;
+    clearSavedDockviewLayout(layoutStorageKey);
+  }, [layoutPersistence, layoutStorageKey]);
 
   const handleReapplyAutoLayout = useCallback(() => {
     reapplyAutoDockviewLayout();

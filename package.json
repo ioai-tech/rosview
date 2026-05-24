@@ -1,6 +1,6 @@
 {
   "name": "@ioai/rosview",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "High-performance robotics data visualization for MCAP, ROS bag, ROS2 db3, HDF5 and BVH — embeddable React component and standalone SPA",
   "keywords": [
     "ros",
