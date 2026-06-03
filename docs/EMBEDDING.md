@@ -249,6 +249,109 @@ module.exports = {
 };
 ```
 
+### Next.js (App Router / Turbopack)
+
+ROSView is a browser-only component (it relies on Web Workers, WASM, `window`, etc.) and **cannot be server-rendered**. Integrating it into Next.js takes three steps:
+
+**1. Transpile the package in `next.config.js`**
+
+```js
+// next.config.js
+const nextConfig = {
+  transpilePackages: ['@ioai/rosview'],
+};
+
+module.exports = nextConfig;
+```
+
+**2. Wrap it in a Client Component loaded with `ssr: false`**
+
+`ssr: false` is only allowed inside a **Client Component** — you cannot use it with `next/dynamic` directly in a Server Component (e.g. `page.tsx`). So create a `'use client'` wrapper:
+
+```tsx
+// components/RosViewerClient.tsx
+'use client';
+
+import '@ioai/rosview/style.css';
+import dynamic from 'next/dynamic';
+
+// Client-only load to avoid touching browser APIs during SSR
+const RosViewer = dynamic(
+  () => import('@ioai/rosview').then((m) => ({ default: m.RosViewer })),
+  { ssr: false },
+);
+
+export function RosViewerClient({ url }: { url: string }) {
+  return (
+    <div style={{ width: '100%', height: '100vh' }}>
+      <RosViewer url={url} theme="dark" />
+    </div>
+  );
+}
+```
+
+```tsx
+// app/visualize/page.tsx — a Server Component rendering the client wrapper
+import { RosViewerClient } from '@/components/RosViewerClient';
+
+export default async function VisualizePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ url?: string }>;
+}) {
+  const { url } = await searchParams;
+  return <RosViewerClient url={url ?? ''} />;
+}
+```
+
+**3. (Optional) Serve files through a Range-capable route**
+
+To stream local/private mcap/bag recordings, expose a GET route that supports `Accept-Ranges` and point `url` at it:
+
+```ts
+// app/api/recording/route.ts
+import fs from 'node:fs';
+import { NextRequest, NextResponse } from 'next/server';
+
+export async function GET(req: NextRequest) {
+  const filePath = '/data/recording.mcap'; // validated, safe path
+  const { size } = await fs.promises.stat(filePath);
+  const range = req.headers.get('range');
+
+  // No Range: return the whole file but still advertise Range support
+  if (!range) {
+    const stream = fs.createReadStream(filePath);
+    return new NextResponse(stream as unknown as ReadableStream, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(size),
+        'Accept-Ranges': 'bytes',
+      },
+    });
+  }
+
+  const [startStr, endStr] = range.replace('bytes=', '').split('-');
+  const start = Number(startStr);
+  const end = endStr ? Number(endStr) : size - 1;
+  const stream = fs.createReadStream(filePath, { start, end });
+
+  return new NextResponse(stream as unknown as ReadableStream, {
+    status: 206,
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Content-Length': String(end - start + 1),
+      'Accept-Ranges': 'bytes',
+    },
+  });
+}
+```
+
+> **About `db3`:** Like the other formats, db3 supports both a **local `File`** and a **remote URL** — just point `url` at the Range route above. However, because SQLite needs random access to the whole database, db3 **cannot be Range-streamed** the way mcap / bag are: when given a db3 URL, ROSView **downloads the file in full inside the Worker** (with download progress) before opening it. For very large db3 files, prefer converting to MCAP for true streaming. You no longer need to download the db3 as a `File` yourself on the host side.
+
+> **Version requirement:** Use **`@ioai/rosview` ≥ 1.3.5** (which depends on `@ioai/wasm-zstd` ≥ 1.1.2). 1.3.5 adds remote-URL loading for db3 and fixes the Turbopack inline-worker regression from 1.3.4 (`Failed to resolve module specifier './wasm-zstd-*.js'`, caused by the inline worker running from a `blob:` URL and unable to resolve the zstd glue's relative dynamic import). Newer versions statically inline the glue into the worker, fixing this for good.
+
 ---
 
 ## Troubleshooting
@@ -280,6 +383,10 @@ Access-Control-Allow-Origin: https://your-app.example.com
 ### Worker errors in Firefox
 
 Firefox has stricter CSP enforcement for workers. If you use a `Content-Security-Policy` header, add `worker-src 'self' blob:`.
+
+### "Failed to resolve module specifier './wasm-zstd-*.js'"
+
+This occurs with `@ioai/rosview` 1.3.4 (paired with `@ioai/wasm-zstd` 1.1.1) under bundlers that run inline workers from `blob:` URLs, such as Next.js Turbopack. Upgrade to **`@ioai/rosview` ≥ 1.3.5** — newer versions statically inline the zstd glue into the worker, removing the runtime relative dynamic import.
 
 ---
 

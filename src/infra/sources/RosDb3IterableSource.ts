@@ -16,7 +16,9 @@ function dataTypeToFullName(dataType: string): string {
   return dataType;
 }
 
-type RosDb3SourceParams = { type: "files"; files: File[] };
+type RosDb3SourceParams =
+  | { type: "files"; files: File[] }
+  | { type: "data"; datas: Uint8Array[] };
 
 /** One row from `Rosbag2#readMessages` (library typings are loose). */
 interface Rosbag2ReadRow {
@@ -83,7 +85,10 @@ export class RosDb3IterableSource implements IIterableSource {
       ...(this._sqlWasmBinary ? { wasmBinary: this._sqlWasmBinary } : {}),
     });
 
-    const dbs = this._params.files.map((file) => new SqliteSqljsDb(file));
+    const dbs =
+      this._params.type === "files"
+        ? this._params.files.map((file) => new SqliteSqljsDb(file))
+        : this._params.datas.map((data) => new SqliteSqljsDb(data));
     const bag = new Rosbag2(dbs, { timeType: "sec,nsec" });
     await bag.open();
     this._bag = bag;

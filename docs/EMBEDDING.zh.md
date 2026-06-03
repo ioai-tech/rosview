@@ -249,6 +249,109 @@ module.exports = {
 };
 ```
 
+### Next.js（App Router / Turbopack）
+
+ROSView 是纯浏览器端组件（依赖 Web Worker、WASM、`window` 等），**不能在服务端渲染**。在 Next.js 中集成时遵循以下三点即可：
+
+**1. 在 `next.config.js` 中转译本包**
+
+```js
+// next.config.js
+const nextConfig = {
+  transpilePackages: ['@ioai/rosview'],
+};
+
+module.exports = nextConfig;
+```
+
+**2. 用客户端组件包裹，并以 `ssr: false` 动态加载**
+
+`ssr: false` 只能在**客户端组件**里使用，不能直接在服务端组件（如 `page.tsx`）里对 `next/dynamic` 使用。因此请新建一个 `'use client'` 包裹组件：
+
+```tsx
+// components/RosViewerClient.tsx
+'use client';
+
+import '@ioai/rosview/style.css';
+import dynamic from 'next/dynamic';
+
+// 仅在客户端加载，避免 SSR 阶段触碰浏览器 API
+const RosViewer = dynamic(
+  () => import('@ioai/rosview').then((m) => ({ default: m.RosViewer })),
+  { ssr: false },
+);
+
+export function RosViewerClient({ url }: { url: string }) {
+  return (
+    <div style={{ width: '100%', height: '100vh' }}>
+      <RosViewer url={url} theme="dark" />
+    </div>
+  );
+}
+```
+
+```tsx
+// app/visualize/page.tsx —— 服务端组件直接渲染上面的客户端组件
+import { RosViewerClient } from '@/components/RosViewerClient';
+
+export default async function VisualizePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ url?: string }>;
+}) {
+  const { url } = await searchParams;
+  return <RosViewerClient url={url ?? ''} />;
+}
+```
+
+**3.（可选）提供支持 HTTP Range 的文件接口**
+
+要流式可视化本地/私有的 mcap/bag，可在 Next.js 中提供一个支持 `Accept-Ranges` 的 GET 路由，把 `url` 指向它即可：
+
+```ts
+// app/api/recording/route.ts
+import fs from 'node:fs';
+import { NextRequest, NextResponse } from 'next/server';
+
+export async function GET(req: NextRequest) {
+  const filePath = '/data/recording.mcap'; // 经过校验的安全路径
+  const { size } = await fs.promises.stat(filePath);
+  const range = req.headers.get('range');
+
+  // 无 Range：返回整文件，但仍声明支持 Range
+  if (!range) {
+    const stream = fs.createReadStream(filePath);
+    return new NextResponse(stream as unknown as ReadableStream, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(size),
+        'Accept-Ranges': 'bytes',
+      },
+    });
+  }
+
+  const [startStr, endStr] = range.replace('bytes=', '').split('-');
+  const start = Number(startStr);
+  const end = endStr ? Number(endStr) : size - 1;
+  const stream = fs.createReadStream(filePath, { start, end });
+
+  return new NextResponse(stream as unknown as ReadableStream, {
+    status: 206,
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Content-Length': String(end - start + 1),
+      'Accept-Ranges': 'bytes',
+    },
+  });
+}
+```
+
+> **关于 `db3`**：db3 与其他格式一样，**本地 `File`** 与**远程 URL** 两种方式都支持，直接把上面 Range 接口的地址传给 `url` 即可。但由于 SQLite 需要随机访问整库，db3 **无法像 mcap / bag 那样按 Range 流式加载**——传入 db3 的 URL 时，ROSView 会在 Worker 内**自动整文件下载**后再打开（带下载进度）。因此对超大 db3，建议优先转换为 MCAP 以获得真正的流式体验。你无需再在宿主侧手动下载为 `File`。
+
+> **版本要求**：请使用 **`@ioai/rosview` ≥ 1.3.5**（依赖 `@ioai/wasm-zstd` ≥ 1.1.2）。1.3.5 新增了 db3 的远程 URL 加载，并修复了 1.3.4 在 Turbopack 下的 inline worker regression（因 worker 以 `blob:` URL 运行、无法解析 zstd glue 的相对动态 import 而抛出 `Failed to resolve module specifier './wasm-zstd-*.js'`）；新版本已将 glue 静态内联进 worker，彻底解决该问题。
+
 ---
 
 ## 故障排查
@@ -280,6 +383,10 @@ Access-Control-Allow-Origin: https://your-app.example.com
 ### Firefox 中的 Worker 错误
 
 Firefox 对 Worker 的 CSP 更严格。若使用 `Content-Security-Policy` 响应头，请添加 `worker-src 'self' blob:`。
+
+### "Failed to resolve module specifier './wasm-zstd-*.js'"
+
+该错误出现在 `@ioai/rosview` 1.3.4（搭配 `@ioai/wasm-zstd` 1.1.1）在以 `blob:` URL 运行 inline worker 的打包器（如 Next.js Turbopack）下。升级到 **`@ioai/rosview` ≥ 1.3.5** 即可修复——新版本会将 zstd glue 静态内联进 worker，不再有运行时相对动态 import。
 
 ---
 

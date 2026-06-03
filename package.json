@@ -1,6 +1,6 @@
 {
   "name": "@ioai/rosview",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "description": "High-performance robotics data visualization for MCAP, ROS bag, ROS2 db3, HDF5 and BVH — embeddable React component and standalone SPA",
   "keywords": [
     "ros",
@@ -97,7 +97,7 @@
     "@foxglove/rosmsg-serialization": "^2.0.4",
     "@foxglove/rosmsg2-serialization": "^3.0.3",
     "@ioai/hdf5": "^1.0.0",
-    "@ioai/wasm-zstd": "^1.1.1",
+    "@ioai/wasm-zstd": "^1.1.2",
     "@mcap/browser": "^1.1.0",
     "@mcap/core": "^2.0.2",
     "@playwright/test": "^1.59.1",

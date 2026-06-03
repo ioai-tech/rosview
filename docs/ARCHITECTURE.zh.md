@@ -47,7 +47,7 @@
 |------|--------|------------|------|
 | **MCAP** | `@mcap/core` + `@foxglove/mcap-support` | 完整支持（索引读取） | 首选格式，有 chunk 索引可做高效区间查询 |
 | **ROS1 .bag** | `@foxglove/rosbag` | 完整支持（chunk 索引） | 通过 `CachedFilelike` + `BrowserHttpReader` 实现 |
-| **ROS2 .db3** | `@foxglove/rosbag2` + `sql.js` (WASM) | 本地支持 / 远程需整文件下载 | SQLite 格式限制，远程大文件建议转 MCAP |
+| **ROS2 .db3** | `@foxglove/rosbag2` + `sql.js` (WASM) | 本地 / 远程（远程自动整文件下载） | SQLite 格式限制，无法 Range 流式；远程大文件建议转 MCAP |
 | **HDF5** | `@ioai/hdf5` (WASM) | 部分读取 | 科学数据；浏览器内解析 |
 | **BVH** | 内置解析 | 不适用（非 ROS bag 类流） | 骨骼动作捕捉动画回放 |
 

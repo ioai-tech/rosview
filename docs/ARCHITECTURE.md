@@ -55,7 +55,7 @@ ROS View is a **browser-native** playback and visualization tool for robotics re
 |--------|---------|---------------|-------|
 | **MCAP** | `@mcap/core` + `@foxglove/mcap-support` | Full (chunk index) | Preferred; efficient interval queries |
 | **ROS1 `.bag`** | `@foxglove/rosbag` | Full (chunk index) | via `CachedFilelike` + `BrowserHttpReader` |
-| **ROS2 `.db3`** | `@foxglove/rosbag2` + `sql.js` (WASM) | Local / remote requires full download | SQLite limitation; convert to MCAP for large remote files |
+| **ROS2 `.db3`** | `@foxglove/rosbag2` + `sql.js` (WASM) | Local / remote (remote auto-downloads in full) | SQLite limitation, no Range streaming; convert to MCAP for large remote files |
 
 **Supported message encodings:**
 
