@@ -27,6 +27,8 @@ interface AppShellProps {
   onLanguageChange: (lang: 'en' | 'zh' | 'ja') => void;
   showLanguageSwitcher?: boolean;
   showThemeSwitcher?: boolean;
+  showNavbarBrand?: boolean;
+  navbarBrandLabel?: string;
   onBrandClick?: () => void;
   preferAutoLayout?: boolean;
   preferencePersistence: PreferencePersistence;
@@ -77,6 +79,8 @@ export const AppShell: React.FC<AppShellProps> = ({
   onLanguageChange,
   showLanguageSwitcher = true,
   showThemeSwitcher = true,
+  showNavbarBrand = true,
+  navbarBrandLabel,
   onBrandClick,
   preferAutoLayout = false,
   preferencePersistence,
@@ -150,6 +154,8 @@ export const AppShell: React.FC<AppShellProps> = ({
           onLanguageChange={onLanguageChange}
           showLanguageSwitcher={showLanguageSwitcher}
           showThemeSwitcher={showThemeSwitcher}
+          showNavbarBrand={showNavbarBrand}
+          brandLabel={navbarBrandLabel}
           onBrandClick={onBrandClick}
           onOpenFilePick={hideOpenFileMenus ? undefined : onOpenFilePick}
           onOpenDirectory={hideOpenFileMenus ? undefined : onOpenDirectory}

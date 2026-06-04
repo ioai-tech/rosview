@@ -83,6 +83,10 @@ interface NavbarProps {
   onLanguageChange?: (lang: 'en' | 'zh' | 'ja') => void;
   showLanguageSwitcher?: boolean;
   showThemeSwitcher?: boolean;
+  /** When false, hide the left brand button. @default true */
+  showNavbarBrand?: boolean;
+  /** Override default product name in the left brand button. */
+  brandLabel?: string;
   onBrandClick?: () => void;
   onOpenFilePick?: () => void;
   onOpenDirectory?: () => void;
@@ -103,6 +107,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLanguageChange,
   showLanguageSwitcher = true,
   showThemeSwitcher = true,
+  showNavbarBrand = true,
+  brandLabel,
   onBrandClick,
   onOpenFilePick,
   onOpenDirectory,
@@ -164,20 +170,24 @@ export const Navbar: React.FC<NavbarProps> = ({
     onOpenFilePick || onOpenDirectory || onOpenTarPick || onOpenRemotePrompt || onOpenSampleDialog;
   const showCenter = Boolean(sourceLoading || (sourceName && sourceName.trim().length > 0));
   const centerLabel = sourceLoading ? formatMessage({ id: 'navbar.sourceLoading' }) : (sourceName ?? '');
+  const brandText = brandLabel ?? formatMessage({ id: 'common.productName' });
+  const brandAccessibleName = brandLabel ?? formatMessage({ id: 'navbar.goHome' });
 
   return (
     <nav className="sticky top-0 z-50 w-full shrink-0 border-b border-border bg-background select-none">
       <div className="grid h-12 w-full grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-x-2 gap-y-0 px-4">
         <div className="flex min-w-0 items-center gap-2 justify-self-start sm:gap-3">
-          <button
-            type="button"
-            className="min-w-0 max-w-[min(11rem,28vw)] shrink truncate rounded-sm text-left text-sm font-semibold tracking-tight text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:max-w-[11rem]"
-            onClick={onBrandClick}
-            title={formatMessage({ id: 'navbar.goHome' })}
-            aria-label={formatMessage({ id: 'navbar.goHome' })}
-          >
-            {formatMessage({ id: 'common.productName' })}
-          </button>
+          {showNavbarBrand ? (
+            <button
+              type="button"
+              className="min-w-0 max-w-[min(11rem,28vw)] shrink truncate rounded-sm text-left text-sm font-semibold tracking-tight text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:max-w-[11rem]"
+              onClick={onBrandClick}
+              title={brandAccessibleName}
+              aria-label={brandAccessibleName}
+            >
+              {brandText}
+            </button>
+          ) : null}
 
           <Menubar
             ref={leftMenubarRef}

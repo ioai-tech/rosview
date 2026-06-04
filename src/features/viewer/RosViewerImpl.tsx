@@ -250,6 +250,10 @@ export interface RosViewerProps {
   extensions?: RosViewExtension[];
   /** Optional center label override shown in navbar source area. */
   navbarSourceName?: string;
+  /** Whether to show the left navbar brand button. @default true */
+  showNavbarBrand?: boolean;
+  /** Custom label for the left navbar brand button (defaults to product name). */
+  navbarBrandLabel?: string;
   /** Whether to show navbar language switcher. @default true */
   showLanguageSwitcher?: boolean;
   /** Whether to show navbar theme switcher. @default true */
@@ -1145,6 +1149,8 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
       onLanguageChange={handleLanguageChange}
       showLanguageSwitcher={props.showLanguageSwitcher ?? true}
       showThemeSwitcher={props.showThemeSwitcher ?? true}
+      showNavbarBrand={props.showNavbarBrand ?? true}
+      navbarBrandLabel={props.navbarBrandLabel}
       onBrandClick={handleGoHome}
       preferAutoLayout={props.preferAutoLayout ?? false}
       preferencePersistence={persistence}
@@ -1206,6 +1212,8 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
             onLanguageChange={handleLanguageChange}
             showLanguageSwitcher={props.showLanguageSwitcher ?? true}
             showThemeSwitcher={props.showThemeSwitcher ?? true}
+            showNavbarBrand={props.showNavbarBrand ?? true}
+            brandLabel={props.navbarBrandLabel}
             onBrandClick={handleGoHome}
             onOpenFilePick={() => {
               clearOpenFeedback();
@@ -1309,6 +1317,8 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
               onLanguageChange={handleLanguageChange}
               showLanguageSwitcher={props.showLanguageSwitcher ?? true}
               showThemeSwitcher={props.showThemeSwitcher ?? true}
+              showNavbarBrand={props.showNavbarBrand ?? true}
+              brandLabel={props.navbarBrandLabel}
               onBrandClick={handleGoHome}
               onOpenFilePick={() => {
                 clearOpenFeedback();

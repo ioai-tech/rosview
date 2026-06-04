@@ -31,6 +31,8 @@ The component requires its bundled CSS. Import it once at your application root:
 import '@ioai/rosview/style.css';
 ```
 
+Styles are scoped to `#rosview-root` inside the bundle, so Tailwind preflight does not reset global elements (navbar, buttons, etc.) in your host application.
+
 ---
 
 ## Step 2 — Basic usage
@@ -130,6 +132,29 @@ const rows = parseRemoteDatasetListJson(await res.json());
 
 <RosViewer fileManifest={rows} />
 ```
+
+---
+
+## Advanced: Navbar branding
+
+The navbar shows **ROS View** on the left by default. When embedding inside a larger app, you can hide it or replace it with your product name:
+
+```tsx
+// Hide the brand button (File / Layout menus remain)
+<RosViewer url="..." showNavbarBrand={false} />
+
+// Replace with host branding
+<RosViewer url="..." navbarBrandLabel="Acme Data Portal" />
+```
+
+Related props:
+
+| Prop | Description |
+|------|-------------|
+| `showNavbarBrand` | Left brand button visibility (`true` by default). |
+| `navbarBrandLabel` | Custom brand text; defaults to the localized product name. |
+| `navbarSourceName` | Center label for the active dataset (separate from brand). |
+| `showNavbar` | Hides the entire navbar when `false` (via `chrome` or explicit prop). |
 
 ---
 

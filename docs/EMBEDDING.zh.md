@@ -31,6 +31,8 @@ npm install @ioai/rosview
 import '@ioai/rosview/style.css';
 ```
 
+样式在构建产物中限定在 `#rosview-root` 内，Tailwind preflight 不会重置宿主应用的全局元素（导航栏、按钮等）。
+
 ---
 
 ## 步骤 2 — 基本用法
@@ -130,6 +132,29 @@ const rows = parseRemoteDatasetListJson(await res.json());
 
 <RosViewer fileManifest={rows} />
 ```
+
+---
+
+## 进阶：Navbar 品牌文案
+
+Navbar 左侧默认显示 **ROS View**。嵌入到更大页面时，可以隐藏或替换为你的产品名：
+
+```tsx
+// 隐藏品牌按钮（File / Layout 菜单仍保留）
+<RosViewer url="..." showNavbarBrand={false} />
+
+// 替换为宿主品牌
+<RosViewer url="..." navbarBrandLabel="Acme 数据平台" />
+```
+
+相关 props：
+
+| Prop | 说明 |
+|------|------|
+| `showNavbarBrand` | 左侧品牌按钮是否显示（默认 `true`）。 |
+| `navbarBrandLabel` | 自定义品牌文案；未设置时使用本地化产品名。 |
+| `navbarSourceName` | 中间区域的数据源名称（与品牌文案无关）。 |
+| `showNavbar` | 设为 `false` 时隐藏整条 Navbar（通过 `chrome` 或显式 prop）。 |
 
 ---
 
