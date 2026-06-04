@@ -63,6 +63,42 @@ describe('extractPlotPathValues', () => {
       { key: 'velocity[1]', label: 'velocity[1]', value: 4 },
     ]);
   });
+
+  it('uses Foxglove inclusive bounds for bounded slices', () => {
+    expect(extractPlotPathValues({ position: [0.1, 0.2, 0.3] }, 'position[1:2]')).toEqual([
+      { key: 'position[1]', label: 'position[1]', value: 0.2 },
+      { key: 'position[2]', label: 'position[2]', value: 0.3 },
+    ]);
+    expect(extractPlotPathValues({ data: [1, 2, 3, 4, 5] }, 'data[1:3]')).toEqual([
+      { key: 'data[1]', label: 'data[1]', value: 2 },
+      { key: 'data[2]', label: 'data[2]', value: 3 },
+      { key: 'data[3]', label: 'data[3]', value: 4 },
+    ]);
+    expect(extractPlotPathValues({ numbers: [3, 5, 7, 9, 10] }, 'numbers[-2:-1]')).toEqual([
+      { key: 'numbers[3]', label: 'numbers[3]', value: 9 },
+      { key: 'numbers[4]', label: 'numbers[4]', value: 10 },
+    ]);
+  });
+
+  it('maps inclusive JointState slices by name', () => {
+    const message = { name: ['shoulder', 'elbow', 'wrist'], position: [0.1, 0.2, 0.3] };
+    expect(extractPlotPathValues(message, 'position[1:2]')).toEqual([
+      { key: 'position[elbow]', label: 'position[1] (elbow)', value: 0.2 },
+      { key: 'position[wrist]', label: 'position[2] (wrist)', value: 0.3 },
+    ]);
+  });
+
+  it('supports hyphen slice syntax as an alias for colon slices', () => {
+    const message = { position: [0.1, 0.2, 0.3] };
+    const colon = extractPlotPathValues(message, 'position[1:2]');
+    expect(extractPlotPathValues(message, 'position[1-2]')).toEqual(colon);
+    expect(extractPlotPathValues({ numbers: [3, 5, 7, 9, 10] }, 'numbers[-2--1]')).toEqual(
+      extractPlotPathValues({ numbers: [3, 5, 7, 9, 10] }, 'numbers[-2:-1]'),
+    );
+    expect(extractPlotPathValues({ data: [1, 2, 3, 4, 5] }, 'data[2-]')).toEqual(
+      extractPlotPathValues({ data: [1, 2, 3, 4, 5] }, 'data[2:]'),
+    );
+  });
 });
 
 describe('isArrayLikePlotPath', () => {
@@ -75,6 +111,8 @@ describe('isArrayLikePlotPath', () => {
     expect(isArrayLikePlotPath('data[1:5]')).toBe(true);
     expect(isArrayLikePlotPath('data[:5]')).toBe(true);
     expect(isArrayLikePlotPath('data[2:]')).toBe(true);
+    expect(isArrayLikePlotPath('position[1-2]')).toBe(true);
+    expect(isArrayLikePlotPath('data[2-]')).toBe(true);
   });
 
   it('treats scalar paths as not array-like', () => {

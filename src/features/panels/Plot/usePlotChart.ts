@@ -121,6 +121,28 @@ export function diffSeriesTopology(
 
 export type { SeriesSignature };
 
+/** uPlot index 0 is the X series; Y series count is `chart.series.length - 1`. */
+export function plotChartYSeriesCount(chart: uPlot): number {
+  return chart.series.length - 1;
+}
+
+/**
+ * Returns true when incremental add/del would be unsafe and the chart should remount.
+ * Exported for unit tests.
+ */
+export function shouldRemountForIncrementalSeriesUpdate(
+  chartYCount: number,
+  prevSignatureCount: number,
+  diff: DiffResult,
+  nextSignatureCount: number,
+): boolean {
+  if (chartYCount !== prevSignatureCount) return true;
+  if (diff.kind === 'pureDel' && diff.removedCount > chartYCount - nextSignatureCount) {
+    return true;
+  }
+  return false;
+}
+
 export function usePlotChart({
   containerRef,
   player,
@@ -214,6 +236,18 @@ export function usePlotChart({
     const diff = diffSeriesTopology(seriesSignaturesRef.current, nextSignatures);
 
     if (diff.kind === 'remount') {
+      mountChart();
+      return;
+    }
+
+    const chartYCount = plotChartYSeriesCount(chart);
+    const prevSignatureCount = seriesSignaturesRef.current.length;
+    if (shouldRemountForIncrementalSeriesUpdate(
+      chartYCount,
+      prevSignatureCount,
+      diff,
+      nextSignatures.length,
+    )) {
       mountChart();
       return;
     }

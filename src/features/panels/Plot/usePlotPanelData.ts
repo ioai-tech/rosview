@@ -110,6 +110,7 @@ export function usePlotPanelData({
     }
 
     const controller = new AbortController();
+    setDataset(EMPTY_DATASET);
     setLoading(true);
     setProgress(null);
     setError(null);

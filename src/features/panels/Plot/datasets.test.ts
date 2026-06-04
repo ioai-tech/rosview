@@ -67,6 +67,30 @@ describe('buildPlotDataset', () => {
     expect(dataset.data[2]).toEqual([0.2, 0.4]);
   });
 
+  it('builds bounded JointState slices with Foxglove inclusive bounds', () => {
+    const config = {
+      ...defaultPlotConfig(),
+      series: [{
+        ...defaultPlotConfig().series[0],
+        id: 'joints',
+        topic: '/joint_states',
+        path: 'position[1:2]',
+        timestampMode: 'receiveTime' as const,
+      }],
+    };
+    const dataset = buildPlotDataset(
+      [
+        event('/joint_states', 1, { name: ['a', 'b', 'c'], position: [0.1, 0.2, 0.3] }, 'sensor_msgs/msg/JointState'),
+      ],
+      config,
+    );
+    expect(dataset.series.map((series) => series.label)).toEqual([
+      'position[1] (b)',
+      'position[2] (c)',
+    ]);
+    expect(dataset.data.length).toBe(3);
+  });
+
   it('uses only the latest message in index mode', () => {
     const config = {
       ...defaultPlotConfig(),

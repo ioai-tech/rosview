@@ -83,19 +83,46 @@ function readNames(message: unknown): string[] {
   return out;
 }
 
-function parseSelector(raw: string | undefined): Selector {
-  if (raw == null) return { kind: 'none' };
-  const selector = raw.trim();
-  if (selector === '' || selector === ':') return { kind: 'slice' };
+/** `position[1-2]` — hyphen range (both ends inclusive, same as `position[1:2]`). */
+const SLICE_HYPHEN_RANGE_RE = /^(-?\d+)-(-?\d+)$/;
+/** `position[2-]` — hyphen open end (same as `position[2:]`). */
+const SLICE_HYPHEN_START_RE = /^(-?\d+)-$/;
+
+function tryParseSliceSelector(selector: string): { start?: number; end?: number } | null {
+  if (selector === '' || selector === ':' || selector === '-') {
+    return { start: undefined, end: undefined };
+  }
   if (selector.includes(':')) {
     const [startRaw, endRaw] = selector.split(':', 2);
     const start = startRaw ? Number(startRaw) : undefined;
     const end = endRaw ? Number(endRaw) : undefined;
     return {
-      kind: 'slice',
       start: Number.isFinite(start) ? start : undefined,
       end: Number.isFinite(end) ? end : undefined,
     };
+  }
+  const hyphenRange = SLICE_HYPHEN_RANGE_RE.exec(selector);
+  if (hyphenRange) {
+    const start = Number(hyphenRange[1]);
+    const end = Number(hyphenRange[2]);
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      return { start, end };
+    }
+  }
+  const hyphenStart = SLICE_HYPHEN_START_RE.exec(selector);
+  if (hyphenStart) {
+    const start = Number(hyphenStart[1]);
+    if (Number.isFinite(start)) return { start, end: undefined };
+  }
+  return null;
+}
+
+function parseSelector(raw: string | undefined): Selector {
+  if (raw == null) return { kind: 'none' };
+  const selector = raw.trim();
+  const slice = tryParseSliceSelector(selector);
+  if (slice) {
+    return { kind: 'slice', start: slice.start, end: slice.end };
   }
   const index = Number(selector);
   if (Number.isInteger(index)) return { kind: 'index', index };
@@ -125,6 +152,26 @@ function normalizeIndex(index: number, length: number): number | undefined {
   return normalized >= 0 && normalized < length ? normalized : undefined;
 }
 
+/** Foxglove-style slice bounds: both ends inclusive when specified. */
+function resolveSliceBounds(
+  selector: { start?: number; end?: number },
+  length: number,
+): { startIdx: number; endIdx: number } | null {
+  if (length === 0) return null;
+
+  const resolveBound = (index: number | undefined, fallback: number): number => {
+    if (index === undefined) return fallback;
+    const normalized = index < 0 ? length + index : index;
+    if (normalized < 0) return -1;
+    return Math.min(length - 1, normalized);
+  };
+
+  const startIdx = resolveBound(selector.start, 0);
+  const endIdx = resolveBound(selector.end, length - 1);
+  if (startIdx < 0 || endIdx < 0 || startIdx > endIdx) return null;
+  return { startIdx, endIdx };
+}
+
 function selectorItems(
   value: unknown,
   selector: Selector,
@@ -151,11 +198,12 @@ function selectorItems(
         }];
   }
 
-  const start = Math.max(0, selector.start ?? 0);
-  const end = Math.min(value.length, selector.end ?? value.length);
+  const bounds = resolveSliceBounds(selector, value.length);
+  if (!bounds) return [];
+  const { startIdx, endIdx } = bounds;
   const names = readNames(message);
   const out: Array<{ key: string; label: string; value: unknown }> = [];
-  for (let i = start; i < end; i++) {
+  for (let i = startIdx; i <= endIdx; i++) {
     const name = names[i];
     const label = name ? `${field}[${i}] (${name})` : `${field}[${i}]`;
     const key = name ? `${field}[${name}]` : `${field}[${i}]`;
@@ -203,7 +251,7 @@ export function hasDerivativeModifier(path: string): boolean {
  *
  * Modes other than `timestamp` (index/custom/currentCustom) only produce
  * meaningful data when the Y-path expands to multiple values per message —
- * typically because it contains a slice selector (`[:]`, `[a:b]`).
+ * typically because it contains a slice selector (`[:]`, `[a:b]`, `[a-b]`).
  * Scalar paths like `data` or fixed-index paths like `position[0]` cannot
  * usefully drive the index/custom X axes; we use this to disable the
  * corresponding settings options up-front instead of producing a silent

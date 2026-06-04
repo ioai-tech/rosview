@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { diffSeriesTopology, type SeriesSignature } from './usePlotChart';
+import {
+  diffSeriesTopology,
+  shouldRemountForIncrementalSeriesUpdate,
+  type SeriesSignature,
+} from './usePlotChart';
 
 function sig(key: string, meta = 'l|#000|solid|1', show = true): SeriesSignature {
   return { key, meta, show };
@@ -52,5 +56,27 @@ describe('diffSeriesTopology', () => {
     const a: SeriesSignature[] = [];
     const b = [sig('a'), sig('b')];
     expect(diffSeriesTopology(a, b)).toMatchObject({ kind: 'pureAdd', addedAt: 0 });
+  });
+});
+
+describe('shouldRemountForIncrementalSeriesUpdate', () => {
+  it('remounts when chart Y count does not match signature ref', () => {
+    expect(shouldRemountForIncrementalSeriesUpdate(2, 3, { kind: 'pureDel', removedFrom: 1, removedCount: 2 }, 1))
+      .toBe(true);
+  });
+
+  it('remounts when pureDel would delete more series than chart has', () => {
+    expect(shouldRemountForIncrementalSeriesUpdate(2, 2, { kind: 'pureDel', removedFrom: 1, removedCount: 2 }, 1))
+      .toBe(true);
+  });
+
+  it('allows pureDel when chart and ref are in sync', () => {
+    expect(shouldRemountForIncrementalSeriesUpdate(3, 3, { kind: 'pureDel', removedFrom: 1, removedCount: 2 }, 1))
+      .toBe(false);
+  });
+
+  it('allows pureAdd when chart and ref are in sync', () => {
+    expect(shouldRemountForIncrementalSeriesUpdate(1, 1, { kind: 'pureAdd', added: [sig('b')], addedAt: 1 }, 2))
+      .toBe(false);
   });
 });
