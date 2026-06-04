@@ -473,24 +473,26 @@ export const PlaybackBar: React.FC<PlaybackBarProps> = ({ player, extensionConte
             <div
               key={`loaded-${idx}`}
               data-testid="playback-loaded-range"
-              className="absolute top-0 h-full rounded-full bg-muted-foreground/35"
+              className="pointer-events-none absolute inset-y-0 rounded-full bg-muted-foreground/35"
               style={{ left: `${range.left}%`, width: `${range.width}%` }}
             />
           ))}
           <div
             ref={fillRef}
-            className="absolute top-0 left-0 h-full rounded-full bg-gradient-to-r from-primary/75 to-primary"
+            data-testid="playback-progress-fill"
+            className="pointer-events-none absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary/75 to-primary"
             style={{ width: '0%' }}
           />
           <div
             ref={hoverLineRef}
-            className="pointer-events-none absolute top-1/2 h-6 w-px -translate-y-1/2 bg-primary/55 opacity-0"
+            data-testid="playback-hover-line"
+            className="pointer-events-none absolute top-1/2 z-[2] h-6 w-px -translate-x-1/2 -translate-y-1/2 bg-primary/55 opacity-0"
             style={{ left: '0%' }}
           />
           <div
             ref={thumbRef}
             data-testid="playback-thumb"
-            className="pointer-events-none absolute top-1/2 z-[3] h-3 w-3 -translate-y-1/2 -translate-x-1/2 rounded-full border border-primary bg-background"
+            className="pointer-events-none absolute top-1/2 z-[3] h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary bg-background"
             style={{ left: '0%' }}
           />
           <div

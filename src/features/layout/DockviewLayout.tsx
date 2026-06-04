@@ -381,11 +381,20 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({
     if (!apiRef.current || topics.length === 0) return;
     const api = apiRef.current;
     if (
+      preferAutoLayoutRef.current &&
       hasAutoInitializedRef.current &&
       layoutDatasetSignatureRef.current &&
       layoutDatasetSignatureRef.current !== currentDatasetSignature
     ) {
       reapplyAutoLayout();
+      layoutDatasetSignatureRef.current = currentDatasetSignature;
+      return;
+    }
+    if (
+      hasAutoInitializedRef.current &&
+      layoutDatasetSignatureRef.current &&
+      layoutDatasetSignatureRef.current !== currentDatasetSignature
+    ) {
       layoutDatasetSignatureRef.current = currentDatasetSignature;
       return;
     }
