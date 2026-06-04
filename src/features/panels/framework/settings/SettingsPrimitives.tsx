@@ -1,4 +1,11 @@
-import React, { useCallback, useId, useRef, useState, type ReactNode } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { TopicInfo } from '@/core/types/ros';
 import { Slider } from '@/shared/ui/slider';
@@ -131,8 +138,39 @@ interface NumberInputProps {
   step?: number;
   disabled?: boolean;
   name?: string;
+  placeholder?: string;
 }
 
+function clampNumber(value: number, min?: number, max?: number): number {
+  let next = value;
+  if (typeof min === 'number' && next < min) next = min;
+  if (typeof max === 'number' && next > max) next = max;
+  return next;
+}
+
+function isPartialNumericInput(raw: string): boolean {
+  // Strings that are valid mid-typing but not yet a complete number.
+  // e.g. '', '-', '.', '-.', '1.', '1e', '1e-', '-1.'
+  if (raw === '' || raw === '-' || raw === '+' || raw === '.' || raw === '-.' || raw === '+.') {
+    return true;
+  }
+  return /^[+-]?(\d+\.?|\.\d+|\d+\.\d+)([eE][+-]?)?$/.test(raw) && !Number.isFinite(Number(raw));
+}
+
+function formatNumber(value: number): string {
+  if (!Number.isFinite(value)) return '';
+  return String(value);
+}
+
+/**
+ * Numeric input with min/max clamping and a forgiving editing experience:
+ * - Allows the field to be empty / partial (`-`, `1.`, `.5`) while typing.
+ * - Commits a clamped numeric value as the user types valid numbers.
+ * - On blur: clamps an out-of-range value, or reverts to the last valid
+ *   external value if the field is empty / invalid.
+ * - Enter commits; Escape reverts.
+ * - External `value` changes are reflected unless the user is mid-edit.
+ */
 export const SettingsNumber: React.FC<NumberInputProps> = ({
   value,
   onChange,
@@ -141,24 +179,124 @@ export const SettingsNumber: React.FC<NumberInputProps> = ({
   step,
   disabled,
   name,
-}) => (
-  <input
-    type="number"
-    name={name}
-    value={Number.isFinite(value) ? value : 0}
-    min={min}
-    max={max}
-    step={step}
-    disabled={disabled}
-    onChange={(event) => {
-      const parsed = Number(event.target.value);
-      if (Number.isFinite(parsed)) {
-        onChange(parsed);
+  placeholder,
+}) => {
+  const [text, setText] = useState<string>(() => formatNumber(value));
+  const focusedRef = useRef(false);
+  // Last numeric value mirrored from props, used when reverting partial input.
+  const externalValueRef = useRef(value);
+
+  useEffect(() => {
+    externalValueRef.current = value;
+    if (focusedRef.current) {
+      // Don't yank the field while the user is mid-typing.
+      return;
+    }
+    const formatted = formatNumber(value);
+    // Only update display when the parsed values differ to avoid clobbering
+    // intermediate text like `1.` while the user types.
+    if (Number(text) !== value || text === '') {
+      setText(formatted);
+    }
+  }, [value, text]);
+
+  const commitFromText = useCallback(
+    (raw: string): { committed: boolean; nextText: string } => {
+      const trimmed = raw.trim();
+      if (trimmed === '' || isPartialNumericInput(trimmed)) {
+        return { committed: false, nextText: formatNumber(externalValueRef.current) };
       }
-    }}
-    className="w-full border border-input rounded-sm bg-background px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
-  />
-);
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed)) {
+        return { committed: false, nextText: formatNumber(externalValueRef.current) };
+      }
+      const clamped = clampNumber(parsed, min, max);
+      if (clamped !== externalValueRef.current) {
+        onChange(clamped);
+      }
+      return { committed: true, nextText: formatNumber(clamped) };
+    },
+    [max, min, onChange],
+  );
+
+  const handleChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = event.target.value;
+      setText(raw);
+      const trimmed = raw.trim();
+      if (trimmed === '' || isPartialNumericInput(trimmed)) {
+        return;
+      }
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed)) return;
+      const clamped = clampNumber(parsed, min, max);
+      if (clamped !== externalValueRef.current) {
+        onChange(clamped);
+      }
+    },
+    [max, min, onChange],
+  );
+
+  const handleBlur = useCallback(() => {
+    focusedRef.current = false;
+    const { nextText } = commitFromText(text);
+    setText(nextText);
+  }, [commitFromText, text]);
+
+  const handleFocus = useCallback((event: React.FocusEvent<HTMLInputElement>) => {
+    focusedRef.current = true;
+    // Select existing content so a fresh value (e.g. typing `5` over `0`) replaces it,
+    // avoiding leading-zero artifacts like `05`.
+    event.currentTarget.select();
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const { nextText } = commitFromText(text);
+        setText(nextText);
+        event.currentTarget.blur();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        setText(formatNumber(externalValueRef.current));
+        event.currentTarget.blur();
+      } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        const stepSize =
+          typeof step === 'number' && step > 0 ? step : 1;
+        const direction = event.key === 'ArrowUp' ? 1 : -1;
+        const base = Number.isFinite(externalValueRef.current)
+          ? externalValueRef.current
+          : 0;
+        const next = clampNumber(base + direction * stepSize, min, max);
+        event.preventDefault();
+        setText(formatNumber(next));
+        if (next !== externalValueRef.current) onChange(next);
+      }
+    },
+    [commitFromText, max, min, onChange, step, text],
+  );
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      name={name}
+      value={text}
+      placeholder={placeholder}
+      min={min}
+      max={max}
+      step={step}
+      disabled={disabled}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      onFocus={handleFocus}
+      onKeyDown={handleKeyDown}
+      autoComplete="off"
+      className="w-full border border-input rounded-sm bg-background px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
+    />
+  );
+};
 
 export const SettingsTextArea: React.FC<TextInputProps & { rows?: number }> = ({
   value,

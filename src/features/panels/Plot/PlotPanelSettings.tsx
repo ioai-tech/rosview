@@ -25,6 +25,7 @@ import {
   type PlotXAxisMode,
 } from './defaults';
 import { exportPlotCsvFromConfig } from './exportCsv';
+import { isArrayLikePlotPath } from './messagePath';
 import { filterPlottableTopics, isPlottableSchema } from './plottableSchemas';
 import {
   addPlotSeriesToConfig,
@@ -64,15 +65,42 @@ export function PlotPanelSettings({
     endTime,
   });
 
-  const xAxisOptions = useMemo(
-    () => [
-      { value: 'timestamp' as const, label: formatMessage({ id: 'panels.plot.settings.enum.xAxis.timestamp' }) },
-      { value: 'index' as const, label: formatMessage({ id: 'panels.plot.settings.enum.xAxis.index' }) },
-      { value: 'custom' as const, label: formatMessage({ id: 'panels.plot.settings.enum.xAxis.custom' }) },
-      { value: 'currentCustom' as const, label: formatMessage({ id: 'panels.plot.settings.enum.xAxis.currentCustom' }) },
-    ],
-    [formatMessage],
-  );
+  const xAxisOptions = useMemo(() => {
+    const primary = config.series[0];
+    const pathLooksArray = isArrayLikePlotPath(primary?.path ?? '');
+    const hasXPath = (primary?.xAxisPath ?? '').trim().length > 0;
+
+    const arrayHint = formatMessage({ id: 'panels.plot.settings.enum.xAxis.requiresArrayHint' });
+    const xPathHint = formatMessage({ id: 'panels.plot.settings.enum.xAxis.requiresXPathHint' });
+
+    return [
+      {
+        value: 'timestamp' as const,
+        label: formatMessage({ id: 'panels.plot.settings.enum.xAxis.timestamp' }),
+      },
+      {
+        value: 'index' as const,
+        label:
+          formatMessage({ id: 'panels.plot.settings.enum.xAxis.index' })
+          + (pathLooksArray ? '' : ` ${arrayHint}`),
+        disabled: !pathLooksArray,
+      },
+      {
+        value: 'custom' as const,
+        label:
+          formatMessage({ id: 'panels.plot.settings.enum.xAxis.custom' })
+          + (pathLooksArray ? (hasXPath ? '' : ` ${xPathHint}`) : ` ${arrayHint}`),
+        disabled: !pathLooksArray || !hasXPath,
+      },
+      {
+        value: 'currentCustom' as const,
+        label:
+          formatMessage({ id: 'panels.plot.settings.enum.xAxis.currentCustom' })
+          + (pathLooksArray ? (hasXPath ? '' : ` ${xPathHint}`) : ` ${arrayHint}`),
+        disabled: !pathLooksArray || !hasXPath,
+      },
+    ];
+  }, [config.series, formatMessage]);
 
   const timestampOptions = useMemo(
     () => [

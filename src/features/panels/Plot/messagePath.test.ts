@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractPlotPathValues } from './messagePath';
+import { extractPlotPathValues, isArrayLikePlotPath } from './messagePath';
 
 describe('extractPlotPathValues', () => {
   it('extracts scalar numeric fields', () => {
@@ -62,5 +62,39 @@ describe('extractPlotPathValues', () => {
       { key: 'velocity[0]', label: 'velocity[0]', value: 3 },
       { key: 'velocity[1]', label: 'velocity[1]', value: 4 },
     ]);
+  });
+});
+
+describe('isArrayLikePlotPath', () => {
+  it('detects [:] slice as array-like', () => {
+    expect(isArrayLikePlotPath('position[:]')).toBe(true);
+    expect(isArrayLikePlotPath('data[:]')).toBe(true);
+  });
+
+  it('detects bounded slice as array-like', () => {
+    expect(isArrayLikePlotPath('data[1:5]')).toBe(true);
+    expect(isArrayLikePlotPath('data[:5]')).toBe(true);
+    expect(isArrayLikePlotPath('data[2:]')).toBe(true);
+  });
+
+  it('treats scalar paths as not array-like', () => {
+    expect(isArrayLikePlotPath('data')).toBe(false);
+    expect(isArrayLikePlotPath('header.stamp.sec')).toBe(false);
+    expect(isArrayLikePlotPath('')).toBe(false);
+  });
+
+  it('treats fixed-index paths as not array-like', () => {
+    expect(isArrayLikePlotPath('position[0]')).toBe(false);
+    expect(isArrayLikePlotPath('position[shoulder]')).toBe(false);
+  });
+
+  it('returns true if any subpath in a list is array-like', () => {
+    expect(isArrayLikePlotPath('position[0],velocity[:]')).toBe(true);
+    expect(isArrayLikePlotPath('position[0],velocity[1]')).toBe(false);
+  });
+
+  it('ignores @modifiers', () => {
+    expect(isArrayLikePlotPath('data[:]@derivative')).toBe(true);
+    expect(isArrayLikePlotPath('data@abs')).toBe(false);
   });
 });

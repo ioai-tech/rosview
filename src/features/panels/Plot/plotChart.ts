@@ -2,7 +2,7 @@ import uPlot from 'uplot';
 import { timeToSec } from '@/core/analysis/timeSeries';
 import type { Time } from '@/core/types/ros';
 import { formatDurationNs } from '@/shared/utils/time';
-import type { PlotDataset } from './datasets';
+import type { PlotDataset, PlotRuntimeSeries } from './datasets';
 import type { PlotXAxisMode } from './defaults';
 
 export interface PlotChartColors {
@@ -258,9 +258,82 @@ export interface PlotChartBuildContext {
   logStart?: Time;
   getCurrentTimeSec: () => number | undefined;
   colors: PlotChartColors;
+  /**
+   * When provided and returning true, the Y scale is *extended* across data
+   * updates rather than recomputed — this prevents the chart from visibly
+   * jumping while a range read is still streaming in. When the predicate
+   * returns false (i.e. the data is no longer growing), normal auto-fit
+   * behaviour resumes on the next setData/redraw.
+   */
+  isLoading?: () => boolean;
 }
 
 export type PlotUplotOptions = Omit<uPlot.Options, 'width' | 'height'>;
+
+export function buildPlotSeriesOption(series: PlotRuntimeSeries, show: boolean): uPlot.Series {
+  return {
+    label: series.label,
+    stroke: series.color,
+    width: series.lineSize,
+    show,
+    points: { show: false },
+    dash: series.lineStyle === 'dashed' ? [6, 4] : undefined,
+    spanGaps: true,
+  };
+}
+
+/**
+ * State held outside the chart so the Y scale can extend smoothly across
+ * incremental setData() calls during a range read instead of jittering as
+ * each batch arrives.
+ */
+interface YScaleLockState {
+  min: number;
+  max: number;
+}
+
+const yScaleLockByChart = new WeakMap<uPlot, YScaleLockState>();
+
+export function resetPlotYScaleLock(chart: uPlot): void {
+  yScaleLockByChart.delete(chart);
+}
+
+function buildYScaleRange(
+  ctx: PlotChartBuildContext,
+): (u: uPlot, dataMin: number, dataMax: number) => uPlot.Range.MinMax {
+  const isLoading = ctx.isLoading;
+  return (u, dataMin, dataMax) => {
+    const finite = Number.isFinite(dataMin) && Number.isFinite(dataMax) && dataMax >= dataMin;
+    const fallback: uPlot.Range.MinMax = finite
+      ? uPlot.rangeNum(dataMin, dataMax, 0.1, true)
+      : [0, 1];
+
+    if (!isLoading || !isLoading()) {
+      yScaleLockByChart.delete(u);
+      return fallback;
+    }
+
+    const next = yScaleLockByChart.get(u);
+    if (!finite) {
+      return next ? [next.min, next.max] : fallback;
+    }
+    const autoMin = fallback[0];
+    const autoMax = fallback[1];
+    if (autoMin == null || autoMax == null) {
+      return next ? [next.min, next.max] : fallback;
+    }
+    if (!next) {
+      yScaleLockByChart.set(u, { min: autoMin, max: autoMax });
+      return [autoMin, autoMax];
+    }
+    const merged = {
+      min: Math.min(next.min, autoMin),
+      max: Math.max(next.max, autoMax),
+    };
+    yScaleLockByChart.set(u, merged);
+    return [merged.min, merged.max];
+  };
+}
 
 export function createPlotUplotOptions(
   dataset: PlotDataset,
@@ -287,15 +360,9 @@ export function createPlotUplotOptions(
     id: panelId,
     series: [
       { label: dataset.xLabel },
-      ...dataset.series.map((series, index) => ({
-        label: series.label,
-        stroke: series.color,
-        width: series.lineSize,
-        show: !hiddenSeries.has(index),
-        points: { show: false },
-        dash: series.lineStyle === 'dashed' ? [6, 4] : undefined,
-        spanGaps: true,
-      })),
+      ...dataset.series.map((series, index) =>
+        buildPlotSeriesOption(series, !hiddenSeries.has(index)),
+      ),
     ],
     axes: [
       {
@@ -323,6 +390,9 @@ export function createPlotUplotOptions(
         // Relative-time ticks are generated in computeRelativeTimeSplits; epoch alignment breaks at log start.
         time: xAxisMode === 'timestamp' && !useRelativeTimeAxis,
         ...(xRange ?? {}),
+      },
+      y: {
+        range: buildYScaleRange(ctx),
       },
     },
     hooks: {

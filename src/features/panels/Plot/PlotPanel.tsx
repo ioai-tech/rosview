@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useIntl } from 'react-intl';
 import { useShallow } from 'zustand/react/shallow';
+import { Maximize2 } from 'lucide-react';
 import 'uplot/dist/uPlot.min.css';
 import type { MessagePipelineState } from '@/core/pipeline/store';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
@@ -10,10 +11,11 @@ import type { JointStateField, PlotConfig } from './defaults';
 import { JOINT_STATE_FIELDS } from './defaults';
 import { filterPlottableTopics } from './plottableSchemas';
 import { pickDefaultPlotTopic } from './pickDefaultPlotTopic';
-import { secToTime } from './plotChart';
+import { resetPlotYScaleLock, secToTime } from './plotChart';
 import { applyJointStateFieldsToConfig, pruneHiddenLegendKeysForDataset } from './plotConfigActions';
 import {
   buildTopicByName,
+  hasConfiguredPlotPaths,
   hasEnabledPlotPaths,
   isPrimaryJointState,
   selectActivePlotTopics,
@@ -90,7 +92,8 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     () => selectActivePlotTopics(config, topicByName),
     [config, topicByName],
   );
-  const hasPlotPaths = useMemo(() => hasEnabledPlotPaths(config), [config]);
+  const hasPlotPaths = useMemo(() => hasConfiguredPlotPaths(config), [config]);
+  const hasEnabledSeries = useMemo(() => hasEnabledPlotPaths(config), [config]);
   const primary = selectPrimarySeries(config);
   const showJointStateFields = isPrimaryJointState(config, topicByName);
 
@@ -132,6 +135,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     hiddenSeries,
     xRange,
     logStart: startTime,
+    loading,
   });
 
   useEffect(() => {
@@ -191,7 +195,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     ? formatPlotDatasetWarning(primaryWarning, formatMessage)
     : undefined;
 
-  const hasSeries = activeTopics.length > 0 && hasPlotPaths;
+  const hasSeries = activeTopics.length > 0 && hasEnabledSeries;
   const status = detectingTopic
     ? formatMessage({ id: 'panels.plot.status.detectingPaths' })
     : loading
@@ -220,6 +224,24 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     }
   };
 
+  const handleResetZoom = useCallback(() => {
+    const chart = uplotRef.current;
+    if (!chart) return;
+    resetPlotYScaleLock(chart);
+    if (config.xAxisMode === 'timestamp' && xRange) {
+      chart.setScale('x', xRange);
+    } else {
+      // Trigger uPlot to derive the X scale from data.
+      chart.setScale('x', { min: chart.scales.x.min ?? 0, max: chart.scales.x.max ?? 1 });
+    }
+    chart.redraw(true, true);
+  }, [config.xAxisMode, uplotRef, xRange]);
+
+  const hasChart = dataset.series.length > 0;
+  const showLoadingOverlay = loading && dataset.pointCount === 0;
+  const progressFraction =
+    progress && progress.total > 0 ? Math.min(1, progress.completed / progress.total) : null;
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted px-2 py-1">
@@ -239,11 +261,35 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
             onChange={handleJointStateFieldsChange}
           />
         )}
+        {hasChart && (
+          <button
+            type="button"
+            onClick={handleResetZoom}
+            title={formatMessage({ id: 'panels.plot.toolbar.resetZoom' })}
+            aria-label={formatMessage({ id: 'panels.plot.toolbar.resetZoom' })}
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </button>
+        )}
         {status && (
           <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{status}</span>
         )}
       </div>
       <div className="relative min-h-0 flex-1 flex flex-col">
+        {/* Slim progress bar that runs across the top while the range read streams in. */}
+        {loading && (
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 bg-transparent">
+            {progressFraction == null ? (
+              <div className="h-full w-1/3 animate-pulse rounded-r-full bg-primary/60" />
+            ) : (
+              <div
+                className="h-full bg-primary/70 transition-[width] duration-150 ease-linear"
+                style={{ width: `${Math.round(progressFraction * 100)}%` }}
+              />
+            )}
+          </div>
+        )}
         <div
           ref={containerRef}
           className="min-h-0 flex-1 w-full overflow-hidden"
@@ -252,6 +298,17 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
         {!hasSeries && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
             {formatMessage({ id: 'panels.plot.empty.selectTopic' })}
+          </div>
+        )}
+        {/* Centered overlay only on first paint; subsequent batches stream in on top of the chart. */}
+        {showLoadingOverlay && hasSeries && !error && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
+            {progress
+              ? formatMessage(
+                  { id: 'panels.plot.status.loadingProgress' },
+                  { count: progress.messages.toLocaleString() },
+                )
+              : formatMessage({ id: 'panels.plot.status.loading' })}
           </div>
         )}
         {hasSeries && !loading && !detectingTopic && !error && dataset.pointCount === 0 && (

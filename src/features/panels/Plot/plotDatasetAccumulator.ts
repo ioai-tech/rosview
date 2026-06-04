@@ -10,11 +10,11 @@ import {
   collectCustomPoints,
   collectIndexPoints,
   extractXValues,
-  isEnabledSeries,
+  isConfiguredSeries,
   pushPoint,
   quantizePlotX,
 } from './plotPointCollector';
-import type { PlotConfig } from './defaults';
+import type { PlotConfig, PlotSeriesConfig } from './defaults';
 import { extractPlotPathValues } from './messagePath';
 import { plotWarningKey, type PlotDatasetWarning } from './plotWarnings';
 
@@ -45,9 +45,23 @@ function datasetFromBuckets(
   config: PlotConfig,
   options: PlotDatasetAccumulatorOptions,
   warnings: PlotDatasetWarning[],
+  enabledSeriesIds?: ReadonlySet<string>,
 ): PlotDataset {
-  assignBucketColors(buckets);
-  const seriesBuckets = [...buckets.values()];
+  // Filter buckets to those whose owning series is currently enabled.
+  // The accumulator deliberately ingests buckets for *all configured* series
+  // (so visibility toggling never invalidates accumulated state), and applies
+  // the enabled filter only at build time.
+  const filteredBuckets =
+    enabledSeriesIds == null
+      ? buckets
+      : new Map(
+          [...buckets.entries()].filter(([, bucket]) =>
+            enabledSeriesIds.has(bucket.seriesConfigId),
+          ),
+        );
+
+  assignBucketColors(filteredBuckets);
+  const seriesBuckets = [...filteredBuckets.values()];
   const shouldDownsample = options.forceDownsample === true || config.downsampleMode === 'minMaxLast';
   const { data, sampleRatio } = alignBuckets(seriesBuckets, config.maxPoints, shouldDownsample);
   return {
@@ -96,7 +110,12 @@ export class PlotDatasetAccumulator {
     }
   }
 
-  buildDataset(): PlotDataset {
+  /**
+   * Build a dataset snapshot. When `enabledSeriesIds` is provided, only
+   * buckets owned by those series are emitted — letting callers re-render
+   * after visibility toggles without re-ingesting data.
+   */
+  buildDataset(enabledSeriesIds?: ReadonlySet<string>): PlotDataset {
     if (this._messageCount === 0) {
       return {
         ...EMPTY_DATASET,
@@ -105,36 +124,65 @@ export class PlotDatasetAccumulator {
       };
     }
 
+    const seriesFilter = (series: PlotSeriesConfig): boolean =>
+      isConfiguredSeries(series)
+      && (enabledSeriesIds ? enabledSeriesIds.has(series.id) : series.enabled);
+
     if (this._config.xAxisMode === 'index') {
       const warnings = Array.from(this._warnings.values());
-      const buckets = collectIndexPoints([...this._latestByTopic.values()], this._config);
-      return datasetFromBuckets(buckets, this._config, this._options, warnings);
+      // Re-collect at build time so we can apply the live enabled filter.
+      const filteredConfig = this._configWithSeriesFilter(seriesFilter);
+      const buckets = collectIndexPoints([...this._latestByTopic.values()], filteredConfig);
+      return datasetFromBuckets(buckets, filteredConfig, this._options, warnings);
     }
 
     if (this._config.xAxisMode === 'currentCustom') {
       const warnings = Array.from(this._warnings.values());
-      const buckets = collectCustomPoints([...this._latestByTopic.values()], this._config, true, warnings);
-      return datasetFromBuckets(buckets, this._config, this._options, warnings);
+      const filteredConfig = this._configWithSeriesFilter(seriesFilter);
+      const buckets = collectCustomPoints(
+        [...this._latestByTopic.values()],
+        filteredConfig,
+        true,
+        warnings,
+      );
+      return datasetFromBuckets(buckets, filteredConfig, this._options, warnings);
     }
 
     const warnings = Array.from(this._warnings.values());
     if (this._config.xAxisMode === 'timestamp') {
-      for (const series of this._config.series.filter(isEnabledSeries)) {
+      for (const series of this._config.series.filter(seriesFilter)) {
         if ((this._topicEventCounts.get(series.topic) ?? 0) > 0 && !this._timestampFoundBySeries.get(series.id)) {
           warnings.push({ kind: 'noNumericValues', topic: series.topic, path: series.path });
         }
       }
     }
 
-    return datasetFromBuckets(this._buckets, this._config, this._options, warnings);
+    return datasetFromBuckets(
+      this._buckets,
+      this._config,
+      this._options,
+      warnings,
+      new Set(this._config.series.filter(seriesFilter).map((s) => s.id)),
+    );
   }
 
   getMessageCount(): number {
     return this._messageCount;
   }
 
+  /** Build a config view with `series.enabled` rewritten by the supplied predicate. */
+  private _configWithSeriesFilter(predicate: (series: PlotSeriesConfig) => boolean): PlotConfig {
+    return {
+      ...this._config,
+      series: this._config.series.map((series) =>
+        predicate(series) ? series : { ...series, enabled: false },
+      ),
+    };
+  }
+
   private _appendTimestampEvent(event: MessageEvent): void {
-    for (const series of this._config.series.filter(isEnabledSeries)) {
+    // Ingest for ALL configured series — visibility filtering happens at buildDataset time.
+    for (const series of this._config.series.filter(isConfiguredSeries)) {
       if (series.topic !== event.topic) continue;
       const x = quantizePlotX(
         timeToSec(
@@ -157,7 +205,7 @@ export class PlotDatasetAccumulator {
   }
 
   private _appendCustomEvent(event: MessageEvent): void {
-    for (const series of this._config.series.filter(isEnabledSeries)) {
+    for (const series of this._config.series.filter(isConfiguredSeries)) {
       if (series.topic !== event.topic) continue;
       const xAxisPath = series.xAxisPath?.trim();
       if (!xAxisPath) {

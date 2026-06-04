@@ -4,7 +4,11 @@ import type { Time } from '@/core/types/ros';
 import type { PlotDataset } from './datasets';
 import type { PlotConfig } from './defaults';
 import { PlotDatasetAccumulator } from './plotDatasetAccumulator';
-import { plotDataConfigKey } from './plotConfigSelectors';
+import {
+  plotDataConfigKey,
+  plotEnabledSeriesIds,
+  plotEnabledSeriesKey,
+} from './plotConfigSelectors';
 import { readPlotRangeIncremental, type PlotRangeReadProgress } from './rangeReader';
 import type { PlotDatasetWarning } from './plotWarnings';
 
@@ -55,6 +59,14 @@ export function usePlotPanelData({
   const [error, setError] = useState<string | null>(null);
 
   const dataConfigKey = useMemo(() => plotDataConfigKey(config), [config]);
+  const enabledSeriesKey = useMemo(() => plotEnabledSeriesKey(config), [config]);
+  const enabledSeriesIds = useMemo(() => plotEnabledSeriesIds(config), [config]);
+  const enabledSeriesIdsRef = useRef(enabledSeriesIds);
+  useEffect(() => {
+    enabledSeriesIdsRef.current = enabledSeriesIds;
+  }, [enabledSeriesIds]);
+  const accumulatorRef = useRef<PlotDatasetAccumulator | null>(null);
+
   const progressRef = useRef<PlotRangeReadProgress | null>(null);
   const progressFrameRef = useRef<number | null>(null);
   const datasetFrameRef = useRef<number | null>(null);
@@ -114,13 +126,14 @@ export function usePlotPanelData({
       logStart: startTime,
       logEnd: endTime,
     });
+    accumulatorRef.current = accumulator;
 
     const flushDataset = () => {
       datasetFrameRef.current = null;
       datasetTimeoutRef.current = null;
       if (controller.signal.aborted) return;
       lastDatasetFlushMsRef.current = performance.now();
-      setDataset(accumulator.buildDataset());
+      setDataset(accumulator.buildDataset(enabledSeriesIdsRef.current));
     };
 
     const scheduleDatasetFlush = () => {
@@ -175,6 +188,7 @@ export function usePlotPanelData({
         progressFrameRef.current = null;
       }
       cancelDatasetFlush();
+      accumulatorRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dataConfigKey captures data-affecting config fields
   }, [
@@ -188,6 +202,15 @@ export function usePlotPanelData({
     randomAccessByTopic,
     startTime,
   ]);
+
+  // Toggling series visibility (`series.enabled`) re-renders the dataset with
+  // the new enabled filter but never re-ingests data, which keeps the chart
+  // smooth and avoids the "loading" flash on every checkbox click.
+  useEffect(() => {
+    const accumulator = accumulatorRef.current;
+    if (!accumulator) return;
+    setDataset(accumulator.buildDataset(enabledSeriesIdsRef.current));
+  }, [enabledSeriesKey]);
 
   return { dataset, loading, progress, error };
 }

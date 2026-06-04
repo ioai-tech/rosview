@@ -127,4 +127,38 @@ describe('PlotDatasetAccumulator', () => {
 
     expect(buildIncremental(events, config)).toEqual(buildPlotDataset(events, config));
   });
+
+  it('ingests data for disabled series so toggling visibility does not require re-fetch', () => {
+    const baseSeries = defaultPlotConfig().series[0];
+    const config = {
+      ...defaultPlotConfig(),
+      downsampleMode: 'none' as const,
+      series: [
+        { ...baseSeries, id: 's1', topic: '/a', path: 'data', timestampMode: 'receiveTime' as const, enabled: true },
+        { ...baseSeries, id: 's2', topic: '/b', path: 'data', timestampMode: 'receiveTime' as const, enabled: false, label: 'B' },
+      ],
+    };
+    const events = [
+      event('/a', 1, { data: 11 }, 'std_msgs/msg/Float64'),
+      event('/b', 1, { data: 21 }, 'std_msgs/msg/Float64'),
+      event('/a', 2, { data: 12 }, 'std_msgs/msg/Float64'),
+      event('/b', 2, { data: 22 }, 'std_msgs/msg/Float64'),
+    ];
+
+    const accumulator = new PlotDatasetAccumulator(config);
+    accumulator.append(events);
+
+    // With default (no override), only s1 is enabled in config -> only s1 series in output.
+    const onlyEnabled = accumulator.buildDataset();
+    expect(onlyEnabled.series.map((s) => s.key.startsWith('s1:') ? 's1' : 's2')).toEqual(['s1']);
+
+    // Re-build with s2 also enabled — buckets are already accumulated, no re-ingest.
+    const both = accumulator.buildDataset(new Set(['s1', 's2']));
+    const seriesIds = both.series.map((s) => s.key.startsWith('s1:') ? 's1' : 's2').sort();
+    expect(seriesIds).toEqual(['s1', 's2']);
+
+    // Re-build with only s2 enabled — visibility flip with no re-ingest.
+    const onlyS2 = accumulator.buildDataset(new Set(['s2']));
+    expect(onlyS2.series.map((s) => s.key.startsWith('s2:') ? 's2' : 's1')).toEqual(['s2']);
+  });
 });

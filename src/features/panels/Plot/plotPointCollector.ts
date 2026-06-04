@@ -14,6 +14,15 @@ export function isEnabledSeries(series: PlotSeriesConfig): boolean {
   return series.enabled && series.topic.length > 0 && series.path.trim().length > 0;
 }
 
+/**
+ * A series is "configured" — has a topic + path — but may be disabled by
+ * the user. Use this for accumulator ingestion so toggling visibility
+ * is a no-op for the data layer.
+ */
+export function isConfiguredSeries(series: PlotSeriesConfig): boolean {
+  return series.topic.length > 0 && series.path.trim().length > 0;
+}
+
 /** Millisecond grid avoids float-key mismatches when merging multi-series timelines. */
 export function quantizePlotX(sec: number): number {
   return Math.round(sec * 1000) / 1000;

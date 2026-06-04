@@ -198,6 +198,34 @@ export function hasDerivativeModifier(path: string): boolean {
   return splitPlotPathList(path).some((subPath) => parsePlotPath(subPath).modifiers.includes('derivative'));
 }
 
+/**
+ * Heuristic: is a Plot Y-path likely to yield an array of values per message?
+ *
+ * Modes other than `timestamp` (index/custom/currentCustom) only produce
+ * meaningful data when the Y-path expands to multiple values per message —
+ * typically because it contains a slice selector (`[:]`, `[a:b]`).
+ * Scalar paths like `data` or fixed-index paths like `position[0]` cannot
+ * usefully drive the index/custom X axes; we use this to disable the
+ * corresponding settings options up-front instead of producing a silent
+ * empty chart.
+ */
+export function isArrayLikePlotPath(path: string): boolean {
+  for (const subPath of splitPlotPathList(path)) {
+    const { sourcePath } = parsePlotPath(subPath);
+    if (!sourcePath) continue;
+    const segments = sourcePath.split('.');
+    for (const segment of segments) {
+      const match = SEGMENT_RE.exec(segment);
+      if (!match) continue;
+      const selectorRaw = match[2];
+      if (selectorRaw == null) continue;
+      const selector = parseSelector(selectorRaw);
+      if (selector.kind === 'slice') return true;
+    }
+  }
+  return false;
+}
+
 function extractSinglePlotPathValues(message: unknown, path: string): ExtractedPlotValue[] {
   const parsed = parsePlotPath(path);
   if (!parsed.sourcePath) return [];
