@@ -171,6 +171,25 @@ export function shouldRemountForIncrementalSeriesUpdate(
   return false;
 }
 
+/**
+ * Whether incremental updates should pin the X axis to the full log range.
+ * Skipped when playhead-following mode owns the X scale.
+ */
+export function shouldPinPlotXScaleToLogRange(
+  xRange: { min: number; max: number } | undefined,
+  followingViewWidthSec: number,
+): xRange is { min: number; max: number } {
+  return xRange != null && followingViewWidthSec <= 0;
+}
+
+/** Keep the X viewport on the full recording duration during range reads. */
+export function pinPlotXScaleToLogRange(
+  chart: uPlot,
+  xRange: { min: number; max: number },
+): void {
+  chart.setScale('x', xRange);
+}
+
 export function usePlotChart({
   containerRef,
   player,
@@ -228,8 +247,15 @@ export function usePlotChart({
       isLoading: () => loadingRef.current,
     });
 
-    uplotRef.current = mountPlotChart(container, dataset, options, xRange);
+    const chart = mountPlotChart(container, dataset, options, xRange);
+    uplotRef.current = chart;
     seriesSignaturesRef.current = seriesSignatures(dataset, hiddenSeries);
+    if (
+      loadingRef.current
+      && shouldPinPlotXScaleToLogRange(xRange, followingViewWidthRef.current)
+    ) {
+      pinPlotXScaleToLogRange(chart, xRange);
+    }
 
     const observer = new ResizeObserver(() => {
       const chart = uplotRef.current;
@@ -309,13 +335,32 @@ export function usePlotChart({
     // setData second arg = false avoids a hard scale reset every batch, which is
     // what made the chart flash while data was streaming in.
     chart.setData(dataset.data, false);
+    // setData(false) can shrink X to the loaded points only; pin to the full log
+    // range so the axis stays 0…duration while curves grow incrementally.
+    if (
+      loadingRef.current
+      && shouldPinPlotXScaleToLogRange(xRange, followingViewWidthRef.current)
+    ) {
+      pinPlotXScaleToLogRange(chart, xRange);
+    }
     // Style mutations are read at draw time, so force one rebuild+redraw to
     // surface the new width/dash/stroke immediately.
     if (diff.kind === 'styleUpdate') {
       chart.redraw(true);
+    } else if (loadingRef.current) {
+      chart.redraw(false);
     }
     seriesSignaturesRef.current = nextSignatures;
-  }, [config.followingViewWidthSec, config.xAxisMode, containerRef, dataset, destroyChart, hiddenSeries, mountChart]);
+  }, [
+    config.followingViewWidthSec,
+    config.xAxisMode,
+    containerRef,
+    dataset,
+    destroyChart,
+    hiddenSeries,
+    mountChart,
+    xRange,
+  ]);
 
   // When loading completes, force one Y-scale recompute so the locked-min/max
   // is replaced with the natural auto-fit range.

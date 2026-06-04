@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   diffSeriesTopology,
+  shouldPinPlotXScaleToLogRange,
   shouldRemountForIncrementalSeriesUpdate,
   type SeriesSignature,
 } from './usePlotChart';
@@ -84,5 +85,21 @@ describe('shouldRemountForIncrementalSeriesUpdate', () => {
   it('allows pureAdd when chart and ref are in sync', () => {
     expect(shouldRemountForIncrementalSeriesUpdate(1, 1, { kind: 'pureAdd', added: [sig('b')], addedAt: 1 }, 2))
       .toBe(false);
+  });
+});
+
+describe('shouldPinPlotXScaleToLogRange', () => {
+  const logRange = { min: 0, max: 55 };
+
+  it('pins when log range exists and following view is off', () => {
+    expect(shouldPinPlotXScaleToLogRange(logRange, 0)).toBe(true);
+  });
+
+  it('does not pin without log range', () => {
+    expect(shouldPinPlotXScaleToLogRange(undefined, 0)).toBe(false);
+  });
+
+  it('does not pin when playhead following owns the X axis', () => {
+    expect(shouldPinPlotXScaleToLogRange(logRange, 10)).toBe(false);
   });
 });
