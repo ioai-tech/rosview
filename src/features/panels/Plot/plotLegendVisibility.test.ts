@@ -5,6 +5,7 @@ import {
   plotLegendSelectionState,
   pruneHiddenLegendKeys,
   setAllPlotLegendVisible,
+  setPlotLegendGroupVisible,
   setPlotLegendVisible,
 } from './plotLegendVisibility';
 
@@ -26,6 +27,15 @@ describe('plotLegendVisibility', () => {
   it('supports toggling all entries from header checkbox', () => {
     expect(setAllPlotLegendVisible(['a', 'b'], true)).toEqual([]);
     expect(setAllPlotLegendVisible(['a', 'b'], false)).toEqual(['a', 'b']);
+  });
+
+  it('toggles a legend group without affecting other series keys', () => {
+    expect(setPlotLegendGroupVisible(['s1:a', 's2:x'], ['s1:a', 's1:b'], true)).toEqual(['s2:x']);
+    expect(setPlotLegendGroupVisible(['s2:x'], ['s1:a', 's1:b'], false)).toEqual([
+      's2:x',
+      's1:a',
+      's1:b',
+    ]);
   });
 
   it('maps hidden keys to chart series indices', () => {

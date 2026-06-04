@@ -142,7 +142,6 @@ export function PlotPanelSettings({
 
   return (
     <div className="space-y-2">
-      <PlotLegendSettings panelId={panelId} config={config} setConfig={setConfig} />
       <SettingsSection title={formatMessage({ id: 'panels.plot.settings.section.plot' })}>
         <SettingsField label={formatMessage({ id: 'panels.plot.settings.field.xAxis' })}>
           <SettingsSelect<PlotXAxisMode>
@@ -353,6 +352,12 @@ export function PlotPanelSettings({
                 }
               />
             </SettingsField>
+            <PlotLegendSettings
+              panelId={panelId}
+              seriesId={series.id}
+              config={config}
+              setConfig={setConfig}
+            />
           </div>
         ))}
         <button

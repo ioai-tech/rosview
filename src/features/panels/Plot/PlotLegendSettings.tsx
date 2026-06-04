@@ -1,36 +1,46 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useIntl } from 'react-intl';
-import { SettingsSection } from '../framework/settings/SettingsPrimitives';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import type { PlotConfig } from './defaults';
 import {
   isPlotLegendVisible,
   plotLegendSelectionState,
-  setAllPlotLegendVisible,
+  setPlotLegendGroupVisible,
   setPlotLegendVisible,
 } from './plotLegendVisibility';
 import { usePlotLegendEntries } from './plotPanelRuntimeStore';
 
 interface PlotLegendSettingsProps {
   panelId: string;
+  seriesId: string;
   config: PlotConfig;
   setConfig: (next: PlotConfig | ((prev: PlotConfig) => PlotConfig)) => void;
 }
 
-function legendInputId(panelId: string, index: number): string {
-  return `plot-legend-${panelId}-${index}`;
+function legendKeyPrefix(seriesId: string): string {
+  return `${seriesId}:`;
+}
+
+function legendInputId(panelId: string, seriesId: string, index: number): string {
+  return `plot-legend-${panelId}-${seriesId}-${index}`;
 }
 
 export function PlotLegendSettings({
   panelId,
+  seriesId,
   config,
   setConfig,
 }: PlotLegendSettingsProps): React.ReactNode {
   const { formatMessage } = useIntl();
-  const entries = usePlotLegendEntries(panelId);
+  const allEntries = usePlotLegendEntries(panelId);
+  const prefix = legendKeyPrefix(seriesId);
+  const entries = useMemo(
+    () => allEntries.filter((entry) => entry.key.startsWith(prefix)),
+    [allEntries, prefix],
+  );
   const hiddenKeys = config.hiddenLegendKeys;
   const selectAllRef = useRef<HTMLInputElement>(null);
-  const selectAllId = `plot-legend-${panelId}-all`;
+  const selectAllId = `plot-legend-${panelId}-${seriesId}-all`;
 
   const selection = useMemo(
     () => plotLegendSelectionState(entries, hiddenKeys),
@@ -48,6 +58,10 @@ export function PlotLegendSettings({
     input.indeterminate = selection === 'partial';
   }, [selection]);
 
+  if (entries.length <= 1) {
+    return null;
+  }
+
   const setHiddenKeys = (next: string[]) => {
     setConfig((prev) => ({ ...prev, hiddenLegendKeys: next }));
   };
@@ -57,21 +71,25 @@ export function PlotLegendSettings({
   };
 
   const toggleAll = (visible: boolean) => {
-    setHiddenKeys(setAllPlotLegendVisible(entries.map((entry) => entry.key), visible));
+    setHiddenKeys(
+      setPlotLegendGroupVisible(
+        hiddenKeys,
+        entries.map((entry) => entry.key),
+        visible,
+      ),
+    );
   };
 
   return (
-    <SettingsSection
-      title={formatMessage({ id: 'panels.plot.settings.section.legend' })}
-      description={formatMessage({ id: 'panels.plot.settings.legend.description' })}
-    >
-      {entries.length === 0 ? (
-        <p className="px-1 text-[11px] text-muted-foreground">
-          {formatMessage({ id: 'panels.plot.settings.legend.empty' })}
-        </p>
-      ) : (
-        <>
-          <div className="mb-1.5 flex items-center gap-2 rounded border border-border bg-muted/30 px-2 py-1">
+    <div className="space-y-1 border-t border-border pt-2">
+      <p className="text-[10px] font-medium text-muted-foreground">
+        {formatMessage({ id: 'panels.plot.settings.series.legend.title' })}
+      </p>
+      <p className="px-0.5 text-[10px] text-muted-foreground">
+        {formatMessage({ id: 'panels.plot.settings.legend.description' })}
+      </p>
+      <>
+          <div className="flex items-center gap-2 rounded border border-border bg-muted/30 px-2 py-1">
             <input
               ref={selectAllRef}
               id={selectAllId}
@@ -88,10 +106,10 @@ export function PlotLegendSettings({
               )}
             </label>
           </div>
-          <ScrollArea className="max-h-72 rounded border border-border">
+          <ScrollArea className="max-h-48 rounded border border-border">
             <div className="flex flex-col py-0.5">
               {entries.map((entry, index) => {
-                const inputId = legendInputId(panelId, index);
+                const inputId = legendInputId(panelId, seriesId, index);
                 const visible = isPlotLegendVisible(hiddenKeys, entry.key);
                 return (
                   <label
@@ -111,7 +129,10 @@ export function PlotLegendSettings({
                       style={{ backgroundColor: entry.color }}
                       aria-hidden
                     />
-                    <span className="min-w-0 flex-1 truncate text-[11px] leading-tight text-foreground" title={entry.label}>
+                    <span
+                      className="min-w-0 flex-1 truncate text-[11px] leading-tight text-foreground"
+                      title={entry.label}
+                    >
                       {entry.label}
                     </span>
                   </label>
@@ -119,8 +140,7 @@ export function PlotLegendSettings({
               })}
             </div>
           </ScrollArea>
-        </>
-      )}
-    </SettingsSection>
+      </>
+    </div>
   );
 }

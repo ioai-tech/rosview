@@ -13,8 +13,26 @@ export function setPlotLegendVisible(
   return hiddenKeys.includes(key) ? [...hiddenKeys] : [...hiddenKeys, key];
 }
 
+/** @deprecated Prefer {@link setPlotLegendGroupVisible} for per-series toggles. */
 export function setAllPlotLegendVisible(allKeys: readonly string[], visible: boolean): string[] {
   return visible ? [] : [...allKeys];
+}
+
+/** Toggle visibility for a subset of legend keys without affecting other series. */
+export function setPlotLegendGroupVisible(
+  hiddenKeys: readonly string[],
+  groupKeys: readonly string[],
+  visible: boolean,
+): string[] {
+  const group = new Set(groupKeys);
+  if (visible) {
+    return hiddenKeys.filter((key) => !group.has(key));
+  }
+  const next = new Set(hiddenKeys);
+  for (const key of groupKeys) {
+    next.add(key);
+  }
+  return [...next];
 }
 
 export function pruneHiddenLegendKeys(
