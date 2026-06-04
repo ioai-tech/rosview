@@ -350,7 +350,7 @@ export async function GET(req: NextRequest) {
 
 > **About `db3`:** Like the other formats, db3 supports both a **local `File`** and a **remote URL** — just point `url` at the Range route above. However, because SQLite needs random access to the whole database, db3 **cannot be Range-streamed** the way mcap / bag are: when given a db3 URL, ROSView **downloads the file in full inside the Worker** (with download progress) before opening it. For very large db3 files, prefer converting to MCAP for true streaming. You no longer need to download the db3 as a `File` yourself on the host side.
 
-> **Version requirement:** Use **`@ioai/rosview` ≥ 1.3.5** (which depends on `@ioai/wasm-zstd` ≥ 1.1.2). 1.3.5 adds remote-URL loading for db3 and fixes the Turbopack inline-worker regression from 1.3.4 (`Failed to resolve module specifier './wasm-zstd-*.js'`, caused by the inline worker running from a `blob:` URL and unable to resolve the zstd glue's relative dynamic import). Newer versions statically inline the glue into the worker, fixing this for good.
+> **Version requirement:** Use **`@ioai/rosview` ≥ 1.3.5** (which depends on `@ioai/wasm-zstd` ≥ 1.1.2). 1.3.5 adds remote-URL loading for db3 and fixes the Turbopack inline-worker regression from 1.3.4 (`Failed to resolve module specifier './wasm-zstd-*.js'`, caused by the inline worker running from a `blob:` URL and unable to resolve the zstd glue's relative dynamic import). `@ioai/wasm-zstd` 1.1.2 statically inlines the glue into the worker, fixing this for good.
 
 ---
 
@@ -386,7 +386,7 @@ Firefox has stricter CSP enforcement for workers. If you use a `Content-Security
 
 ### "Failed to resolve module specifier './wasm-zstd-*.js'"
 
-This occurs with `@ioai/rosview` 1.3.4 (paired with `@ioai/wasm-zstd` 1.1.1) under bundlers that run inline workers from `blob:` URLs, such as Next.js Turbopack. Upgrade to **`@ioai/rosview` ≥ 1.3.5** — newer versions statically inline the zstd glue into the worker, removing the runtime relative dynamic import.
+This occurs with `@ioai/rosview` 1.3.4 (paired with `@ioai/wasm-zstd` 1.1.1) under bundlers that run inline workers from `blob:` URLs, such as Next.js Turbopack. Upgrade to **`@ioai/rosview` ≥ 1.3.5** (`@ioai/wasm-zstd` ≥ 1.1.2) — newer versions statically inline the zstd glue into the worker, removing the runtime relative dynamic import.
 
 ---
 

@@ -350,7 +350,7 @@ export async function GET(req: NextRequest) {
 
 > **关于 `db3`**：db3 与其他格式一样，**本地 `File`** 与**远程 URL** 两种方式都支持，直接把上面 Range 接口的地址传给 `url` 即可。但由于 SQLite 需要随机访问整库，db3 **无法像 mcap / bag 那样按 Range 流式加载**——传入 db3 的 URL 时，ROSView 会在 Worker 内**自动整文件下载**后再打开（带下载进度）。因此对超大 db3，建议优先转换为 MCAP 以获得真正的流式体验。你无需再在宿主侧手动下载为 `File`。
 
-> **版本要求**：请使用 **`@ioai/rosview` ≥ 1.3.5**（依赖 `@ioai/wasm-zstd` ≥ 1.1.2）。1.3.5 新增了 db3 的远程 URL 加载，并修复了 1.3.4 在 Turbopack 下的 inline worker regression（因 worker 以 `blob:` URL 运行、无法解析 zstd glue 的相对动态 import 而抛出 `Failed to resolve module specifier './wasm-zstd-*.js'`）；新版本已将 glue 静态内联进 worker，彻底解决该问题。
+> **版本要求**：请使用 **`@ioai/rosview` ≥ 1.3.5**（依赖 `@ioai/wasm-zstd` ≥ 1.1.2）。1.3.5 新增了 db3 的远程 URL 加载，并修复了 1.3.4 在 Turbopack 下因 inline worker 以 `blob:` URL 运行、无法解析 zstd glue 相对动态 import 而抛出的 `Failed to resolve module specifier './wasm-zstd-*.js'`；`@ioai/wasm-zstd` 1.1.2 将 glue 静态内联进 worker，彻底解决该问题。
 
 ---
 
@@ -386,7 +386,7 @@ Firefox 对 Worker 的 CSP 更严格。若使用 `Content-Security-Policy` 响�
 
 ### "Failed to resolve module specifier './wasm-zstd-*.js'"
 
-该错误出现在 `@ioai/rosview` 1.3.4（搭配 `@ioai/wasm-zstd` 1.1.1）在以 `blob:` URL 运行 inline worker 的打包器（如 Next.js Turbopack）下。升级到 **`@ioai/rosview` ≥ 1.3.5** 即可修复——新版本会将 zstd glue 静态内联进 worker，不再有运行时相对动态 import。
+该错误出现在 `@ioai/rosview` 1.3.4（搭配 `@ioai/wasm-zstd` 1.1.1）在以 `blob:` URL 运行 inline worker 的打包器（如 Next.js Turbopack）下。升级到 **`@ioai/rosview` ≥ 1.3.5**（`@ioai/wasm-zstd` ≥ 1.1.2）即可修复——新版本会将 zstd glue 静态内联进 worker，不再有运行时相对动态 import。
 
 ---
 
