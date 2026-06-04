@@ -2,6 +2,78 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Scoped preflight ─────────────────────────────────────────────
+   Replaces Tailwind's global CSS reset with one limited to
+   #rosview-root so it doesn't bleed into the host application.
+   ──────────────────────────────────────────────────────────────── */
+@layer base {
+  #rosview-root *, #rosview-root ::before, #rosview-root ::after {
+    box-sizing: border-box;
+    border-width: 0;
+    border-style: solid;
+    border-color: hsl(var(--border));
+  }
+  #rosview-root ::before, #rosview-root ::after { --tw-content: ''; }
+  #rosview-root {
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji";
+    font-feature-settings: normal;
+    font-variation-settings: normal;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #rosview-root h1, #rosview-root h2, #rosview-root h3,
+  #rosview-root h4, #rosview-root h5, #rosview-root h6 {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  #rosview-root a { color: inherit; text-decoration: inherit; }
+  #rosview-root b, #rosview-root strong { font-weight: bolder; }
+  #rosview-root code, #rosview-root kbd, #rosview-root samp, #rosview-root pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      "Liberation Mono", "Courier New", monospace;
+    font-size: 1em;
+  }
+  #rosview-root table { text-indent: 0; border-color: inherit; border-collapse: collapse; }
+  #rosview-root button, #rosview-root input, #rosview-root optgroup,
+  #rosview-root select, #rosview-root textarea {
+    font-family: inherit;
+    font-size: 100%;
+    font-weight: inherit;
+    line-height: inherit;
+    color: inherit;
+    margin: 0;
+    padding: 0;
+  }
+  #rosview-root button, #rosview-root select { text-transform: none; }
+  #rosview-root button,
+  #rosview-root [type='button'],
+  #rosview-root [type='reset'],
+  #rosview-root [type='submit'] {
+    -webkit-appearance: button;
+    background-color: transparent;
+    background-image: none;
+  }
+  #rosview-root :-moz-focusring { outline: auto; }
+  #rosview-root :-moz-ui-invalid { box-shadow: none; }
+  #rosview-root progress { vertical-align: baseline; }
+  #rosview-root ::-webkit-inner-spin-button,
+  #rosview-root ::-webkit-outer-spin-button { height: auto; }
+  #rosview-root [type='search'] { -webkit-appearance: textbox; outline-offset: -2px; }
+  #rosview-root ::-webkit-search-decoration { -webkit-appearance: none; }
+  #rosview-root summary { display: list-item; }
+  #rosview-root img, #rosview-root svg, #rosview-root video,
+  #rosview-root canvas, #rosview-root audio,
+  #rosview-root iframe, #rosview-root embed, #rosview-root object {
+    display: block;
+    vertical-align: middle;
+  }
+  #rosview-root img, #rosview-root video { max-width: 100%; height: auto; }
+  #rosview-root [hidden]:where(:not([hidden='until-found'])) { display: none !important; }
+}
+
 @layer base {
   /* Scope tokens to embed root (align with LeRobot / shadcn scoped apps) */
   #rosview-root {
