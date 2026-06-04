@@ -97,6 +97,19 @@ export function plotEnabledSeriesIds(config: PlotConfig): Set<string> {
   return new Set(config.series.filter((s) => s.enabled).map((s) => s.id));
 }
 
+/**
+ * Stable key for per-series visual config (label/color/line style/size).
+ *
+ * Changing these should re-render the dataset visuals (a cheap rebuild) but
+ * never trigger a range re-read — that is why it is tracked separately from
+ * {@link plotDataConfigKey}.
+ */
+export function plotSeriesVisualKey(config: PlotConfig): string {
+  return config.series
+    .map((s) => `${s.id}|${s.label}|${s.color}|${s.lineStyle}|${s.lineSize}`)
+    .join(';');
+}
+
 /** Stable key for uPlot series topology (rebuild when this changes). */
 export function plotChartTopologyKey(dataset: {
   series: ReadonlyArray<{

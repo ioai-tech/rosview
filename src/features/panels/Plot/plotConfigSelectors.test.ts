@@ -6,6 +6,7 @@ import {
   plotDataConfigKey,
   plotEnabledSeriesIds,
   plotEnabledSeriesKey,
+  plotSeriesVisualKey,
   selectActivePlotTopics,
 } from './plotConfigSelectors';
 import type { TopicInfo } from '@/core/types/ros';
@@ -61,6 +62,52 @@ describe('plotEnabledSeriesKey / plotEnabledSeriesIds', () => {
     };
     const b = { ...a, series: [{ ...a.series[0], enabled: false }] };
     expect(plotEnabledSeriesKey(a)).not.toBe(plotEnabledSeriesKey(b));
+  });
+});
+
+describe('plotSeriesVisualKey', () => {
+  it('changes when line style or size changes but data key does not', () => {
+    const base = defaultPlotConfig();
+    const a = {
+      ...base,
+      series: [createPlotSeries({ id: 's1', topic: '/a', path: 'data', lineStyle: 'solid', lineSize: 1.5 })],
+    };
+    const b = { ...a, series: [{ ...a.series[0], lineStyle: 'dashed' as const }] };
+    const c = { ...a, series: [{ ...a.series[0], lineSize: 3 }] };
+    expect(plotSeriesVisualKey(a)).not.toBe(plotSeriesVisualKey(b));
+    expect(plotSeriesVisualKey(a)).not.toBe(plotSeriesVisualKey(c));
+    // Visual-only changes must never trigger a range re-read.
+    expect(plotDataConfigKey(a)).toBe(plotDataConfigKey(b));
+    expect(plotDataConfigKey(a)).toBe(plotDataConfigKey(c));
+  });
+
+  it('changes when color or label changes', () => {
+    const base = defaultPlotConfig();
+    const a = {
+      ...base,
+      series: [createPlotSeries({ id: 's1', topic: '/a', path: 'data', color: '#111', label: 'A' })],
+    };
+    const b = { ...a, series: [{ ...a.series[0], color: '#222' }] };
+    const c = { ...a, series: [{ ...a.series[0], label: 'B' }] };
+    expect(plotSeriesVisualKey(a)).not.toBe(plotSeriesVisualKey(b));
+    expect(plotSeriesVisualKey(a)).not.toBe(plotSeriesVisualKey(c));
+  });
+});
+
+describe('legend visibility vs range read', () => {
+  it('does not change active topics key or plotDataConfigKey when hiddenLegendKeys toggles', () => {
+    const base = defaultPlotConfig();
+    const config = {
+      ...base,
+      series: [
+        createPlotSeries({ id: 's1', topic: '/a', path: 'data', enabled: true }),
+        createPlotSeries({ id: 's2', topic: '/b', path: 'data', enabled: true }),
+      ],
+    };
+    const hidden = { ...config, hiddenLegendKeys: ['s1'] };
+    const topicsKey = (c: typeof config) => selectActivePlotTopics(c, topicByName).join('\n');
+    expect(topicsKey(config)).toBe(topicsKey(hidden));
+    expect(plotDataConfigKey(config)).toBe(plotDataConfigKey(hidden));
   });
 });
 

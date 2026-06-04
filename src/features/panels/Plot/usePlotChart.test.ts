@@ -40,10 +40,16 @@ describe('diffSeriesTopology', () => {
     expect(diffSeriesTopology(a, b)).toEqual({ kind: 'remount' });
   });
 
-  it('falls back to remount on meta change for same key', () => {
-    const a = [sig('a', 'l|#000|solid|1')];
-    const b = [sig('a', 'l|#fff|solid|1')];
-    expect(diffSeriesTopology(a, b)).toEqual({ kind: 'remount' });
+  it('returns styleUpdate on meta change for same keys (no remount)', () => {
+    const a = [sig('a', 'l|#000|solid|1'), sig('b', 'l|#111|solid|1')];
+    const b = [sig('a', 'l|#fff|solid|1'), sig('b', 'l|#111|dashed|2')];
+    expect(diffSeriesTopology(a, b)).toEqual({ kind: 'styleUpdate', changed: [0, 1] });
+  });
+
+  it('reports only the changed indices in styleUpdate', () => {
+    const a = [sig('a', 'l|#000|solid|1'), sig('b', 'l|#111|solid|1')];
+    const b = [sig('a', 'l|#000|solid|1'), sig('b', 'l|#111|solid|3')];
+    expect(diffSeriesTopology(a, b)).toEqual({ kind: 'styleUpdate', changed: [1] });
   });
 
   it('falls back to remount when prefix differs (mixed insertion)', () => {

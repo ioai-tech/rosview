@@ -8,6 +8,7 @@ import {
   plotDataConfigKey,
   plotEnabledSeriesIds,
   plotEnabledSeriesKey,
+  plotSeriesVisualKey,
 } from './plotConfigSelectors';
 import { readPlotRangeIncremental, type PlotRangeReadProgress } from './rangeReader';
 import type { PlotDatasetWarning } from './plotWarnings';
@@ -60,11 +61,18 @@ export function usePlotPanelData({
 
   const dataConfigKey = useMemo(() => plotDataConfigKey(config), [config]);
   const enabledSeriesKey = useMemo(() => plotEnabledSeriesKey(config), [config]);
+  const seriesVisualKey = useMemo(() => plotSeriesVisualKey(config), [config]);
   const enabledSeriesIds = useMemo(() => plotEnabledSeriesIds(config), [config]);
   const enabledSeriesIdsRef = useRef(enabledSeriesIds);
   useEffect(() => {
     enabledSeriesIdsRef.current = enabledSeriesIds;
   }, [enabledSeriesIds]);
+  // Latest config for live visual overlays (line style/size/color) applied at
+  // dataset build time without re-ingesting data.
+  const configRef = useRef(config);
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
   const accumulatorRef = useRef<PlotDatasetAccumulator | null>(null);
 
   const progressRef = useRef<PlotRangeReadProgress | null>(null);
@@ -134,7 +142,7 @@ export function usePlotPanelData({
       datasetTimeoutRef.current = null;
       if (controller.signal.aborted) return;
       lastDatasetFlushMsRef.current = performance.now();
-      setDataset(accumulator.buildDataset(enabledSeriesIdsRef.current));
+      setDataset(accumulator.buildDataset(enabledSeriesIdsRef.current, configRef.current));
     };
 
     const scheduleDatasetFlush = () => {
@@ -210,8 +218,17 @@ export function usePlotPanelData({
   useEffect(() => {
     const accumulator = accumulatorRef.current;
     if (!accumulator) return;
-    setDataset(accumulator.buildDataset(enabledSeriesIdsRef.current));
+    setDataset(accumulator.buildDataset(enabledSeriesIdsRef.current, configRef.current));
   }, [enabledSeriesKey]);
+
+  // Changing a series' visual config (line style/size/color/label) rebuilds the
+  // dataset with the live visuals overlaid — a cheap re-render that never
+  // re-ingests data and lets the chart apply styles incrementally.
+  useEffect(() => {
+    const accumulator = accumulatorRef.current;
+    if (!accumulator) return;
+    setDataset(accumulator.buildDataset(enabledSeriesIdsRef.current, configRef.current));
+  }, [seriesVisualKey]);
 
   return { dataset, loading, progress, error };
 }

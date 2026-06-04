@@ -81,6 +81,27 @@ export function pushPoint(
   bucket.points.push({ x, y });
 }
 
+/**
+ * Overlay live config visuals (line style/size/color) onto already-accumulated
+ * buckets. The accumulator captures visuals at ingest time, so without this
+ * a later config change (e.g. dashed -> solid, thicker line) would not surface
+ * until a full re-read. Color is applied before {@link assignBucketColors} so
+ * the palette still wins for multi-bucket series (e.g. JointState arrays).
+ */
+export function applySeriesConfigVisuals(
+  buckets: Iterable<PointBucket>,
+  config: PlotConfig,
+): void {
+  const seriesById = new Map(config.series.map((series) => [series.id, series]));
+  for (const bucket of buckets) {
+    const series = seriesById.get(bucket.seriesConfigId);
+    if (!series) continue;
+    bucket.series.lineStyle = series.lineStyle;
+    bucket.series.lineSize = series.lineSize;
+    if (series.color) bucket.series.color = series.color;
+  }
+}
+
 export function assignBucketColors(buckets: Map<string, PointBucket>): void {
   const bucketsBySeries = new Map<string, PointBucket[]>();
   for (const bucket of buckets.values()) {

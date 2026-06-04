@@ -161,4 +161,42 @@ describe('PlotDatasetAccumulator', () => {
     const onlyS2 = accumulator.buildDataset(new Set(['s2']));
     expect(onlyS2.series.map((s) => s.key.startsWith('s2:') ? 's2' : 's1')).toEqual(['s2']);
   });
+
+  it('applies live visual config (line style/size/color) at build time without re-ingest', () => {
+    const baseSeries = defaultPlotConfig().series[0];
+    const config = {
+      ...defaultPlotConfig(),
+      downsampleMode: 'none' as const,
+      series: [
+        {
+          ...baseSeries,
+          id: 's1',
+          topic: '/a',
+          path: 'data',
+          timestampMode: 'receiveTime' as const,
+          lineStyle: 'solid' as const,
+          lineSize: 1.5,
+          color: '#111',
+        },
+      ],
+    };
+    const events = [
+      event('/a', 1, { data: 1 }, 'std_msgs/msg/Float64'),
+      event('/a', 2, { data: 2 }, 'std_msgs/msg/Float64'),
+    ];
+
+    const accumulator = new PlotDatasetAccumulator(config);
+    accumulator.append(events);
+
+    // Build with a live config carrying updated visuals (no new data appended).
+    const liveConfig = {
+      ...config,
+      series: [{ ...config.series[0], lineStyle: 'dashed' as const, lineSize: 4, color: '#abcdef' }],
+    };
+    const dataset = accumulator.buildDataset(new Set(['s1']), liveConfig);
+
+    expect(dataset.series[0].lineStyle).toBe('dashed');
+    expect(dataset.series[0].lineSize).toBe(4);
+    expect(dataset.series[0].color).toBe('#abcdef');
+  });
 });

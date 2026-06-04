@@ -6,6 +6,7 @@ import type { MessageEvent } from '@/core/types/ros';
 import type { BuildPlotDatasetOptions, PlotDataset, PointBucket } from './types';
 import { alignBuckets } from './plotAlign';
 import {
+  applySeriesConfigVisuals,
   assignBucketColors,
   collectCustomPoints,
   collectIndexPoints,
@@ -46,6 +47,7 @@ function datasetFromBuckets(
   options: PlotDatasetAccumulatorOptions,
   warnings: PlotDatasetWarning[],
   enabledSeriesIds?: ReadonlySet<string>,
+  visualConfig?: PlotConfig,
 ): PlotDataset {
   // Filter buckets to those whose owning series is currently enabled.
   // The accumulator deliberately ingests buckets for *all configured* series
@@ -60,6 +62,10 @@ function datasetFromBuckets(
           ),
         );
 
+  // Apply live visuals before palette assignment so user color overrides on
+  // single-bucket series are respected while multi-bucket series still get
+  // palette colors.
+  applySeriesConfigVisuals(filteredBuckets.values(), visualConfig ?? config);
   assignBucketColors(filteredBuckets);
   const seriesBuckets = [...filteredBuckets.values()];
   const shouldDownsample = options.forceDownsample === true || config.downsampleMode === 'minMaxLast';
@@ -115,7 +121,13 @@ export class PlotDatasetAccumulator {
    * buckets owned by those series are emitted — letting callers re-render
    * after visibility toggles without re-ingesting data.
    */
-  buildDataset(enabledSeriesIds?: ReadonlySet<string>): PlotDataset {
+  buildDataset(
+    enabledSeriesIds?: ReadonlySet<string>,
+    visualConfig?: PlotConfig,
+  ): PlotDataset {
+    // Live config used only to overlay current visuals (line style/size/color).
+    // Structure (paths, axis mode, ...) still comes from the ingest-time config.
+    const visuals = visualConfig ?? this._config;
     if (this._messageCount === 0) {
       return {
         ...EMPTY_DATASET,
@@ -133,7 +145,7 @@ export class PlotDatasetAccumulator {
       // Re-collect at build time so we can apply the live enabled filter.
       const filteredConfig = this._configWithSeriesFilter(seriesFilter);
       const buckets = collectIndexPoints([...this._latestByTopic.values()], filteredConfig);
-      return datasetFromBuckets(buckets, filteredConfig, this._options, warnings);
+      return datasetFromBuckets(buckets, filteredConfig, this._options, warnings, undefined, visuals);
     }
 
     if (this._config.xAxisMode === 'currentCustom') {
@@ -145,7 +157,7 @@ export class PlotDatasetAccumulator {
         true,
         warnings,
       );
-      return datasetFromBuckets(buckets, filteredConfig, this._options, warnings);
+      return datasetFromBuckets(buckets, filteredConfig, this._options, warnings, undefined, visuals);
     }
 
     const warnings = Array.from(this._warnings.values());
@@ -163,6 +175,7 @@ export class PlotDatasetAccumulator {
       this._options,
       warnings,
       new Set(this._config.series.filter(seriesFilter).map((s) => s.id)),
+      visuals,
     );
   }
 

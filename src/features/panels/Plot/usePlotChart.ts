@@ -4,7 +4,7 @@ import { timeToSec } from '@/core/analysis/timeSeries';
 import type { Player } from '@/core/types/player';
 import type { Time } from '@/core/types/ros';
 import { scheduleFrame } from '@/shared/utils/rafScheduler';
-import type { PlotDataset } from './datasets';
+import type { PlotDataset, PlotRuntimeSeries } from './datasets';
 import type { PlotConfig } from './defaults';
 import {
   buildPlotSeriesOption,
@@ -53,14 +53,16 @@ function seriesSignatures(
 
 type DiffResult =
   | { kind: 'identical' }
+  | { kind: 'styleUpdate'; changed: number[] }
   | { kind: 'pureAdd'; added: SeriesSignature[]; addedAt: number }
   | { kind: 'pureDel'; removedFrom: number; removedCount: number }
   | { kind: 'remount' };
 
 /**
  * Cheap topology diff so we can keep uPlot mounted across the most common
- * case: new series buckets appearing late during a range read (e.g. a
- * JointState topic exposing additional joints). Anything more complex than
+ * cases: new series buckets appearing late during a range read (e.g. a
+ * JointState topic exposing additional joints), and pure visual changes
+ * (line style/size/color) on existing series. Anything more complex than
  * a clean append/truncate at the tail falls back to a remount.
  *
  * Exported for unit testing.
@@ -70,14 +72,20 @@ export function diffSeriesTopology(
   next: SeriesSignature[],
 ): DiffResult {
   if (prev.length === next.length) {
-    let allMatch = true;
+    let keysMatch = true;
+    const changed: number[] = [];
     for (let i = 0; i < prev.length; i++) {
-      if (prev[i].key !== next[i].key || prev[i].meta !== next[i].meta) {
-        allMatch = false;
+      if (prev[i].key !== next[i].key) {
+        keysMatch = false;
         break;
       }
+      if (prev[i].meta !== next[i].meta) changed.push(i);
     }
-    if (allMatch) return { kind: 'identical' };
+    if (keysMatch) {
+      // Same series identities & order: either nothing changed, or only
+      // visual metadata changed (apply in place, no remount).
+      return changed.length === 0 ? { kind: 'identical' } : { kind: 'styleUpdate', changed };
+    }
   }
 
   // Pure appended series at the tail
@@ -124,6 +132,26 @@ export type { SeriesSignature };
 /** uPlot index 0 is the X series; Y series count is `chart.series.length - 1`. */
 export function plotChartYSeriesCount(chart: uPlot): number {
   return chart.series.length - 1;
+}
+
+/** Mutable view of a uPlot series including its internal path cache. */
+type MutablePlotSeries = uPlot.Series & { _paths?: unknown };
+
+/**
+ * Apply a series' visual config (color/width/dash/label) onto a live uPlot
+ * series in place. uPlot's `setSeries` only supports `show`/`focus`, so style
+ * changes must mutate the series object directly: `width`/`dash` are read each
+ * draw, `stroke` is re-resolved via `cacheStrokeFill`, and nulling `_paths`
+ * forces a path rebuild for the new width. The caller must `redraw(true)`.
+ */
+function applyRuntimeSeriesStyle(chart: uPlot, index: number, series: PlotRuntimeSeries): void {
+  const target = chart.series[index + 1] as MutablePlotSeries | undefined;
+  if (!target) return;
+  target.label = series.label;
+  target.stroke = () => series.color;
+  target.width = series.lineSize;
+  target.dash = series.lineStyle === 'dashed' ? [6, 4] : [];
+  target._paths = null;
 }
 
 /**
@@ -265,6 +293,12 @@ export function usePlotChart({
         // Remove from the tail; uPlot series indices are 1-based (0 = x-axis).
         chart.delSeries(diff.removedFrom + 1);
       }
+    } else if (diff.kind === 'styleUpdate') {
+      // Pure visual change (line style/size/color): mutate series in place
+      // instead of remounting, preserving zoom/pan state.
+      for (const index of diff.changed) {
+        applyRuntimeSeriesStyle(chart, index, dataset.series[index]);
+      }
     }
 
     // Sync show flags for stable indices.
@@ -275,6 +309,11 @@ export function usePlotChart({
     // setData second arg = false avoids a hard scale reset every batch, which is
     // what made the chart flash while data was streaming in.
     chart.setData(dataset.data, false);
+    // Style mutations are read at draw time, so force one rebuild+redraw to
+    // surface the new width/dash/stroke immediately.
+    if (diff.kind === 'styleUpdate') {
+      chart.redraw(true);
+    }
     seriesSignaturesRef.current = nextSignatures;
   }, [config.followingViewWidthSec, config.xAxisMode, containerRef, dataset, destroyChart, hiddenSeries, mountChart]);
 

@@ -31,6 +31,9 @@ import { usePlotPanelData } from './usePlotPanelData';
 import { usePlotTopicDetection } from './usePlotTopicDetection';
 import { timeToSec } from '@/core/analysis/timeSeries';
 
+/** Stable empty array for activeTopics when no topics are configured. */
+const EMPTY_TOPICS: string[] = [];
+
 interface PlotPanelProps {
   player: Player;
   panelId: string;
@@ -87,9 +90,13 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
 
   const plottableTopics = useMemo(() => filterPlottableTopics(topics), [topics]);
   const topicByName = useMemo(() => buildTopicByName(topics), [topics]);
-  const activeTopics = useMemo(
-    () => selectActivePlotTopics(config, topicByName),
+  const activeTopicsKey = useMemo(
+    () => selectActivePlotTopics(config, topicByName).join('\n'),
     [config, topicByName],
+  );
+  const activeTopics = useMemo(
+    () => (activeTopicsKey === '' ? EMPTY_TOPICS : activeTopicsKey.split('\n')),
+    [activeTopicsKey],
   );
   const hasPlotPaths = useMemo(() => hasConfiguredPlotPaths(config), [config]);
   const hasEnabledSeries = useMemo(() => hasEnabledPlotPaths(config), [config]);
@@ -216,7 +223,10 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
   const handleChartClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const chart = uplotRef.current;
     if (!chart || config.xAxisMode !== 'timestamp') return;
-    const rect = chart.root.getBoundingClientRect();
+    // posToVal expects a position relative to the plotting area (the `over`
+    // element), which is what hover/cursor uses. Using `root` here would add the
+    // left Y-axis width as a fixed offset, shifting the seek target to the right.
+    const rect = chart.over.getBoundingClientRect();
     const x = chart.posToVal(event.clientX - rect.left, 'x');
     if (Number.isFinite(x)) {
       player.seek(secToTime(x));
