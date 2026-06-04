@@ -2,7 +2,6 @@
   "panels.image.defaultTitle": "画像",
   "panels.plot.defaultTitle": "プロット",
   "panels.plot.toolbar.selectTopic": "トピックを選択…",
-  "panels.plot.toolbar.resetZoom": "ズームをリセット",
   "panels.plot.status.detectingPaths": "パスを検出中…",
   "panels.plot.status.loading": "読み込み中…",
   "panels.plot.status.loadingProgress": "読み込み中 {count} 件",

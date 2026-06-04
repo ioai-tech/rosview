@@ -2,7 +2,6 @@
   "panels.image.defaultTitle": "Image",
   "panels.plot.defaultTitle": "Plot",
   "panels.plot.toolbar.selectTopic": "Select topic…",
-  "panels.plot.toolbar.resetZoom": "Reset zoom",
   "panels.plot.status.detectingPaths": "Detecting paths…",
   "panels.plot.status.loading": "Loading…",
   "panels.plot.status.loadingProgress": "Loading {count} messages…",

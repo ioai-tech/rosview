@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useIntl } from 'react-intl';
 import { useShallow } from 'zustand/react/shallow';
-import { Maximize2 } from 'lucide-react';
 import 'uplot/dist/uPlot.min.css';
 import type { MessagePipelineState } from '@/core/pipeline/store';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
@@ -11,7 +10,7 @@ import type { JointStateField, PlotConfig } from './defaults';
 import { JOINT_STATE_FIELDS } from './defaults';
 import { filterPlottableTopics } from './plottableSchemas';
 import { pickDefaultPlotTopic } from './pickDefaultPlotTopic';
-import { resetPlotYScaleLock, secToTime } from './plotChart';
+import { secToTime } from './plotChart';
 import { applyJointStateFieldsToConfig, pruneHiddenLegendKeysForDataset } from './plotConfigActions';
 import {
   buildTopicByName,
@@ -224,20 +223,6 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     }
   };
 
-  const handleResetZoom = useCallback(() => {
-    const chart = uplotRef.current;
-    if (!chart) return;
-    resetPlotYScaleLock(chart);
-    if (config.xAxisMode === 'timestamp' && xRange) {
-      chart.setScale('x', xRange);
-    } else {
-      // Trigger uPlot to derive the X scale from data.
-      chart.setScale('x', { min: chart.scales.x.min ?? 0, max: chart.scales.x.max ?? 1 });
-    }
-    chart.redraw(true, true);
-  }, [config.xAxisMode, uplotRef, xRange]);
-
-  const hasChart = dataset.series.length > 0;
   const showLoadingOverlay = loading && dataset.pointCount === 0;
   const progressFraction =
     progress && progress.total > 0 ? Math.min(1, progress.completed / progress.total) : null;
@@ -260,17 +245,6 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
             fieldLabels={jointFieldLabels}
             onChange={handleJointStateFieldsChange}
           />
-        )}
-        {hasChart && (
-          <button
-            type="button"
-            onClick={handleResetZoom}
-            title={formatMessage({ id: 'panels.plot.toolbar.resetZoom' })}
-            aria-label={formatMessage({ id: 'panels.plot.toolbar.resetZoom' })}
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <Maximize2 className="h-3.5 w-3.5" />
-          </button>
         )}
         {status && (
           <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{status}</span>

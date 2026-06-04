@@ -2,7 +2,6 @@
   "panels.image.defaultTitle": "图像",
   "panels.plot.defaultTitle": "图表",
   "panels.plot.toolbar.selectTopic": "选择 Topic…",
-  "panels.plot.toolbar.resetZoom": "重置缩放",
   "panels.plot.status.detectingPaths": "检测路径…",
   "panels.plot.status.loading": "加载中…",
   "panels.plot.status.loadingProgress": "加载中 {count} 条",

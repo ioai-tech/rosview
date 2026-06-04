@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useIntl } from 'react-intl';
 import type { DockviewApi, DockviewPanelApi } from 'dockview';
 import { cn } from '@/shared/lib/utils';
 import { getRosViewPortalRoot } from '@/shared/lib/rosviewPortal';
@@ -7,7 +8,7 @@ import { getPanelActions } from '../panels/framework';
 
 export interface TabContextMenuItem {
   id: string;
-  label: string;
+  messageId?: string;
   onSelect: () => void;
   destructive?: boolean;
   disabled?: boolean;
@@ -36,10 +37,15 @@ export function buildRosViewTabContextMenuItems(options: {
   };
 
   const items: TabContextMenuItem[] = [
-    { id: 'close', label: 'Close', onSelect: closeTarget, destructive: true },
+    {
+      id: 'close',
+      messageId: 'layout.panelTab.context.close',
+      onSelect: closeTarget,
+      destructive: true,
+    },
     {
       id: 'closeAll',
-      label: 'Close all in group',
+      messageId: 'layout.panelTab.context.closeAllInGroup',
       onSelect: closeAll,
       disabled: groupPanels.length === 0,
     },
@@ -50,10 +56,22 @@ export function buildRosViewTabContextMenuItems(options: {
 
   if (actions && !isWelcome) {
     items.push(
-      { id: '__sep__', label: '', onSelect: () => {} },
-      { id: 'reset', label: 'Reset panel', onSelect: actions.resetPanel },
-      { id: 'copy', label: 'Copy panel ID', onSelect: actions.copyPanelId },
-      { id: 'dup', label: 'Duplicate panel', onSelect: actions.duplicatePanel },
+      { id: '__sep__', onSelect: () => {} },
+      {
+        id: 'reset',
+        messageId: 'layout.panelTab.context.resetPanel',
+        onSelect: actions.resetPanel,
+      },
+      {
+        id: 'copy',
+        messageId: 'layout.panelTab.context.copyPanelId',
+        onSelect: actions.copyPanelId,
+      },
+      {
+        id: 'dup',
+        messageId: 'layout.panelTab.context.duplicatePanel',
+        onSelect: actions.duplicatePanel,
+      },
     );
   }
 
@@ -65,6 +83,8 @@ export const RosViewTabContextMenuPortal: React.FC<{
   items: TabContextMenuItem[];
   onRequestClose: () => void;
 }> = ({ anchor, items, onRequestClose }) => {
+  const { formatMessage } = useIntl();
+
   useEffect(() => {
     if (!anchor) {
       return;
@@ -126,7 +146,7 @@ export const RosViewTabContextMenuPortal: React.FC<{
               }
             }}
           >
-            {item.label}
+            {item.messageId ? formatMessage({ id: item.messageId }) : null}
           </button>
         ),
       )}

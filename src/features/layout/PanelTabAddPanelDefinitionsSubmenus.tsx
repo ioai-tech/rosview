@@ -8,6 +8,7 @@ import {
   DropdownMenuSubTrigger,
 } from '@/shared/ui/dropdown-menu';
 import type { PanelDefinition, PanelType } from '../panels/framework';
+import { PANEL_TYPE_MESSAGE_SLUG } from '../panels/framework/panelMessageSlug';
 import { PanelTypeIcon } from '../panels/framework/panelIcons';
 
 /** Shared row style for tab header dropdown items with a leading icon. */
@@ -31,7 +32,10 @@ export const PanelTabAddPanelDefinitionsSubmenus: React.FC<PanelTabAddPanelDefin
       <DropdownMenuSub key={def.type}>
         <DropdownMenuSubTrigger data-testid={`panel-tab-add-type-${def.type}`}>
           <PanelTypeIcon type={def.type} className="h-3.5 w-3.5 shrink-0 opacity-70 mr-1.5" />
-          {def.defaultTitle}
+          {formatMessage({
+            id: `panels.${PANEL_TYPE_MESSAGE_SLUG[def.type]}.defaultTitle`,
+            defaultMessage: def.defaultTitle,
+          })}
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent>
           <DropdownMenuItem

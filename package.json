@@ -61,6 +61,7 @@
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run lint && npm test && npm run build:lib",
     "lint": "eslint \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\"",
+    "check:i18n": "node scripts/check-i18n.mjs",
     "test": "vitest run",
     "preview": "npm run build && vite preview",
     "gen:e2e:fixtures": "node scripts/gen-e2e-fixtures.mjs",
