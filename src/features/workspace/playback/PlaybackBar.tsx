@@ -486,19 +486,19 @@ export const PlaybackBar: React.FC<PlaybackBarProps> = ({ player, extensionConte
           <div
             ref={hoverLineRef}
             data-testid="playback-hover-line"
-            className="pointer-events-none absolute top-1/2 z-[2] h-6 w-px -translate-x-1/2 -translate-y-1/2 bg-primary/55 opacity-0"
+            className="ros-playback-center-xy pointer-events-none absolute top-1/2 z-[2] h-6 w-px bg-primary/55 opacity-0"
             style={{ left: '0%' }}
           />
           <div
             ref={thumbRef}
             data-testid="playback-thumb"
-            className="pointer-events-none absolute top-1/2 z-[3] h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary bg-background"
+            className="ros-playback-center-xy pointer-events-none absolute top-1/2 z-[3] h-3 w-3 rounded-full border border-primary bg-background"
             style={{ left: '0%' }}
           />
           <div
             ref={hoverTooltipRef}
             data-testid="playback-hover-time"
-            className="pointer-events-none absolute -top-8 z-10 -translate-x-1/2 rounded-md border border-border bg-popover px-2 py-1 text-[10px] font-mono text-popover-foreground opacity-0 shadow-lg"
+            className="ros-playback-center-x pointer-events-none absolute -top-8 z-10 rounded-md border border-border bg-popover px-2 py-1 text-[10px] font-mono text-popover-foreground opacity-0 shadow-lg"
             style={{ left: '0%' }}
           />
         </div>

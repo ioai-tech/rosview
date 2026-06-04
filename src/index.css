@@ -4,9 +4,9 @@
 
 /* ── Scoped preflight (tailwind preflight: false in tailwind.config.js) ──
    Limited to #rosview-root so resets never touch the host page.
-   Only box-sizing is applied on * — do NOT zero borders globally; libraries
-   such as uPlot and Dockview rely on border-* for chrome (e.g. hover crosshair).
-   Border color for Tailwind utilities comes from `#rosview-root * { border-border }`.
+   Do not zero borders on every element: libraries such as uPlot and Dockview
+   rely on their own border chrome. Instead, initialize only Tailwind border
+   width utilities so classes like `border` / `border-b` are visible again.
    ─────────────────────────────────────────────────────────────────────── */
 @layer base {
   #rosview-root *,
@@ -19,6 +19,10 @@
     --tw-content: '';
   }
   #rosview-root {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
     line-height: 1.5;
     -webkit-text-size-adjust: 100%;
     tab-size: 4;
@@ -32,6 +36,21 @@
   #rosview-root h4, #rosview-root h5, #rosview-root h6 {
     font-size: inherit;
     font-weight: inherit;
+  }
+  #rosview-root :where(blockquote, dl, dd, h1, h2, h3, h4, h5, h6, hr, figure, p, pre) {
+    margin: 0;
+  }
+  #rosview-root :where(ol, ul, menu) {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  #rosview-root :where(fieldset) {
+    margin: 0;
+    padding: 0;
+  }
+  #rosview-root :where(legend) {
+    padding: 0;
   }
   #rosview-root a { color: inherit; text-decoration: inherit; }
   #rosview-root b, #rosview-root strong { font-weight: bolder; }
@@ -50,12 +69,16 @@
     color: inherit;
     margin: 0;
     padding: 0;
+    border-width: 0;
+    border-style: solid;
+    border-color: hsl(var(--border));
   }
   #rosview-root button, #rosview-root select { text-transform: none; }
   #rosview-root button,
   #rosview-root [type='button'],
   #rosview-root [type='reset'],
   #rosview-root [type='submit'] {
+    appearance: button;
     -webkit-appearance: button;
     background-color: transparent;
     background-image: none;
@@ -65,7 +88,7 @@
   #rosview-root progress { vertical-align: baseline; }
   #rosview-root ::-webkit-inner-spin-button,
   #rosview-root ::-webkit-outer-spin-button { height: auto; }
-  #rosview-root [type='search'] { -webkit-appearance: textbox; outline-offset: -2px; }
+  #rosview-root [type='search'] { appearance: textfield; -webkit-appearance: textbox; outline-offset: -2px; }
   #rosview-root ::-webkit-search-decoration { -webkit-appearance: none; }
   #rosview-root summary { display: list-item; }
   #rosview-root img, #rosview-root svg, #rosview-root video,
@@ -76,6 +99,11 @@
   }
   #rosview-root img, #rosview-root video { max-width: 100%; height: auto; }
   #rosview-root [hidden]:where(:not([hidden='until-found'])) { display: none !important; }
+  #rosview-root :where(.border, .border-x, .border-y, .border-t, .border-r, .border-b, .border-l) {
+    border-width: 0;
+    border-style: solid;
+    border-color: hsl(var(--border));
+  }
 }
 
 @layer base {
@@ -185,6 +213,16 @@
 }
 
 @layer components {
+  #rosview-root .ros-playback-center-x {
+    transform: translateX(-50%);
+    translate: none;
+  }
+
+  #rosview-root .ros-playback-center-xy {
+    transform: translate(-50%, -50%);
+    translate: none;
+  }
+
   #rosview-root .loading-spinner {
     width: 32px;
     height: 32px;

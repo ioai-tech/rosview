@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useReducer } from 'react';
 import { RosViewer } from '@/features/viewer/RosViewer';
-import '../index.css';
 
 function useLocationSearchSync() {
   const [, bump] = useReducer((n: number) => n + 1, 0);
@@ -24,7 +23,7 @@ function App() {
   const syncLocationSearch = useLocationSearchSync();
   const url = readSpaUrlFromQuery();
   return (
-    <div className="w-screen h-screen">
+    <div style={{ width: '100vw', height: '100vh' }}>
       <RosViewer
         url={url}
         urlState="spa"

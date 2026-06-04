@@ -86,12 +86,14 @@ export const RosViewProvider: React.FC<RosViewProviderProps> = ({
         data-language={language}
         data-theme={resolvedTheme}
         data-player-presence={playerPresence}
-        className={`w-full h-full ${resolvedTheme === 'dark' ? 'dark' : ''}`}
+        className={`rosview-root-shell ${resolvedTheme === 'dark' ? 'dark' : ''}`}
       >
-        <IntlProvider locale={intlLocaleFor(language)} defaultLocale="en" messages={messages}>
-          {children}
-          <Toaster theme={resolvedTheme} />
-        </IntlProvider>
+        <div className="h-full w-full min-h-0 min-w-0">
+          <IntlProvider locale={intlLocaleFor(language)} defaultLocale="en" messages={messages}>
+            {children}
+            <Toaster theme={resolvedTheme} />
+          </IntlProvider>
+        </div>
       </div>
     </RosViewThemeContext.Provider>
   );
