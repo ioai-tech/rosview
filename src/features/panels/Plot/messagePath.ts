@@ -251,7 +251,7 @@ export function hasDerivativeModifier(path: string): boolean {
  *
  * Modes other than `timestamp` (index/custom/currentCustom) only produce
  * meaningful data when the Y-path expands to multiple values per message —
- * typically because it contains a slice selector (`[:]`, `[a:b]`, `[a-b]`).
+ * typically because it contains a slice selector (e.g. `[:]`, bounded `start:end`, or `start-end`).
  * Scalar paths like `data` or fixed-index paths like `position[0]` cannot
  * usefully drive the index/custom X axes; we use this to disable the
  * corresponding settings options up-front instead of producing a silent

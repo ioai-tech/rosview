@@ -3,6 +3,9 @@ export default {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
+    // Plot path strings in tests (e.g. numbers[-2:-1]) look like Tailwind arbitrary
+    // properties and produce invalid CSS during lightningcss minify.
+    "!./src/**/*.test.{ts,tsx}",
   ],
   important: '#rosview-root',
   darkMode: ["class"],
