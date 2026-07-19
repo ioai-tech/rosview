@@ -1,6 +1,5 @@
 {
   "playback.annotationsEmpty": "No annotation ranges",
-  "playback.speedMax": "Max (best effort)",
   "playback.play": "Play playback",
   "playback.pause": "Pause playback",
   "playback.timeMode.relative.aria": "Relative time from log start; click to switch to absolute local time",

@@ -1,6 +1,5 @@
 {
   "playback.annotationsEmpty": "注釈範囲がありません",
-  "playback.speedMax": "最大（ベストエフォート）",
   "playback.play": "再生",
   "playback.pause": "一時停止",
   "playback.timeMode.relative.aria": "ログ先頭からの相対時刻です。クリックで絶対時刻に切り替え",

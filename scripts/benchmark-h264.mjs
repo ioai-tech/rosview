@@ -18,6 +18,8 @@ Options:
   --file <path>       Absolute path to a local MCAP file (required)
   --base-url <url>    Running rosview URL (default: ${DEFAULT_BASE_URL})
   --duration <sec>    Benchmark duration in seconds (default: ${DEFAULT_DURATION_SECONDS})
+  --speed <rate>      Playback speed used as load input (default: 1)
+  --no-seeks          Disable random seek stress during sampling
   --output <path>     Also write the JSON result to this path
   --help              Show this help
 `;
@@ -27,6 +29,8 @@ function parseArgs(argv) {
   const options = {
     baseUrl: DEFAULT_BASE_URL,
     durationSeconds: DEFAULT_DURATION_SECONDS,
+    speed: 1,
+    seeks: true,
     file: undefined,
     output: undefined,
     help: false,
@@ -35,6 +39,7 @@ function parseArgs(argv) {
     ['--file', 'file'],
     ['--base-url', 'baseUrl'],
     ['--duration', 'durationSeconds'],
+    ['--speed', 'speed'],
     ['--output', 'output'],
   ]);
 
@@ -42,6 +47,10 @@ function parseArgs(argv) {
     const argument = argv[index];
     if (argument === '--help' || argument === '-h') {
       options.help = true;
+      continue;
+    }
+    if (argument === '--no-seeks') {
+      options.seeks = false;
       continue;
     }
     const separator = argument.indexOf('=');
@@ -54,7 +63,7 @@ function parseArgs(argv) {
     if (!value || value.startsWith('--')) {
       throw new Error(`${name} requires a value`);
     }
-    options[key] = key === 'durationSeconds' ? Number(value) : value;
+    options[key] = key === 'durationSeconds' || key === 'speed' ? Number(value) : value;
   }
   return options;
 }
@@ -84,6 +93,9 @@ async function validateOptions(options) {
   }
   if (!Number.isFinite(options.durationSeconds) || options.durationSeconds < 2) {
     throw new Error('--duration must be a number of at least 2 seconds');
+  }
+  if (!Number.isFinite(options.speed) || options.speed < 0.1 || options.speed > 8) {
+    throw new Error('--speed must be between 0.1 and 8');
   }
   if (options.output) {
     options.output = path.resolve(options.output);
@@ -206,12 +218,9 @@ async function readProgress(fill) {
   });
 }
 
-async function readImagePanel(page) {
-  const panel = page.getByTestId('image-panel').first();
-  if (!(await panel.isVisible().catch(() => false))) {
-    return null;
-  }
-  return panel.evaluate((element) => {
+async function readImagePanels(page) {
+  const panels = page.getByTestId('image-panel');
+  return panels.evaluateAll((elements) => elements.map((element) => {
     const numberAttribute = (name) => {
       const value = element.getAttribute(name);
       if (value === null) return null;
@@ -222,8 +231,12 @@ async function readImagePanel(page) {
       pressure: element.getAttribute('data-h264-pressure'),
       queueFrames: numberAttribute('data-h264-queue-frames'),
       droppedFrames: numberAttribute('data-h264-dropped-frames'),
+      decodeQueueSize: numberAttribute('data-h264-decode-queue'),
+      mediaLagMs: numberAttribute('data-h264-media-lag-ms'),
+      resyncCount: numberAttribute('data-h264-resync-count'),
+      renderedFrames: numberAttribute('data-h264-rendered-frames'),
     };
-  });
+  }));
 }
 
 function summarizeProgress(samples) {
@@ -276,6 +289,10 @@ async function runBenchmark(options, fixtureUrl) {
       .waitFor({ state: 'visible', timeout: 90_000 });
     const play = page.getByRole('button', { name: 'Play playback' });
     await play.waitFor({ state: 'visible', timeout: 30_000 });
+    if (options.speed !== 1) {
+      await page.getByTestId('playback-speed-trigger').click();
+      await page.getByRole('menuitem', { name: `${options.speed}x`, exact: true }).click();
+    }
     await play.click();
 
     const fill = page.getByTestId('playback-progress-fill');
@@ -286,7 +303,9 @@ async function runBenchmark(options, fixtureUrl) {
     const heapSamples = [];
     const seeks = [];
     const durationMs = options.durationSeconds * 1_000;
-    const seekTimes = [0.35, 0.6, 0.82].map((ratio) => durationMs * ratio);
+    const seekTimes = options.seeks
+      ? [0.35, 0.6, 0.82].map((ratio) => durationMs * ratio)
+      : [];
     let nextSeek = 0;
     const samplingStartedAt = Date.now();
 
@@ -312,8 +331,8 @@ async function runBenchmark(options, fixtureUrl) {
         await resume.click();
       }
       samples.push({ elapsedMs, width: await readProgress(fill) });
-      const image = await readImagePanel(page);
-      if (image) imageSamples.push({ elapsedMs, ...image });
+      const panels = await readImagePanels(page);
+      if (panels.length > 0) imageSamples.push({ elapsedMs, panels });
       const heapBytes = await readHeap(page);
       if (heapBytes !== null) heapSamples.push({ elapsedMs, bytes: heapBytes });
       await page.waitForTimeout(SAMPLE_INTERVAL_MS);
@@ -326,13 +345,23 @@ async function runBenchmark(options, fixtureUrl) {
     const statusTexts = await page.getByTestId('image-panel-status').allTextContents().catch(() => []);
     const heapValues = heapSamples.map(({ bytes }) => bytes);
     const latestImage = imageSamples.at(-1) ?? null;
+    const latestPanels = latestImage?.panels ?? [];
     const metricsReasonable =
-      latestImage === null ||
-      (['normal', 'degraded', 'recovery'].includes(latestImage.pressure) &&
-        Number.isInteger(latestImage.queueFrames) &&
-        latestImage.queueFrames >= 0 &&
-        Number.isInteger(latestImage.droppedFrames) &&
-        latestImage.droppedFrames >= 0);
+      latestPanels.every((panel) =>
+        ['normal', 'degraded', 'recovery'].includes(panel.pressure) &&
+        Number.isInteger(panel.queueFrames) &&
+        panel.queueFrames >= 0 &&
+        Number.isInteger(panel.droppedFrames) &&
+        panel.droppedFrames >= 0 &&
+        Number.isInteger(panel.decodeQueueSize) &&
+        panel.decodeQueueSize >= 0 &&
+        Number.isFinite(panel.mediaLagMs) &&
+        panel.mediaLagMs >= 0 &&
+        Number.isInteger(panel.resyncCount) &&
+        panel.resyncCount >= 0 &&
+        Number.isInteger(panel.renderedFrames) &&
+        panel.renderedFrames >= 0
+      );
 
     return {
       schemaVersion: 1,
@@ -342,6 +371,7 @@ async function runBenchmark(options, fixtureUrl) {
         fileBytes: options.fileSize,
         baseUrl: options.baseUrl,
         durationSeconds: options.durationSeconds,
+        speed: options.speed,
       },
       environment: {
         platform: process.platform,

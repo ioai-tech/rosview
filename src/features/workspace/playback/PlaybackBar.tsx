@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { PLAYBACK_SPEED_MAX } from '@/core/types/player';
 import { CalendarClock, Pause, Play, SkipBack, SkipForward, Timer } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useIntl } from 'react-intl';
@@ -53,7 +52,7 @@ function percentToTime(percent: number, start: Time, end: Time): Time {
   return { sec, nsec };
 }
 
-const PRESET_SPEEDS = [0.1, 0.25, 0.5, 1, 2, 4, 8] as const;
+const PRESET_SPEEDS = [0.1, 0.25, 0.5, 1, 2, 4, 8, 10] as const;
 const PRESET_SAMPLING_FPS = [15, 30, 45] as const;
 
 const MENUBAR_PLAYBACK_SPEED = 'playback-menubar-speed';
@@ -599,9 +598,7 @@ export const PlaybackBar: React.FC<PlaybackBarProps> = ({ player, extensionConte
                       setPlaybackSettingsMenubarValue(MENUBAR_PLAYBACK_SPEED);
                     }}
                   >
-                    {speed === PLAYBACK_SPEED_MAX
-                      ? formatMessage({ id: 'playback.speedMax' })
-                      : `${speed}x`}
+                    {speed}x
                   </MenubarTrigger>
                   <MenubarContent align="end" sideOffset={6}>
                     <MenubarGroup>
@@ -616,14 +613,6 @@ export const PlaybackBar: React.FC<PlaybackBarProps> = ({ player, extensionConte
                           {item}x
                         </MenubarItem>
                       ))}
-                      <MenubarItem
-                        className={`text-xs ${speed === PLAYBACK_SPEED_MAX ? 'bg-accent text-accent-foreground' : ''}`}
-                        onSelect={() => {
-                          player.setSpeed(PLAYBACK_SPEED_MAX);
-                        }}
-                      >
-                        {formatMessage({ id: 'playback.speedMax' })}
-                      </MenubarItem>
                     </MenubarGroup>
                   </MenubarContent>
                 </MenubarMenu>

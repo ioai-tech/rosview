@@ -1,6 +1,5 @@
 {
   "playback.annotationsEmpty": "暂无标注区间",
-  "playback.speedMax": "最大（尽力加速）",
   "playback.play": "播放",
   "playback.pause": "暂停",
   "playback.timeMode.relative.aria": "当前为相对时间，点击切换为绝对时间",

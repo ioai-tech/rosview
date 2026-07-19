@@ -120,6 +120,25 @@ afterEach(() => {
   messageBus.reset();
 });
 
+describe('IterablePlayer playback speed', () => {
+  it('uses a deterministic 10x maximum instead of a best-effort sentinel', async () => {
+    const player = new IterablePlayer(makeSource([]));
+    let latestState: PlayerState | undefined;
+    player.setListener((state) => {
+      latestState = state;
+    });
+    await player.initialize({});
+
+    player.setSpeed(10);
+    expect(latestState?.activeData?.speed).toBe(10);
+
+    player.setSpeed(64);
+    expect(latestState?.activeData?.speed).toBe(10);
+
+    player.close();
+  });
+});
+
 describe('IterablePlayer high-frequency lane', () => {
   it('routes video-only topics outside the generic message bus', async () => {
     const source = makeSource([makeImageMessage()]);

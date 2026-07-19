@@ -13,12 +13,16 @@ npm run benchmark:h264 -- \
   --file /absolute/path/representative.mcap \
   --base-url http://127.0.0.1:4173 \
   --duration 60 \
+  --speed 8 \
+  --no-seeks \
   --output benchmark-h264.json
 ```
 
 The benchmark exposes the original file through a temporary read-only Range/CORS server. It records
-progress updates, random seeks, Image panel H.264 metrics, decode/page/console errors, and Chromium
-JS heap when available. Run `npm run benchmark:h264 -- --help` for all options.
+progress updates, optional random seeks, aggregate metrics for every Image panel, decode/page/console
+errors, and Chromium JS heap when available. `--speed` is a load input only: adaptive behavior is
+driven by measured media lag and queue pressure, not by fixed playback-rate branches. Run
+`npm run benchmark:h264 -- --help` for all options.
 
 ## Manual browser pass
 
@@ -35,6 +39,8 @@ Suggested acceptance targets:
   movement in about one second.
 - No decode, page, or console errors; Image metrics are non-negative and pressure is `normal`,
   `degraded`, or `recovery`.
+- Decoder input remains bounded, media lag repeatedly recovers after pressure, rendered frames keep
+  increasing, and resync count does not grow continuously under a steady workload.
 - The H.264 pending queue is hard-bounded at 120 frames and a 1,000 ms media-time span. Soft
   pressure keeps a sole complete GOP intact; if either hard bound is exceeded without a newer IDR
   suffix that fits, the worker keeps the current picture, drops the complete backlog, and waits for

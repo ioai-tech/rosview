@@ -49,10 +49,33 @@ test('H.264 CompressedImage decodes without error', async ({ page }) => {
     const metrics = await imagePanel.evaluate((element) => ({
       queueFrames: Number(element.getAttribute('data-h264-queue-frames')),
       droppedFrames: Number(element.getAttribute('data-h264-dropped-frames')),
+      decodeQueueSize: Number(element.getAttribute('data-h264-decode-queue')),
+      mediaLagMs: Number(element.getAttribute('data-h264-media-lag-ms')),
+      resyncCount: Number(element.getAttribute('data-h264-resync-count')),
+      renderedFrames: Number(element.getAttribute('data-h264-rendered-frames')),
     }));
     expect(Number.isInteger(metrics.queueFrames)).toBe(true);
     expect(metrics.queueFrames).toBeGreaterThanOrEqual(0);
     expect(Number.isInteger(metrics.droppedFrames)).toBe(true);
     expect(metrics.droppedFrames).toBeGreaterThanOrEqual(0);
+    expect(Number.isInteger(metrics.decodeQueueSize)).toBe(true);
+    expect(metrics.decodeQueueSize).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(metrics.mediaLagMs)).toBe(true);
+    expect(metrics.mediaLagMs).toBeGreaterThanOrEqual(0);
+    expect(Number.isInteger(metrics.resyncCount)).toBe(true);
+    expect(metrics.resyncCount).toBeGreaterThanOrEqual(0);
+    expect(Number.isInteger(metrics.renderedFrames)).toBe(true);
+    expect(metrics.renderedFrames).toBeGreaterThanOrEqual(0);
+
+    await page.getByTestId('playback-speed-trigger').click();
+    await page.getByRole('menuitem', { name: '8x', exact: true }).click();
+    const resume = page.getByRole('button', { name: 'Play playback' });
+    if (await resume.isVisible().catch(() => false)) {
+      await resume.click();
+    }
+    await page.waitForTimeout(1_000);
+    await expect(imageStatus).toBeVisible();
+    await expect(imagePanel).toHaveAttribute('data-h264-pressure', /^(normal|degraded|recovery)$/);
+    expect(await page.getByText(/decode failed|could not be decoded/i).count()).toBe(0);
   }
 });

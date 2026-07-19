@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { Player } from '@/core/types/player';
-import { PLAYBACK_SPEED_MAX } from '@/core/types/player';
+import { MAX_PLAYBACK_SPEED } from '@/core/types/player';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
 import type { MessagePipelineState } from '@/core/pipeline/store';
 import { resolveStepMsFromModifiers } from '@/shared/utils/playbackStep';
@@ -56,8 +56,8 @@ export function useKeyboardShortcuts(player: Player) {
         case 'BracketLeft': {
           e.preventDefault();
           const cur = speedRef.current;
-          if (cur === PLAYBACK_SPEED_MAX) {
-            player.setSpeed(4);
+          if (cur > 8) {
+            player.setSpeed(8);
           } else {
             player.setSpeed(Math.max(0.1, cur / 2));
           }
@@ -66,11 +66,8 @@ export function useKeyboardShortcuts(player: Player) {
         case 'BracketRight': {
           e.preventDefault();
           const cur = speedRef.current;
-          if (cur === PLAYBACK_SPEED_MAX) {
-            break;
-          }
           if (cur >= 8) {
-            player.setSpeed(PLAYBACK_SPEED_MAX);
+            player.setSpeed(MAX_PLAYBACK_SPEED);
           } else {
             player.setSpeed(Math.min(8, cur * 2));
           }

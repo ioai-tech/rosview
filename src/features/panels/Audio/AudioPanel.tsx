@@ -3,7 +3,6 @@ import { useIntl } from 'react-intl';
 import { useShallow } from 'zustand/react/shallow';
 import { timeToNs } from '@/core/analysis/timeSeries';
 import type { Player } from '@/core/types/player';
-import { PLAYBACK_SPEED_MAX } from '@/core/types/player';
 import { messageBus } from '@/core/pipeline/messageBus';
 import { useSubscriberSeq } from '@/core/pipeline/useMessageBus';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
@@ -100,7 +99,6 @@ export const AudioPanel: React.FC<AudioPanelProps> = (props) => {
 
   const allowPlayback = useMemo(() => {
     if (!isPlaying || config.mute) return false;
-    if (speed === PLAYBACK_SPEED_MAX) return false;
     return Math.abs(speed - 1) < 1e-4;
   }, [isPlaying, config.mute, speed]);
 
@@ -259,7 +257,7 @@ export const AudioPanel: React.FC<AudioPanelProps> = (props) => {
   const statusLabel = useMemo(() => {
     if (!config.topic) return formatMessage({ id: 'panels.audio.status.waitingTopic' });
     if (!allowPlayback && isPlaying && !config.mute) {
-      if (speed === PLAYBACK_SPEED_MAX || Math.abs(speed - 1) >= 1e-4) {
+      if (Math.abs(speed - 1) >= 1e-4) {
         return formatMessage({ id: 'panels.audio.status.mutedNon1x' });
       }
     }

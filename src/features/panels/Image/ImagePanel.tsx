@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import type { Player } from '@/core/types/player';
+import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
 import type { MessageEvent as RosMessageEvent } from '@/core/types/ros';
 import { scheduleFrame } from '@/shared/utils/rafScheduler';
 import { toNano } from '@/shared/utils/time';
@@ -45,6 +46,9 @@ export type ImagePanelProps = ImageConfig & {
 
 export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const { formatMessage } = useIntl();
+  const isPlaying = useMessagePipeline(
+    (state) => state.playerState.activeData?.isPlaying ?? false,
+  );
   const {
     player,
     panelId,
@@ -250,15 +254,24 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     };
   }, [player, mainConsumerId, h264ConsumerId, topic]);
 
-  // Reset on playback rewind; for H264, rebuild decoder state from the nearest keyframe.
+  // Keep the worker's media deadline current. On rewind, rebuild H.264 state
+  // from the nearest complete random-access point.
   useEffect(() => {
     return player.subscribeCurrentTime((time) => {
+      workerRef.current?.postMessage({
+        type: 'playback',
+        currentTime: time,
+        isPlaying,
+      } satisfies ImageRenderWorkerRequest);
       const nowNs = toNano(time);
       const previousNs = lastPlaybackTimeNsRef.current;
       if (previousNs != null && nowNs + 5_000_000n < previousNs) {
         const worker = workerRef.current;
         if (worker && topic && h264ModeRef.current) {
-          worker.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
+          worker.postMessage({
+            type: 'reset',
+            preserveFrame: true,
+          } satisfies ImageRenderWorkerRequest);
           void repairH264Seek(player, worker, topic, time);
         } else {
           workerRef.current?.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
@@ -266,7 +279,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       }
       lastPlaybackTimeNsRef.current = nowNs;
     });
-  }, [player, topic]);
+  }, [isPlaying, player, topic]);
 
   // Send color/depth decode options when they change — triggers immediate redraw in worker
   useEffect(() => {
@@ -315,6 +328,10 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       data-h264-pressure={metrics?.pressureMode}
       data-h264-queue-frames={metrics?.queueFrames}
       data-h264-dropped-frames={metrics?.droppedFrames}
+      data-h264-decode-queue={metrics?.decodeQueueSize}
+      data-h264-media-lag-ms={metrics?.mediaLagMs}
+      data-h264-resync-count={metrics?.resyncCount}
+      data-h264-rendered-frames={metrics?.renderedFrames}
     >
       <PanelTopicBar className="border-zinc-800 bg-zinc-950">
         <TopicQuickPicker

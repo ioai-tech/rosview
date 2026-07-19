@@ -97,8 +97,8 @@ export interface HighFrequencyConsumer {
   onMessageBatch?: (messages: MessageEvent[]) => void;
 }
 
-/** Sentinel playback speed for “as fast as possible” (see IterablePlayer / PlaybackBar). */
-export const PLAYBACK_SPEED_MAX = -1;
+/** Highest deterministic playback rate exposed by the visualization player. */
+export const MAX_PLAYBACK_SPEED = 10;
 
 export interface Player {
   setListener(listener: (state: PlayerState) => void): void;

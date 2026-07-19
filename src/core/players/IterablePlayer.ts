@@ -6,7 +6,7 @@ import type {
   StreamMessagesInTimeRangeArgs,
   Subscription,
 } from '@/core/types/player';
-import { PLAYBACK_SPEED_MAX } from '@/core/types/player';
+import { MAX_PLAYBACK_SPEED } from '@/core/types/player';
 import type { DataQualityReport, Time, Initialization, MessageEvent, TimeRange } from '@/core/types/ros';
 import type { ISourceHandle } from '@/infra/workers/ISourceHandle';
 import type { IMessageCursor } from '@/infra/workers/types';
@@ -469,7 +469,7 @@ export class IterablePlayer implements Player {
     this._advancePlaybackEpoch();
     this._isPlaying = true;
     const now = performance.now();
-    this._clock.play(this._currentTime, this._speedFactor(), now);
+    this._clock.play(this._currentTime, this._speed, now);
     this._lastTickWallMs = now;
     this._pageSuspended = typeof document !== "undefined" && document.hidden;
     if (this._pageSuspended) {
@@ -600,17 +600,9 @@ export class IterablePlayer implements Player {
   }
 
   setSpeed(speed: number): void {
-    if (speed === PLAYBACK_SPEED_MAX) {
-      this._speed = PLAYBACK_SPEED_MAX;
-    } else {
-      this._speed = Math.min(8, Math.max(0.1, speed));
-    }
-    this._clock.setSpeed(this._speedFactor(), performance.now());
+    this._speed = Math.min(MAX_PLAYBACK_SPEED, Math.max(0.1, speed));
+    this._clock.setSpeed(this._speed, performance.now());
     this._emitState();
-  }
-
-  private _speedFactor(): number {
-    return this._speed === PLAYBACK_SPEED_MAX ? 64 : this._speed;
   }
 
   setSamplingFps(fps: number): void {

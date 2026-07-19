@@ -55,11 +55,17 @@ export type ImageRenderWorkerRequest =
       options: Partial<RawImageDecodeOptions>;
     }
   | {
+      type: 'playback';
+      currentTime: Time;
+      isPlaying: boolean;
+    }
+  | {
       type: 'frame';
       frame: ImageWorkerFrameEnvelope;
     }
   | {
       type: 'reset';
+      preserveFrame?: boolean;
     }
   | {
       type: 'dispose';
@@ -72,6 +78,9 @@ export interface ImageRenderMetrics {
   decodeMs: number;
   droppedFrames: number;
   renderedFrames: number;
+  decodeQueueSize: number;
+  mediaLagMs: number;
+  resyncCount: number;
   codec?: string;
 }
 

@@ -94,7 +94,10 @@ export async function repairH264Seek(
       continue;
     }
 
-    worker.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
+    worker.postMessage({
+      type: 'reset',
+      preserveFrame: true,
+    } satisfies ImageRenderWorkerRequest);
     for (const event of repairFrames) {
       const next = toWorkerFrame(event);
       if (!next) {
