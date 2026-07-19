@@ -1,6 +1,3 @@
-import type { TopicInfo } from '@/core/types/ros';
-
-
 const ANNOTATION_SYNC_TOLERANCE_NS = 8_000_000n;
 
 interface AnnotationColor {
@@ -46,41 +43,6 @@ export function isImageAnnotationsSchema(schemaName: string): boolean {
   return normalized.endsWith('imageannotations');
 }
 
-/**
- * Resolves an explicit annotation topic or infers one from the source's
- * foxglove.ImageAnnotations topics. Camera-name matching handles multi-camera
- * logs without tying the Image panel to one producer's topic root.
- */
-export function resolveImageAnnotationsTopic(
-  imageTopic: string,
-  configuredTopic: string,
-  topics: readonly TopicInfo[],
-): string {
-  const configured = configuredTopic.trim();
-  if (configured) return configured;
-
-  const candidates = topics.filter((topic) => isImageAnnotationsSchema(topic.type));
-  if (candidates.length === 0) return '';
-
-  const directNames = new Set([
-    `${imageTopic}/annotations`,
-    `${imageTopic}/image_annotations`,
-    `${imageTopic.replace(/\/(?:compressed|image_raw|image)$/, '')}/annotations`,
-    `${imageTopic.replace(/\/(?:compressed|image_raw|image)$/, '')}/image_annotations`,
-  ]);
-  const direct = candidates.find((topic) => directNames.has(topic.name));
-  if (direct) return direct.name;
-
-  const cameraName = imageTopic.match(/(?:^|\/)(camera\d+)(?:\/|$)/i)?.[1]?.toLowerCase();
-  if (cameraName) {
-    const cameraMatches = candidates.filter((topic) =>
-      topic.name.toLowerCase().split('/').includes(cameraName),
-    );
-    if (cameraMatches.length === 1) return cameraMatches[0].name;
-  }
-
-  return candidates.length === 1 ? candidates[0].name : '';
-}
 
 export function parseImageAnnotations(message: unknown): ImageAnnotationsFrame | null {
   if (!isRecord(message) || !Array.isArray(message.points)) return null;

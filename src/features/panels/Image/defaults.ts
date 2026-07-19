@@ -2,7 +2,7 @@ import type { ImageColorMode } from './core/imageColorMode';
 
 export interface ImageConfig {
   topic: string;
-  /** foxglove.ImageAnnotations topic. Empty uses camera-aware auto-detection. */
+  /** Optional foxglove.ImageAnnotations topic drawn over the image. */
   annotationTopic: string;
   // Display
   backgroundColor: string;

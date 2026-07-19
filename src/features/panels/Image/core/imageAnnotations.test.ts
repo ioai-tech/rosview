@@ -3,7 +3,6 @@ import {
   drawImageAnnotations,
   isImageAnnotationsSchema,
   parseImageAnnotations,
-  resolveImageAnnotationsTopic,
   selectSynchronizedImageAnnotations,
 } from './imageAnnotations';
 
@@ -43,24 +42,7 @@ describe('foxglove.ImageAnnotations parsing', () => {
   });
 });
 
-describe('foxglove.ImageAnnotations topic resolution', () => {
-  const topics = [
-    { name: '/robot0/perception/handpose/camera4/image_annotations', type: 'foxglove.ImageAnnotations' },
-    { name: '/robot0/perception/handpose/camera5/image_annotations', type: 'foxglove_msgs/msg/ImageAnnotations' },
-  ];
-
-  it('matches the selected image by camera name', () => {
-    expect(
-      resolveImageAnnotationsTopic('/robot0/sensor/camera5/compressed', '', topics),
-    ).toBe('/robot0/perception/handpose/camera5/image_annotations');
-  });
-
-  it('prefers an explicit configured topic', () => {
-    expect(resolveImageAnnotationsTopic('/camera/image', '/custom/annotations', topics)).toBe(
-      '/custom/annotations',
-    );
-  });
-
+describe('foxglove.ImageAnnotations schema matching', () => {
   it('recognizes ROS and Foxglove schema spellings', () => {
     expect(isImageAnnotationsSchema('foxglove.ImageAnnotations')).toBe(true);
     expect(isImageAnnotationsSchema('foxglove_msgs/msg/ImageAnnotations')).toBe(true);
