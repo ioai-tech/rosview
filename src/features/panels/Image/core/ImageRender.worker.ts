@@ -18,6 +18,7 @@ import {
   decodedFrameLatenessMs,
   initialH264PressureState,
   isH264HardLimitExceeded,
+  isRetrogradeMediaFrame,
   shouldDropDecodedH264Frame,
   updateDecodeDurationEwma,
   updateH264Pressure,
@@ -337,6 +338,7 @@ class ImageRenderWorkerRuntime {
   #lastH264ResyncAt = -Infinity;
   #playbackTimeNs: bigint | null = null;
   #lastDecodedH264TimeNs: bigint | null = null;
+  #lastDrawnMediaTimeNs: bigint | null = null;
   #isPlaying = false;
   #lastMetricsAt = -Infinity;
   #epoch = 0;
@@ -417,12 +419,7 @@ class ImageRenderWorkerRuntime {
           else this.#overlays.push(message.overlay);
           if (this.#overlays.length > 120) this.#overlays.shift();
         }
-        // Live H.264 keeps only a periodic resize bitmap. Repainting that cache
-        // for every annotation would jump the canvas back by up to 500 ms.
-        // Decoder output draws the same buffered annotations on the live frame.
-        if (!this.#isPlaying || this.#renderedH264Frames === 0) {
-          this.#redrawCachedFrame();
-        }
+        this.#redrawCachedFrameForOverlay();
         return;
 
       case 'reset':
@@ -779,7 +776,10 @@ class ImageRenderWorkerRuntime {
 
       const width = videoFrame.displayWidth || videoFrame.codedWidth;
       const height = videoFrame.displayHeight || videoFrame.codedHeight;
-      this.#drawCanvasImageSource(videoFrame, width, height, sourceFrame.publishTime);
+      if (!this.#drawCanvasImageSource(videoFrame, width, height, sourceFrame.publishTime)) {
+        this.#droppedH264Frames += 1;
+        return;
+      }
       this.#lastH264RenderAt = now;
       this.#renderedH264Frames += 1;
       this.#emitStatus({
@@ -889,6 +889,7 @@ class ImageRenderWorkerRuntime {
     this.#h264ResyncCount = 0;
     this.#lastH264ResyncAt = -Infinity;
     this.#lastDecodedH264TimeNs = null;
+    this.#lastDrawnMediaTimeNs = null;
     this.#lastMetricsAt = -Infinity;
   }
 
@@ -1014,6 +1015,22 @@ class ImageRenderWorkerRuntime {
     }
   }
 
+  #redrawCachedFrameForOverlay(): void {
+    const cached = this.#cachedFrame;
+    if (cached?.kind === 'bitmap' && getCompressedKind(cached.encoding) === 'h264') {
+      // H.264 retains only a periodic bitmap for option and viewport redraws.
+      // Redraw it only when it is the frame still visible on the canvas.
+      if (
+        this.#lastDrawnMediaTimeNs !== null &&
+        timeToKey(cached.publishTime) === this.#lastDrawnMediaTimeNs
+      ) {
+        this.#redrawCachedFrame();
+      }
+      return;
+    }
+    this.#redrawCachedFrame();
+  }
+
   /** Redraw the cached frame with current renderOptions / viewport. */
   #redrawCachedFrame(): void {
     const cached = this.#cachedFrame;
@@ -1116,12 +1133,16 @@ class ImageRenderWorkerRuntime {
     sourceWidth: number,
     sourceHeight: number,
     publishTime: Time,
-  ): void {
+  ): boolean {
+    const imageTimestampNs = timeToKey(publishTime);
+    if (isRetrogradeMediaFrame(this.#isPlaying, this.#lastDrawnMediaTimeNs, imageTimestampNs)) {
+      return false;
+    }
     this.#applyViewport();
     const ctx = this.#ctx;
     const canvas = this.#canvas;
     if (!ctx || !canvas) {
-      return;
+      return false;
     }
     const viewportWidth = this.#viewport.cssWidth || canvas.width / Math.max(1, this.#viewport.devicePixelRatio) || 1;
     const viewportHeight = this.#viewport.cssHeight || canvas.height / Math.max(1, this.#viewport.devicePixelRatio) || 1;
@@ -1147,7 +1168,6 @@ class ImageRenderWorkerRuntime {
     ctx.rotate((rotDeg * Math.PI) / 180);
     ctx.scale(this.#renderOptions.flipHorizontal ? -1 : 1, this.#renderOptions.flipVertical ? -1 : 1);
     ctx.drawImage(source, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
-    const imageTimestampNs = BigInt(publishTime.sec) * 1_000_000_000n + BigInt(publishTime.nsec);
     const overlay = selectSynchronizedImageAnnotations(this.#overlays, imageTimestampNs);
     if (overlay) {
       ctx.translate(-drawWidth / 2, -drawHeight / 2);
@@ -1155,6 +1175,8 @@ class ImageRenderWorkerRuntime {
       drawImageAnnotations(ctx, overlay);
     }
     ctx.restore();
+    this.#lastDrawnMediaTimeNs = imageTimestampNs;
+    return true;
   }
 
   #applyViewport(): void {

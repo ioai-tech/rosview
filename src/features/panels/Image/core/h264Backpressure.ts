@@ -123,3 +123,11 @@ export function shouldDropDecodedH264Frame(
 ): boolean {
   return decodedFrameLatenessMs(playbackTimeNs, frameTimeNs) > deadlineMs;
 }
+
+export function isRetrogradeMediaFrame(
+  isPlaying: boolean,
+  lastDrawnTimeNs: bigint | null,
+  frameTimeNs: bigint,
+): boolean {
+  return isPlaying && lastDrawnTimeNs !== null && frameTimeNs < lastDrawnTimeNs;
+}

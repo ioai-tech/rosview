@@ -5,6 +5,7 @@ import {
   decodedFrameLatenessMs,
   initialH264PressureState,
   isH264HardLimitExceeded,
+  isRetrogradeMediaFrame,
   shouldDropDecodedH264Frame,
   updateDecodeDurationEwma,
   updateH264Pressure,
@@ -97,5 +98,13 @@ describe('H.264 adaptive backpressure', () => {
     expect(shouldDropDecodedH264Frame(playback, 900_000_000n)).toBe(false);
     expect(shouldDropDecodedH264Frame(playback, 850_000_000n)).toBe(true);
     expect(shouldDropDecodedH264Frame(null, 0n)).toBe(false);
+  });
+
+  it('rejects backward frame paints only during playback', () => {
+    expect(isRetrogradeMediaFrame(true, 1_000n, 999n)).toBe(true);
+    expect(isRetrogradeMediaFrame(true, 1_000n, 1_000n)).toBe(false);
+    expect(isRetrogradeMediaFrame(true, 1_000n, 1_001n)).toBe(false);
+    expect(isRetrogradeMediaFrame(false, 1_000n, 999n)).toBe(false);
+    expect(isRetrogradeMediaFrame(true, null, 999n)).toBe(false);
   });
 });
