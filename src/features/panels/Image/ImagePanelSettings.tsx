@@ -16,6 +16,7 @@ import { useTopicSeq } from '@/core/pipeline/useMessageBus';
 import { isRawImageMessage, isRawImageTopicSchema, isCompressedImageMessage, depthEncodingFromFormat, IMAGE_PANEL_TOPIC_INCLUDES } from './core/imageTypes';
 import { applyDepthTopicPreset, defaultDepthMaxValue, defaultDepthMinValue } from './core/depthColorDefaults';
 import type { ImageConfig } from './defaults';
+import { isImageAnnotationsSchema } from './core/imageAnnotations';
 
 const DEPTH_ENCODINGS = new Set(['mono16', '16uc1', '32fc1']);
 
@@ -129,6 +130,20 @@ export function ImagePanelSettings({
               topics={topics}
               typeIncludes={[...IMAGE_PANEL_TOPIC_INCLUDES]}
               placeholder={formatMessage({ id: 'panels.image.settings.field.topic.placeholder' })}
+            />
+          </SettingsField>
+          <SettingsField
+            label={formatMessage({ id: 'panels.image.settings.field.annotationTopic.label' })}
+            help={formatMessage({ id: 'panels.image.settings.field.annotationTopic.help' })}
+          >
+            <TopicAutocomplete
+              value={config.annotationTopic}
+              onChange={(annotationTopic) => setConfig({ ...config, annotationTopic })}
+              topics={topics}
+              topicTypeMatches={isImageAnnotationsSchema}
+              placeholder={formatMessage({
+                id: 'panels.image.settings.field.annotationTopic.placeholder',
+              })}
             />
           </SettingsField>
         </SettingsSection>

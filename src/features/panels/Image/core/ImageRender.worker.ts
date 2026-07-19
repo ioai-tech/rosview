@@ -36,6 +36,11 @@ import {
   normalizeCompressedMime,
   type ImageSurfaceStatus,
 } from './imageTypes';
+import {
+  drawImageAnnotations,
+  selectSynchronizedImageAnnotations,
+  type ImageAnnotationsFrame,
+} from './imageAnnotations';
 import type {
   ImageRenderOptions,
   ImageRenderMetrics,
@@ -277,6 +282,7 @@ type CachedFrame =
       isBigEndian: boolean;
       data: Uint8Array<ArrayBuffer>;
       receiveTime: Time;
+      publishTime: Time;
     }
   | {
       kind: 'bitmap';
@@ -285,6 +291,7 @@ type CachedFrame =
       encoding: string;
       bitmap: ImageBitmap;
       receiveTime: Time;
+      publishTime: Time;
     };
 
 // ---------- Main runtime ----------
@@ -297,6 +304,7 @@ class ImageRenderWorkerRuntime {
   #renderOptions: ImageRenderOptions = { ...DEFAULT_RENDER_OPTIONS };
   #viewport: ImageViewport = { ...DEFAULT_VIEWPORT };
   #rawDecodeOptions: Partial<RawImageDecodeOptions> = {};
+  #overlays: ImageAnnotationsFrame[] = [];
   #pendingFrame: ImageWorkerFrameEnvelope | null = null;
   #pendingH264Frames: ImageWorkerFrameEnvelope[] = [];
   #isProcessing = false;
@@ -398,6 +406,25 @@ class ImageRenderWorkerRuntime {
         }
         return;
 
+      case 'overlay':
+        if (!message.overlay) {
+          this.#overlays = [];
+        } else {
+          const existing = this.#overlays.findIndex(
+            (overlay) => overlay.timestampNs === message.overlay?.timestampNs,
+          );
+          if (existing >= 0) this.#overlays[existing] = message.overlay;
+          else this.#overlays.push(message.overlay);
+          if (this.#overlays.length > 120) this.#overlays.shift();
+        }
+        // Live H.264 keeps only a periodic resize bitmap. Repainting that cache
+        // for every annotation would jump the canvas back by up to 500 ms.
+        // Decoder output draws the same buffered annotations on the live frame.
+        if (!this.#isPlaying || this.#renderedH264Frames === 0) {
+          this.#redrawCachedFrame();
+        }
+        return;
+
       case 'reset':
         this.#epoch += 1;
         this.#pendingFrame = null;
@@ -407,6 +434,7 @@ class ImageRenderWorkerRuntime {
         this.#resetH264RuntimeState();
         this.#decoder.reset();
         this.#disposeAuxiliaryDecodeState();
+        this.#overlays = [];
         if (!message.preserveFrame) {
           this.#disposeCachedBitmap();
           this.#cachedFrame = null;
@@ -585,6 +613,7 @@ class ImageRenderWorkerRuntime {
           const decoded = await decodeCompressedDepth(bytes, frame.format);
           this.#renderRawFrame({
             receiveTime: frame.receiveTime,
+            publishTime: frame.publishTime,
             encoding: decoded.encoding,
             width: decoded.width,
             height: decoded.height,
@@ -628,8 +657,8 @@ class ImageRenderWorkerRuntime {
           }
           closeCanvasImageSourceIfNeeded(sourceToClose);
           sourceToClose = null;
-          this.#storeBitmap(bitmap, width, height, frame.format, frame.receiveTime);
-          this.#drawBitmap(bitmap, width, height);
+          this.#storeBitmap(bitmap, width, height, frame.format, frame.receiveTime, frame.publishTime);
+          this.#drawBitmap(bitmap, width, height, frame.publishTime);
           this.#emitStatus({
             phase: 'ready',
             width,
@@ -648,6 +677,7 @@ class ImageRenderWorkerRuntime {
       const bytes = ensureOwnedBytes(frame.data);
       this.#renderRawFrame({
         receiveTime: frame.receiveTime,
+        publishTime: frame.publishTime,
         encoding: frame.encoding,
         width: frame.width,
         height: frame.height,
@@ -749,7 +779,7 @@ class ImageRenderWorkerRuntime {
 
       const width = videoFrame.displayWidth || videoFrame.codedWidth;
       const height = videoFrame.displayHeight || videoFrame.codedHeight;
-      this.#drawCanvasImageSource(videoFrame, width, height);
+      this.#drawCanvasImageSource(videoFrame, width, height, sourceFrame.publishTime);
       this.#lastH264RenderAt = now;
       this.#renderedH264Frames += 1;
       this.#emitStatus({
@@ -769,6 +799,7 @@ class ImageRenderWorkerRuntime {
             height,
             sourceFrame.kind === 'compressed' ? sourceFrame.format : 'h264',
             sourceFrame.receiveTime,
+            sourceFrame.publishTime,
           );
           this.#lastH264BitmapAt = now;
         } catch {
@@ -888,6 +919,7 @@ class ImageRenderWorkerRuntime {
 
   #renderRawFrame(frame: {
     receiveTime: Time;
+    publishTime: Time;
     encoding: string;
     width: number;
     height: number;
@@ -928,9 +960,10 @@ class ImageRenderWorkerRuntime {
       isBigEndian: frame.isBigEndian,
       data: frame.data,
       receiveTime: frame.receiveTime,
+      publishTime: frame.publishTime,
     };
 
-    this.#drawRawImageData(frame.width, frame.height);
+    this.#drawRawImageData(frame.width, frame.height, frame.publishTime);
     this.#emitStatus({
       phase: 'ready',
       width: frame.width,
@@ -968,7 +1001,7 @@ class ImageRenderWorkerRuntime {
         rgba,
         this.#rawDecodeOptions,
       );
-      this.#drawRawImageData(cached.width, cached.height);
+      this.#drawRawImageData(cached.width, cached.height, cached.publishTime);
       this.#emitStatus({
         phase: 'ready',
         width: cached.width,
@@ -989,7 +1022,7 @@ class ImageRenderWorkerRuntime {
       return;
     }
     if (cached.kind === 'raw') {
-      this.#drawRawImageData(cached.width, cached.height);
+      this.#drawRawImageData(cached.width, cached.height, cached.publishTime);
       this.#emitStatus({
         phase: 'ready',
         width: cached.width,
@@ -998,7 +1031,7 @@ class ImageRenderWorkerRuntime {
         receiveTime: cached.receiveTime,
       });
     } else {
-      this.#drawBitmap(cached.bitmap, cached.width, cached.height);
+      this.#drawBitmap(cached.bitmap, cached.width, cached.height, cached.publishTime);
       this.#emitStatus({
         phase: 'ready',
         width: cached.width,
@@ -1009,9 +1042,16 @@ class ImageRenderWorkerRuntime {
     }
   }
 
-  #storeBitmap(bitmap: ImageBitmap, width: number, height: number, encoding: string, receiveTime: Time): void {
+  #storeBitmap(
+    bitmap: ImageBitmap,
+    width: number,
+    height: number,
+    encoding: string,
+    receiveTime: Time,
+    publishTime: Time,
+  ): void {
     this.#disposeCachedBitmap();
-    this.#cachedFrame = { kind: 'bitmap', width, height, encoding, bitmap, receiveTime };
+    this.#cachedFrame = { kind: 'bitmap', width, height, encoding, bitmap, receiveTime, publishTime };
   }
 
   #disposeCachedBitmap(): void {
@@ -1061,17 +1101,22 @@ class ImageRenderWorkerRuntime {
     workerScope.postMessage(event);
   }
 
-  #drawRawImageData(width: number, height: number): void {
+  #drawRawImageData(width: number, height: number, publishTime: Time): void {
     ensureBufferCanvas(this.#bufferCanvas, width, height);
     this.#bufferCtx!.putImageData(this.#rawImageData!, 0, 0);
-    this.#drawCanvasImageSource(this.#bufferCanvas, width, height);
+    this.#drawCanvasImageSource(this.#bufferCanvas, width, height, publishTime);
   }
 
-  #drawBitmap(bitmap: ImageBitmap, width: number, height: number): void {
-    this.#drawCanvasImageSource(bitmap, width, height);
+  #drawBitmap(bitmap: ImageBitmap, width: number, height: number, publishTime: Time): void {
+    this.#drawCanvasImageSource(bitmap, width, height, publishTime);
   }
 
-  #drawCanvasImageSource(source: CanvasImageSource, sourceWidth: number, sourceHeight: number): void {
+  #drawCanvasImageSource(
+    source: CanvasImageSource,
+    sourceWidth: number,
+    sourceHeight: number,
+    publishTime: Time,
+  ): void {
     this.#applyViewport();
     const ctx = this.#ctx;
     const canvas = this.#canvas;
@@ -1102,6 +1147,13 @@ class ImageRenderWorkerRuntime {
     ctx.rotate((rotDeg * Math.PI) / 180);
     ctx.scale(this.#renderOptions.flipHorizontal ? -1 : 1, this.#renderOptions.flipVertical ? -1 : 1);
     ctx.drawImage(source, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+    const imageTimestampNs = BigInt(publishTime.sec) * 1_000_000_000n + BigInt(publishTime.nsec);
+    const overlay = selectSynchronizedImageAnnotations(this.#overlays, imageTimestampNs);
+    if (overlay) {
+      ctx.translate(-drawWidth / 2, -drawHeight / 2);
+      ctx.scale(scale, scale);
+      drawImageAnnotations(ctx, overlay);
+    }
     ctx.restore();
   }
 

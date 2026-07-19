@@ -3,12 +3,13 @@ import type { MessageEvent as RosMessageEvent } from '@/core/types/ros';
 import { isH264MessageEvent, toWorkerFrame } from './messageFrameAdapter';
 
 const receiveTime = { sec: 10, nsec: 0 };
+const publishTime = { sec: 9, nsec: 250 };
 
 function makeCompressedImageEvent(data: Uint8Array, format = 'h264'): RosMessageEvent {
   return {
     topic: '/camera/compressed',
     receiveTime,
-    publishTime: receiveTime,
+    publishTime,
     message: { format, data },
     schemaName: 'sensor_msgs/msg/CompressedImage',
   };
@@ -18,7 +19,7 @@ function makeCompressedVideoEvent(data: Uint8Array, format = 'h264'): RosMessage
   return {
     topic: '/camera/video',
     receiveTime,
-    publishTime: receiveTime,
+    publishTime,
     message: {
       timestamp: receiveTime,
       frame_id: 'camera_optical',
@@ -41,10 +42,12 @@ describe('messageFrameAdapter', () => {
       kind: 'compressed',
       receiveTime,
       format: 'h264',
+      publishTime,
     });
     expect(fromVideo!.frame).toMatchObject({
       kind: 'compressed',
       receiveTime,
+      publishTime,
       format: 'h264',
     });
     expect(Array.from(fromImage!.frame.data)).toEqual(Array.from(fromVideo!.frame.data));

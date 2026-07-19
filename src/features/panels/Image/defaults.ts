@@ -2,6 +2,8 @@ import type { ImageColorMode } from './core/imageColorMode';
 
 export interface ImageConfig {
   topic: string;
+  /** foxglove.ImageAnnotations topic. Empty uses camera-aware auto-detection. */
+  annotationTopic: string;
   // Display
   backgroundColor: string;
   showStatusText: boolean;
@@ -24,6 +26,7 @@ export interface ImageConfig {
 
 export const defaultImageConfig = (): ImageConfig => ({
   topic: '',
+  annotationTopic: '',
   backgroundColor: '#000000',
   showStatusText: true,
   fitMode: 'contain',

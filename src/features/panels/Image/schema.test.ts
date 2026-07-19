@@ -19,6 +19,12 @@ describe('parseImageConfig', () => {
     expect(config.backgroundColor).toBe(defaultImageConfig().backgroundColor);
   });
 
+  it('parses an explicit foxglove.ImageAnnotations topic', () => {
+    expect(parseImageConfig({ annotationTopic: '/camera/image_annotations' }).annotationTopic).toBe(
+      '/camera/image_annotations',
+    );
+  });
+
   it('does not expose removed overlay/annotation fields from legacy input', () => {
     const config = parseImageConfig({
       overlays: [{ topic: '/x', opacity: 1, blendMode: 'alpha', enabled: true }],

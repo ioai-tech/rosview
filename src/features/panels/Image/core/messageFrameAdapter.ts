@@ -31,6 +31,7 @@ export function toWorkerFrame(
       frame: {
         kind: 'compressed',
         receiveTime: messageEvent.receiveTime,
+        publishTime: messageEvent.publishTime,
         format: getCompressedFrameFormat(message),
         data: payload.data,
       },
@@ -46,6 +47,7 @@ export function toWorkerFrame(
       frame: {
         kind: 'raw',
         receiveTime: messageEvent.receiveTime,
+        publishTime: messageEvent.publishTime,
         encoding: message.encoding,
         width: message.width,
         height: message.height,

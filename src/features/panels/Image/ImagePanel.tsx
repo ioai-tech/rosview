@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import type { Player } from '@/core/types/player';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
-import type { MessageEvent as RosMessageEvent } from '@/core/types/ros';
+import type { MessageEvent as RosMessageEvent, TopicInfo } from '@/core/types/ros';
 import { scheduleFrame } from '@/shared/utils/rafScheduler';
 import { toNano } from '@/shared/utils/time';
 import type { RawImageDecodeOptions } from './core/imageColorMode';
@@ -19,12 +19,17 @@ import {
 import { repairH264Seek } from './core/h264SeekRepair';
 import { isH264MessageEvent, toWorkerFrame } from './core/messageFrameAdapter';
 import { applyDepthTopicPreset } from './core/depthColorDefaults';
+import {
+  parseImageAnnotations,
+  resolveImageAnnotationsTopic,
+} from './core/imageAnnotations';
 import type { ImageConfig } from './defaults';
 import { TopicQuickPicker } from '../framework/TopicQuickPicker';
 import { PanelTopicBar } from '../framework/PanelTopicBar';
 import ImageRenderWorkerClass from './core/ImageRender.worker.ts?worker&inline';
 
 type ColorOptions = Pick<ImageConfig, 'colorMode' | 'flatColor' | 'gradient' | 'colorMap' | 'explicitAlpha' | 'minValue' | 'maxValue'>;
+const EMPTY_TOPICS: readonly TopicInfo[] = [];
 
 function configToRawDecodeOptions(opts: ColorOptions): Partial<RawImageDecodeOptions> {
   return {
@@ -49,11 +54,15 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const isPlaying = useMessagePipeline(
     (state) => state.playerState.activeData?.isPlaying ?? false,
   );
+  const availableTopics = useMessagePipeline(
+    (state) => state.playerState.activeData?.topics ?? EMPTY_TOPICS,
+  );
   const {
     player,
     panelId,
     setConfig,
     topic,
+    annotationTopic,
     backgroundColor,
     showStatusText,
     fitMode,
@@ -82,6 +91,12 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const [metrics, setMetrics] = useState<ImageRenderMetrics | null>(null);
   const mainConsumerId = `${panelId}:image-main`;
   const h264ConsumerId = `${panelId}:image-main-h264`;
+  const annotationConsumerId = `${panelId}:image-annotations`;
+  const resolvedAnnotationTopic = resolveImageAnnotationsTopic(
+    topic,
+    annotationTopic,
+    availableTopics,
+  );
 
   // Worker lifecycle: init on mount, dispose on unmount
   useEffect(() => {
@@ -253,6 +268,32 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       worker.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
     };
   }, [player, mainConsumerId, h264ConsumerId, topic]);
+
+  // Subscribe on the video lane so an annotation batch cannot run ahead of
+  // the image decoder. The worker chooses the closest publish-time match.
+  useEffect(() => {
+    const worker = workerRef.current;
+    if (!resolvedAnnotationTopic || !worker) return;
+
+    player.registerHighFrequencyConsumer(annotationConsumerId, {
+      topic: resolvedAnnotationTopic,
+      lane: 'video',
+      mode: 'all',
+      onMessageBatch: (messages) => {
+        for (const event of messages) {
+          const overlay = parseImageAnnotations(event.message);
+          if (overlay) {
+            worker.postMessage({ type: 'overlay', overlay } satisfies ImageRenderWorkerRequest);
+          }
+        }
+      },
+    });
+
+    return () => {
+      player.unregisterHighFrequencyConsumer(annotationConsumerId);
+      worker.postMessage({ type: 'overlay', overlay: null } satisfies ImageRenderWorkerRequest);
+    };
+  }, [annotationConsumerId, player, resolvedAnnotationTopic]);
 
   // Keep the worker's media deadline current. On rewind, rebuild H.264 state
   // from the nearest complete random-access point.
