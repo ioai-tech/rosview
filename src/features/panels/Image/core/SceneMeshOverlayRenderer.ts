@@ -57,7 +57,7 @@ const VERTEX_SHADER = /* glsl */ `
       1.0
     ) * 2.0 - 1.0;
     gl_Position = vec4(ndc, depth, 1.0);
-    vNormalCamera = normalize(mat3(uCameraFromBody) * normal);
+    vNormalCamera = normalize(mat3(uCameraFromReference) * normal);
     vViewDirection = normalize(-cameraPoint);
   }
 `;
