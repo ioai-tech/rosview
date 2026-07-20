@@ -1176,6 +1176,12 @@ class ImageRenderWorkerRuntime {
     }
     ctx.restore();
     this.#lastDrawnMediaTimeNs = imageTimestampNs;
+    workerScope.postMessage({
+      type: 'rendered',
+      timestampNs: imageTimestampNs,
+      width: sourceWidth,
+      height: sourceHeight,
+    } satisfies ImageRenderWorkerEvent);
     return true;
   }
 

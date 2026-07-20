@@ -4,6 +4,8 @@ export interface ImageConfig {
   topic: string;
   /** Optional foxglove.ImageAnnotations topic drawn over the image. */
   annotationTopic: string;
+  /** Optional foxglove.SceneUpdate topic containing triangle meshes. */
+  meshTopic: string;
   // Display
   backgroundColor: string;
   showStatusText: boolean;
@@ -27,6 +29,7 @@ export interface ImageConfig {
 export const defaultImageConfig = (): ImageConfig => ({
   topic: '',
   annotationTopic: '',
+  meshTopic: '',
   backgroundColor: '#000000',
   showStatusText: true,
   fitMode: 'contain',

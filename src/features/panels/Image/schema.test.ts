@@ -20,8 +20,14 @@ describe('parseImageConfig', () => {
   });
 
   it('parses an explicit foxglove.ImageAnnotations topic', () => {
-    expect(parseImageConfig({ annotationTopic: '/camera/image_annotations' }).annotationTopic).toBe(
-      '/camera/image_annotations',
+    expect(parseImageConfig({
+      annotationTopic: '/warehouse/front_camera/annotations',
+    }).annotationTopic).toBe('/warehouse/front_camera/annotations');
+  });
+
+  it('parses an explicit foxglove.SceneUpdate mesh topic', () => {
+    expect(parseImageConfig({ meshTopic: '/warehouse/safety_zones' }).meshTopic).toBe(
+      '/warehouse/safety_zones',
     );
   });
 

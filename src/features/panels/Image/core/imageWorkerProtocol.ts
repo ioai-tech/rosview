@@ -99,4 +99,10 @@ export type ImageRenderWorkerEvent =
   | {
       type: 'metrics';
       metrics: ImageRenderMetrics;
+    }
+  | {
+      type: 'rendered';
+      timestampNs: bigint;
+      width: number;
+      height: number;
     };
