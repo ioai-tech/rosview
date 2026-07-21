@@ -148,6 +148,15 @@ export function ImagePanelSettings({
             />
           </SettingsField>
           <SettingsField
+            label={formatMessage({ id: 'panels.image.settings.field.annotationVisible' })}
+            orientation="row"
+          >
+            <SettingsSwitch
+              checked={config.annotationVisible}
+              onChange={(annotationVisible) => setConfig({ ...config, annotationVisible })}
+            />
+          </SettingsField>
+          <SettingsField
             label={formatMessage({ id: 'panels.image.settings.field.meshTopic.label' })}
             help={formatMessage({ id: 'panels.image.settings.field.meshTopic.help' })}
           >
@@ -159,6 +168,15 @@ export function ImagePanelSettings({
               placeholder={formatMessage({
                 id: 'panels.image.settings.field.meshTopic.placeholder',
               })}
+            />
+          </SettingsField>
+          <SettingsField
+            label={formatMessage({ id: 'panels.image.settings.field.meshVisible' })}
+            orientation="row"
+          >
+            <SettingsSwitch
+              checked={config.meshVisible}
+              onChange={(meshVisible) => setConfig({ ...config, meshVisible })}
             />
           </SettingsField>
         </SettingsSection>

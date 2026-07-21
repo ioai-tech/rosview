@@ -73,7 +73,14 @@ export function parseDoubleSphereCalibration(message: unknown): DoubleSphereCali
   const model = readString(message, ['distortion_model', 'distortionModel']);
   const distortion = readNumberArray(message.D ?? message.d);
   const transform = readNumberArray(
-    message.T_r_c ?? message.t_r_c ?? message.TRC ?? message.tRC,
+    message.T_r_c ??
+      message.t_r_c ??
+      message.TRC ??
+      message.tRC ??
+      message.T_b_c ??
+      message.t_b_c ??
+      message.TBC ??
+      message.tBC,
   );
   if (
     width === undefined ||

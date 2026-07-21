@@ -31,6 +31,12 @@ describe('parseImageConfig', () => {
     );
   });
 
+  it('parses annotation and scene mesh visibility independently', () => {
+    const config = parseImageConfig({ annotationVisible: false, meshVisible: false });
+    expect(config.annotationVisible).toBe(false);
+    expect(config.meshVisible).toBe(false);
+  });
+
   it('does not expose removed overlay/annotation fields from legacy input', () => {
     const config = parseImageConfig({
       overlays: [{ topic: '/x', opacity: 1, blendMode: 'alpha', enabled: true }],

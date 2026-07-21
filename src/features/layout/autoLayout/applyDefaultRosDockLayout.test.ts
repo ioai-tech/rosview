@@ -115,7 +115,7 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
     expect(panelTypes.filter((type) => type === 'Image')).toHaveLength(3);
   });
 
-  it('builds two image rows for six CompressedVideo streams without 3D', () => {
+  it('builds two image rows for six CompressedVideo streams and binds one scene mesh topic', () => {
     const topics: TopicInfo[] = [
       { name: '/head/color/image', type: 'foxglove_msgs/msg/CompressedVideo [ros2msg]' },
       { name: '/head/depth/image', type: 'foxglove_msgs/msg/CompressedVideo [ros2msg]' },
@@ -123,6 +123,7 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
       { name: '/left/depth/image', type: 'foxglove_msgs/msg/CompressedVideo [ros2msg]' },
       { name: '/right/color/image', type: 'foxglove_msgs/msg/CompressedVideo [ros2msg]' },
       { name: '/right/depth/image', type: 'foxglove_msgs/msg/CompressedVideo [ros2msg]' },
+      { name: '/robot0/perception/mano/scene', type: 'foxglove.SceneUpdate' },
     ];
     const data = buildDefaultRosFoxgloveLayoutData(topics);
     const ids = collectMosaicPanelIds(data.layout);
@@ -143,6 +144,17 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
       '/right/color/image',
       '/right/depth/image',
     ]);
+
+    const imageConfigs = Object.values(data.configById) as Array<{
+      topic?: string;
+      meshTopic?: string;
+      meshVisible?: boolean;
+    }>;
+    expect(imageConfigs).toHaveLength(6);
+    expect(imageConfigs.every((config) => config.meshTopic === '/robot0/perception/mano/scene')).toBe(
+      true,
+    );
+    expect(imageConfigs.every((config) => config.meshVisible === true)).toBe(true);
   });
 
   it('BVH-only dataset: single 3D panel only; dockview root still wraps to branch for fromJSON', () => {

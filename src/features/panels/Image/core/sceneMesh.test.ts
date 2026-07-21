@@ -31,19 +31,22 @@ describe('scene mesh image overlay messages', () => {
     expect(Array.from(frame?.meshes[0]?.indices ?? [])).toEqual([0, 1, 2]);
   });
 
-  it('parses and normalizes Double Sphere camera calibration', () => {
-    const calibration = parseDoubleSphereCalibration({
-      width: 1280,
-      height: 720,
-      distortion_model: 'DS',
-      D: [640, 641, 639, 359, -0.12, 0.55],
-      T_r_c: [1, 2, 3, 0, 0, 0, 2],
-    });
+  it.each(['T_r_c', 'T_b_c'])(
+    'parses and normalizes Double Sphere camera calibration with %s',
+    (transformField) => {
+      const calibration = parseDoubleSphereCalibration({
+        width: 1280,
+        height: 720,
+        distortion_model: 'DS',
+        D: [640, 641, 639, 359, -0.12, 0.55],
+        [transformField]: [1, 2, 3, 0, 0, 0, 2],
+      });
 
-    expect(calibration?.intrinsics).toEqual([640, 641, 639, 359, -0.12, 0.55]);
-    expect(calibration?.referenceFromCameraTranslation).toEqual([1, 2, 3]);
-    expect(calibration?.referenceFromCameraQuaternion).toEqual([0, 0, 0, 1]);
-  });
+      expect(calibration?.intrinsics).toEqual([640, 641, 639, 359, -0.12, 0.55]);
+      expect(calibration?.referenceFromCameraTranslation).toEqual([1, 2, 3]);
+      expect(calibration?.referenceFromCameraQuaternion).toEqual([0, 0, 0, 1]);
+    },
+  );
 
   it('infers the paired camera calibration topic', () => {
     expect(inferCameraCalibrationTopic('/warehouse/front_camera/image/compressed')).toBe(

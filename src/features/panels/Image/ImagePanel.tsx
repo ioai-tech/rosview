@@ -63,7 +63,9 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     setConfig,
     topic,
     annotationTopic,
+    annotationVisible,
     meshTopic,
+    meshVisible,
     backgroundColor,
     showStatusText,
     fitMode,
@@ -105,8 +107,8 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const h264ConsumerId = `${panelId}:image-main-h264`;
   const annotationConsumerId = `${panelId}:image-annotations`;
   const calibrationConsumerId = `${panelId}:image-scene-mesh-calibration`;
-  const selectedAnnotationTopic = annotationTopic.trim();
-  const selectedMeshTopic = meshTopic.trim();
+  const selectedAnnotationTopic = annotationVisible ? annotationTopic.trim() : '';
+  const selectedMeshTopic = meshVisible ? meshTopic.trim() : '';
   const selectedCalibrationTopic = inferCameraCalibrationTopic(topic);
 
   useEffect(() => {
