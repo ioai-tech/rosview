@@ -3,7 +3,6 @@ import type { Player } from '@/core/types/player';
 import type { MessageEvent as RosMessageEvent } from '@/core/types/ros';
 import {
   H264_SEEK_MAX_FRAMES,
-  bootstrapH264FromTime,
   dedupeH264MessageEventsByReceiveTime,
   executeH264Bootstrap,
   findLatestH264KeyFrameIndex,
@@ -19,8 +18,13 @@ const spsChunk = new Uint8Array([0, 0, 1, 0x67, 0x42, 0, 0x1e]);
 const ppsChunk = new Uint8Array([0, 0, 1, 0x68, 0xce, 0x3c]);
 const idrChunk = new Uint8Array([0, 0, 1, 0x65, 3, 4]);
 
-function makeEvent(sec: number, data: Uint8Array, format = 'h264'): RosMessageEvent {
-  const receiveTime = { sec, nsec: 0 };
+function makeEvent(
+  sec: number,
+  data: Uint8Array,
+  format = 'h264',
+  nsec = 0,
+): RosMessageEvent {
+  const receiveTime = { sec, nsec };
   return {
     topic: '/camera/video',
     receiveTime,
@@ -30,16 +34,17 @@ function makeEvent(sec: number, data: Uint8Array, format = 'h264'): RosMessageEv
   };
 }
 
+function makeFileStartGopMessages(): RosMessageEvent[] {
+  return [
+    makeEvent(0, deltaChunk, 'h264', 0),
+    makeEvent(0, keyChunk, 'h264', 33_378_000),
+    makeEvent(0, deltaChunk, 'h264', 66_600_000),
+  ];
+}
+
 describe('h264SeekRepair', () => {
   it('selectH264BootstrapFrames uses the first IDR when the playhead is before it', () => {
-    const messages = [
-      makeEvent(0, deltaChunk),
-      makeEvent(0, keyChunk),
-      makeEvent(0, deltaChunk),
-    ];
-    messages[0]!.receiveTime = { sec: 0, nsec: 0 };
-    messages[1]!.receiveTime = { sec: 0, nsec: 33_378_000 };
-    messages[2]!.receiveTime = { sec: 0, nsec: 66_600_000 };
+    const messages = makeFileStartGopMessages();
 
     expect(selectH264SeekRepairFrames(messages, { sec: 0, nsec: 0 })).toEqual([]);
 
@@ -49,14 +54,7 @@ describe('h264SeekRepair', () => {
   });
 
   it('selects the 33ms IDR GOP at file start for an early playhead target', () => {
-    const messages = [
-      makeEvent(0, deltaChunk),
-      makeEvent(0, keyChunk),
-      makeEvent(0, deltaChunk),
-    ];
-    messages[0]!.receiveTime = { sec: 0, nsec: 0 };
-    messages[1]!.receiveTime = { sec: 0, nsec: 33_378_000 };
-    messages[2]!.receiveTime = { sec: 0, nsec: 66_600_000 };
+    const messages = makeFileStartGopMessages();
 
     const repair = selectH264SeekRepairFrames(messages, { sec: 0, nsec: 66_600_000 });
 
@@ -271,14 +269,11 @@ describe('h264SeekRepair', () => {
   });
 
   it('executeH264Bootstrap uses live frame coverage when bootstrapping before the first IDR', async () => {
-    const messages = [
-      makeEvent(0, deltaChunk),
-      makeEvent(0, keyChunk),
-      makeEvent(0, deltaChunk),
-    ];
-    messages[0]!.receiveTime = { sec: 0, nsec: 0 };
-    messages[1]!.receiveTime = { sec: 0, nsec: 33_378_000 };
-    messages[2]!.receiveTime = { sec: 0, nsec: 66_600_000 };
+    const messages = makeFileStartGopMessages();
+    const latestLiveFrame = messages[2];
+    if (!latestLiveFrame) {
+      throw new Error('expected a third bootstrap message');
+    }
     const posts: unknown[] = [];
     const worker = {
       postMessage(request: unknown) {
@@ -295,7 +290,7 @@ describe('h264SeekRepair', () => {
         worker,
         topic: '/camera/video',
         targetTime: { sec: 0, nsec: 0 },
-        liveEvents: [messages[2]!],
+        liveEvents: [latestLiveFrame],
       }),
     ).resolves.toBe(true);
     expect(posts).toHaveLength(1);
