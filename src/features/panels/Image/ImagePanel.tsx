@@ -14,9 +14,10 @@ import type {
 } from './core/imageWorkerProtocol';
 import {
   IMAGE_PANEL_TOPIC_INCLUDES,
+  topicNeedsOrderedVideoFrames,
   type ImageSurfaceStatus,
 } from './core/imageTypes';
-import { repairH264Seek } from './core/h264SeekRepair';
+import { executeH264Bootstrap } from './core/h264SeekRepair';
 import { isH264MessageEvent, toWorkerFrame } from './core/messageFrameAdapter';
 import { applyDepthTopicPreset } from './core/depthColorDefaults';
 import type { ImageConfig } from './defaults';
@@ -78,11 +79,17 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const lastPlaybackTimeNsRef = useRef<bigint | null>(null);
   const h264SeekRepairAbortRef = useRef<AbortController | null>(null);
   const lastUiStatusRef = useRef<ImageSurfaceStatus>({ phase: 'idle' });
-  const h264ModeRef = useRef(false);
+  const h264OrderedModeRef = useRef(false);
+  const h264BootstrapInFlightRef = useRef(false);
+  const h264BootstrapGenerationRef = useRef(0);
+  const h264BufferedLiveRef = useRef<RosMessageEvent[]>([]);
+  const consumerModeRef = useRef<'latest' | 'all'>('latest');
   const [status, setStatus] = useState<ImageSurfaceStatus>({ phase: 'idle' });
   const [metrics, setMetrics] = useState<ImageRenderMetrics | null>(null);
-  const mainConsumerId = `${panelId}:image-main`;
-  const h264ConsumerId = `${panelId}:image-main-h264`;
+  const imageConsumerId = `${panelId}:image-main`;
+  const topicSchema = useMessagePipeline((state) =>
+    state.playerState.activeData?.topics.find((entry) => entry.name === topic)?.type ?? '',
+  );
 
   // Worker lifecycle: init on mount, dispose on unmount
   useEffect(() => {
@@ -199,8 +206,8 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   }, [formatMessage]);
 
   // High-frequency image frames bypass messageBus. Still images/raw frames use
-  // latest-only; H.264 switches to an ordered lane after the first keyframe-like
-  // sample so delta frames are not dropped.
+  // latest-only; ordered video codecs use mode=all from registration and bootstrap
+  // the nearest decodable GOP before accepting live delta frames.
   useEffect(() => {
     if (!topic) {
       return;
@@ -209,51 +216,160 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     if (!worker) {
       return;
     }
-    h264ModeRef.current = false;
+
+    h264OrderedModeRef.current = false;
+    h264BootstrapInFlightRef.current = false;
+    h264BootstrapGenerationRef.current += 1;
+    h264BufferedLiveRef.current = [];
+    consumerModeRef.current = 'latest';
     setMetrics(null);
     worker.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
-    player.registerHighFrequencyConsumer(mainConsumerId, {
-      topic,
-      lane: 'video',
-      mode: 'latest',
-      onLatestMessage: (message) => {
-        if (isH264MessageEvent(message)) {
-          if (h264ModeRef.current) {
-            return;
-          }
-          h264ModeRef.current = true;
-          player.registerHighFrequencyConsumer(h264ConsumerId, {
-            topic,
-            lane: 'video',
-            mode: 'all',
-            onMessageBatch: (messages) => {
-              for (const event of messages) {
-                if (isH264MessageEvent(event)) {
-                  postImageFrame(worker, event);
-                }
-              }
-            },
-          });
+
+    const initialOrdered = topicNeedsOrderedVideoFrames(topicSchema);
+    if (initialOrdered) {
+      h264OrderedModeRef.current = true;
+      consumerModeRef.current = 'all';
+    }
+
+    const handleH264Frame = (event: RosMessageEvent) => {
+      if (h264BootstrapInFlightRef.current) {
+        h264BufferedLiveRef.current.push(event);
+        return;
+      }
+      postImageFrame(worker, event);
+    };
+
+    const dispatchHighFrequencyBatch = (messages: RosMessageEvent[]) => {
+      for (const event of messages) {
+        if (isH264MessageEvent(event)) {
+          handleH264Frame(event);
+        } else {
+          postImageFrame(worker, event);
         }
-        postImageFrame(worker, message);
-      },
-      onMessageBatch: (messages) => {
-        if (h264ModeRef.current) {
+      }
+    };
+
+    const runBootstrap = async (
+      targetTime: ReturnType<Player['getCurrentTime']>,
+      preserveFrame: boolean,
+    ) => {
+      if (!targetTime) {
+        return false;
+      }
+      const generation = h264BootstrapGenerationRef.current;
+      h264BootstrapInFlightRef.current = true;
+      h264SeekRepairAbortRef.current?.abort();
+      const controller = new AbortController();
+      h264SeekRepairAbortRef.current = controller;
+
+      try {
+        const success = await executeH264Bootstrap({
+          player,
+          worker,
+          topic,
+          targetTime,
+          liveEvents: h264BufferedLiveRef.current,
+          signal: controller.signal,
+          preserveFrame,
+        });
+        if (controller.signal.aborted || generation !== h264BootstrapGenerationRef.current) {
+          return false;
+        }
+        if (success) {
+          h264BufferedLiveRef.current = [];
+        }
+        return success;
+      } finally {
+        if (generation === h264BootstrapGenerationRef.current) {
+          h264BootstrapInFlightRef.current = false;
+        }
+        if (h264SeekRepairAbortRef.current === controller) {
+          h264SeekRepairAbortRef.current = null;
+        }
+      }
+    };
+
+    const activateH264OrderedMode = async (triggerMessage?: RosMessageEvent) => {
+      if (h264OrderedModeRef.current) {
+        if (triggerMessage) {
+          handleH264Frame(triggerMessage);
+        }
+        return;
+      }
+
+      h264OrderedModeRef.current = true;
+      if (triggerMessage) {
+        h264BufferedLiveRef.current.push(triggerMessage);
+      }
+
+      if (consumerModeRef.current !== 'all') {
+        consumerModeRef.current = 'all';
+        player.unregisterHighFrequencyConsumer(imageConsumerId);
+        player.registerHighFrequencyConsumer(imageConsumerId, {
+          topic,
+          lane: 'video',
+          mode: 'all',
+          onMessageBatch: dispatchHighFrequencyBatch,
+        });
+      }
+
+      const currentTime = player.getCurrentTime();
+      if (currentTime) {
+        await runBootstrap(currentTime, false);
+      }
+    };
+
+    const handleMessage = (message: RosMessageEvent) => {
+      if (isH264MessageEvent(message)) {
+        if (!h264OrderedModeRef.current) {
+          void activateH264OrderedMode(message);
           return;
         }
-        const latest = messages.at(-1);
-        if (latest) {
-          postImageFrame(worker, latest);
-        }
-      },
-    });
+        handleH264Frame(message);
+        return;
+      }
+      postImageFrame(worker, message);
+    };
+
+    if (consumerModeRef.current === 'all') {
+      player.registerHighFrequencyConsumer(imageConsumerId, {
+        topic,
+        lane: 'video',
+        mode: 'all',
+        onMessageBatch: dispatchHighFrequencyBatch,
+      });
+      const currentTime = player.getCurrentTime();
+      if (currentTime) {
+        void runBootstrap(currentTime, false);
+      }
+    } else {
+      player.registerHighFrequencyConsumer(imageConsumerId, {
+        topic,
+        lane: 'video',
+        mode: 'latest',
+        onLatestMessage: handleMessage,
+        onMessageBatch: (messages) => {
+          if (h264OrderedModeRef.current) {
+            return;
+          }
+          const latest = messages.at(-1);
+          if (latest) {
+            handleMessage(latest);
+          }
+        },
+      });
+    }
 
     return () => {
-      player.unregisterHighFrequencyConsumer(mainConsumerId);
-      player.unregisterHighFrequencyConsumer(h264ConsumerId);
+      h264BootstrapGenerationRef.current += 1;
+      h264SeekRepairAbortRef.current?.abort();
+      h264SeekRepairAbortRef.current = null;
+      h264BufferedLiveRef.current = [];
+      h264BootstrapInFlightRef.current = false;
+      player.unregisterHighFrequencyConsumer(imageConsumerId);
       worker.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
     };
-  }, [player, mainConsumerId, h264ConsumerId, topic]);
+  }, [imageConsumerId, player, topic, topicSchema]);
 
   useEffect(() => {
     return () => {
@@ -277,20 +393,39 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
         h264SeekRepairAbortRef.current?.abort();
         h264SeekRepairAbortRef.current = null;
         const worker = workerRef.current;
-        if (worker && topic && h264ModeRef.current) {
+        if (worker && topic && h264OrderedModeRef.current) {
+          h264BootstrapInFlightRef.current = true;
+          h264BufferedLiveRef.current = [];
+          const generation = h264BootstrapGenerationRef.current;
           const controller = new AbortController();
           h264SeekRepairAbortRef.current = controller;
-          worker.postMessage({
-            type: 'reset',
-            preserveFrame: true,
-          } satisfies ImageRenderWorkerRequest);
-          void repairH264Seek(player, worker, topic, time, {
-            signal: controller.signal,
-          }).finally(() => {
-            if (h264SeekRepairAbortRef.current === controller) {
-              h264SeekRepairAbortRef.current = null;
+          void (async () => {
+            try {
+              const success = await executeH264Bootstrap({
+                player,
+                worker,
+                topic,
+                targetTime: time,
+                liveEvents: h264BufferedLiveRef.current,
+                signal: controller.signal,
+                preserveFrame: true,
+              });
+              if (
+                success &&
+                !controller.signal.aborted &&
+                generation === h264BootstrapGenerationRef.current
+              ) {
+                h264BufferedLiveRef.current = [];
+              }
+            } finally {
+              if (generation === h264BootstrapGenerationRef.current) {
+                h264BootstrapInFlightRef.current = false;
+              }
+              if (h264SeekRepairAbortRef.current === controller) {
+                h264SeekRepairAbortRef.current = null;
+              }
             }
-          });
+          })();
         } else {
           workerRef.current?.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
         }

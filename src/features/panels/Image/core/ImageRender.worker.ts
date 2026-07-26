@@ -46,6 +46,7 @@ import type {
   ImageWorkerFrameEnvelope,
 } from './imageWorkerProtocol';
 import type { RawImageDecodeOptions } from './imageColorMode';
+import { H264_SEEK_MAX_FRAMES } from './h264SeekRepair';
 
 const DEFAULT_RENDER_OPTIONS: ImageRenderOptions = {
   backgroundColor: '#000000',
@@ -399,6 +400,10 @@ class ImageRenderWorkerRuntime {
         }
         return;
 
+      case 'bootstrapH264':
+        this.#bootstrapH264(message.frames, message.preserveFrame === true);
+        return;
+
       case 'reset':
         this.#epoch += 1;
         this.#pendingFrame = null;
@@ -431,11 +436,42 @@ class ImageRenderWorkerRuntime {
     }
   }
 
-  #enqueueFrame(frame: ImageWorkerFrameEnvelope): void {
-    if (!isH264Frame(frame)) {
-      this.#pendingFrame = frame;
+  #bootstrapH264(frames: ImageWorkerFrameEnvelope[], preserveFrame: boolean): void {
+    this.#epoch += 1;
+    this.#pendingFrame = null;
+    this.#pendingH264Frames = [];
+    this.#disposePendingH264Output();
+    this.#haltUntilReset = false;
+    this.#resetH264RuntimeState();
+    this.#decoder.reset();
+    if (!preserveFrame) {
+      this.#disposeCachedBitmap();
+      this.#cachedFrame = null;
+      this.#clearCanvas();
+      this.#emitStatus({ phase: 'idle' });
+    }
+
+    const h264Frames = frames.filter(isH264Frame).slice(0, H264_SEEK_MAX_FRAMES);
+    if (h264Frames.length === 0 || !h264Frames.some((frame) => containsH264IdrNal(frame.data))) {
+      this.#h264WaitingForIdr = true;
+      this.#emitMetricsIfDue(true);
       return;
     }
+
+    for (const frame of h264Frames) {
+      this.#enqueueH264Frame(frame, { applyBackpressure: false });
+    }
+
+    this.#emitMetricsIfDue(true);
+    if (!this.#isProcessing) {
+      void this.#drainLatestFrame();
+    }
+  }
+
+  #enqueueH264Frame(
+    frame: ImageWorkerFrameEnvelope,
+    options: { applyBackpressure?: boolean } = {},
+  ): void {
     this.#h264RecentConfig = updateH264ConfigPackets(this.#h264RecentConfig, frame);
     if (this.#h264WaitingForIdr && !containsH264IdrNal(frame.data)) {
       if (isH264ConfigOnly(frame.data)) {
@@ -446,7 +482,9 @@ class ImageRenderWorkerRuntime {
         return;
       }
       this.#droppedH264Frames += 1;
-      this.#emitMetricsIfDue();
+      if (options.applyBackpressure !== false) {
+        this.#emitMetricsIfDue();
+      }
       return;
     }
     if (containsH264IdrNal(frame.data)) {
@@ -457,9 +495,19 @@ class ImageRenderWorkerRuntime {
       }
     }
     this.#pendingH264Frames.push(frame);
-    this.#updateH264Pressure();
-    this.#trimPendingH264FramesIfNeeded();
-    this.#emitMetricsIfDue();
+    if (options.applyBackpressure !== false) {
+      this.#updateH264Pressure();
+      this.#trimPendingH264FramesIfNeeded();
+      this.#emitMetricsIfDue();
+    }
+  }
+
+  #enqueueFrame(frame: ImageWorkerFrameEnvelope): void {
+    if (!isH264Frame(frame)) {
+      this.#pendingFrame = frame;
+      return;
+    }
+    this.#enqueueH264Frame(frame);
   }
 
   #trimPendingH264FramesIfNeeded(): void {

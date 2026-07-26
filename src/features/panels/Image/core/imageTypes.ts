@@ -1,4 +1,8 @@
 import type { Time } from '@/core/types/ros';
+import {
+  matchesRosSchema,
+  ROS_MSG_FOXGLOVE_COMPRESSED_VIDEO,
+} from '@/shared/ros/rosMessageTypes';
 
 export interface RawImageMessage {
   encoding: string;
@@ -344,6 +348,21 @@ export function isRawImageTopicSchema(schemaName: string): boolean {
 
 /** Topic type tokens accepted by the Image panel topic picker. */
 export const IMAGE_PANEL_TOPIC_INCLUDES = ['image', 'CompressedImage', 'CompressedVideo'] as const;
+
+/**
+ * Whether a topic schema carries ordered video chunks (H264/H265/VP9/AV1) that
+ * must not be coalesced to latest-only during playback prefetch.
+ */
+export function topicNeedsOrderedVideoFrames(schemaName: string): boolean {
+  const trimmed = schemaName.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (matchesRosSchema(trimmed, ROS_MSG_FOXGLOVE_COMPRESSED_VIDEO)) {
+    return true;
+  }
+  return trimmed.toLowerCase().includes('compressedvideo');
+}
 
 export function isImagePanelTopicSchema(schemaName: string): boolean {
   const lower = schemaName.trim().toLowerCase();

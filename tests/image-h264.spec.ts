@@ -34,11 +34,20 @@ test('H.264 CompressedImage decodes without error', async ({ page }) => {
 
   await expect(page.locator('canvas')).not.toHaveCount(0, { timeout: 90_000 });
 
+  const imagePanel = page.getByTestId('image-panel');
+  if (await imagePanel.isVisible().catch(() => false)) {
+    await expect
+      .poll(
+        async () => Number(await imagePanel.getAttribute('data-h264-rendered-frames')),
+        { timeout: 5_000 },
+      )
+      .toBeGreaterThan(0);
+  }
+
   const hasDecodeFailure = await page.getByText(/decode failed|could not be decoded/i).count();
   expect(hasDecodeFailure).toBe(0);
 
   const imageStatus = page.getByTestId('image-panel-status');
-  const imagePanel = page.getByTestId('image-panel');
   if (await imagePanel.isVisible().catch(() => false)) {
     await expect(imageStatus).toBeVisible({ timeout: 90_000 });
     await expect(imageStatus).toHaveText(/\d+x\d+/);
