@@ -64,6 +64,11 @@ export type ImageRenderWorkerRequest =
       frame: ImageWorkerFrameEnvelope;
     }
   | {
+      type: 'bootstrapH264';
+      frames: ImageWorkerFrameEnvelope[];
+      preserveFrame?: boolean;
+    }
+  | {
       type: 'reset';
       preserveFrame?: boolean;
     }

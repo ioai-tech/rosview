@@ -12,6 +12,7 @@ import {
   prepareImageWorkerBytes,
   sniffCompressedMime,
   snapshotBytes,
+  topicNeedsOrderedVideoFrames,
 } from './imageTypes';
 
 describe('snapshotBytes', () => {
@@ -103,6 +104,18 @@ describe('isH264CompressedFrameMessage', () => {
       }),
     ).toBe(false);
     expect(getCompressedKind('vp9')).toBeNull();
+  });
+});
+
+describe('topicNeedsOrderedVideoFrames', () => {
+  it('returns true for foxglove CompressedVideo schemas', () => {
+    expect(topicNeedsOrderedVideoFrames('foxglove_msgs/msg/CompressedVideo')).toBe(true);
+    expect(topicNeedsOrderedVideoFrames('foxglove_msgs/msg/CompressedVideo [ros2msg]')).toBe(true);
+  });
+
+  it('returns false for JPEG/raw image schemas', () => {
+    expect(topicNeedsOrderedVideoFrames('sensor_msgs/msg/CompressedImage')).toBe(false);
+    expect(topicNeedsOrderedVideoFrames('sensor_msgs/msg/Image')).toBe(false);
   });
 });
 
