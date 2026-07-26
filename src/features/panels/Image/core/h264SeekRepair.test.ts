@@ -168,4 +168,30 @@ describe('h264SeekRepair', () => {
     expect(keyPayload.byteLength).toBeGreaterThan(0);
     expect(deltaPayload.byteLength).toBeGreaterThan(0);
   });
+
+  it('does not reset or post frames when an in-flight repair is aborted', async () => {
+    let resolveMessages: ((messages: RosMessageEvent[]) => void) | undefined;
+    const messagesPromise = new Promise<RosMessageEvent[]>((resolve) => {
+      resolveMessages = resolve;
+    });
+    const posts: unknown[] = [];
+    const worker = {
+      postMessage(request: unknown) {
+        posts.push(request);
+      },
+    } as unknown as Worker;
+    const player = {
+      getMessagesInTimeRange: () => messagesPromise,
+    } as unknown as Player;
+    const controller = new AbortController();
+
+    const repair = repairH264Seek(player, worker, '/camera/video', { sec: 2, nsec: 0 }, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    resolveMessages?.([makeEvent(1, keyChunk), makeEvent(2, deltaChunk)]);
+
+    await expect(repair).resolves.toBe(false);
+    expect(posts).toEqual([]);
+  });
 });
