@@ -73,8 +73,9 @@ export async function repairH264Seek(
   worker: Worker,
   topic: string,
   targetTime: Time,
+  options: { signal?: AbortSignal } = {},
 ): Promise<boolean> {
-  if (!player.getMessagesInTimeRange) {
+  if (!player.getMessagesInTimeRange || options.signal?.aborted) {
     return false;
   }
 
@@ -85,6 +86,9 @@ export async function repairH264Seek(
       end: targetTime,
       topics: [topic],
     });
+    if (options.signal?.aborted) {
+      return false;
+    }
 
     const repairFrames = selectH264SeekRepairFrames(
       messages.filter((event) => event.topic === topic),

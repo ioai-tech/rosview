@@ -76,6 +76,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const workerDisposeTimerRef = useRef<number | null>(null);
   const transferredCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastPlaybackTimeNsRef = useRef<bigint | null>(null);
+  const h264SeekRepairAbortRef = useRef<AbortController | null>(null);
   const lastUiStatusRef = useRef<ImageSurfaceStatus>({ phase: 'idle' });
   const h264ModeRef = useRef(false);
   const [status, setStatus] = useState<ImageSurfaceStatus>({ phase: 'idle' });
@@ -254,6 +255,13 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     };
   }, [player, mainConsumerId, h264ConsumerId, topic]);
 
+  useEffect(() => {
+    return () => {
+      h264SeekRepairAbortRef.current?.abort();
+      h264SeekRepairAbortRef.current = null;
+    };
+  }, [player, topic]);
+
   // Keep the worker's media deadline current. On rewind, rebuild H.264 state
   // from the nearest complete random-access point.
   useEffect(() => {
@@ -266,13 +274,23 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       const nowNs = toNano(time);
       const previousNs = lastPlaybackTimeNsRef.current;
       if (previousNs != null && nowNs + 5_000_000n < previousNs) {
+        h264SeekRepairAbortRef.current?.abort();
+        h264SeekRepairAbortRef.current = null;
         const worker = workerRef.current;
         if (worker && topic && h264ModeRef.current) {
+          const controller = new AbortController();
+          h264SeekRepairAbortRef.current = controller;
           worker.postMessage({
             type: 'reset',
             preserveFrame: true,
           } satisfies ImageRenderWorkerRequest);
-          void repairH264Seek(player, worker, topic, time);
+          void repairH264Seek(player, worker, topic, time, {
+            signal: controller.signal,
+          }).finally(() => {
+            if (h264SeekRepairAbortRef.current === controller) {
+              h264SeekRepairAbortRef.current = null;
+            }
+          });
         } else {
           workerRef.current?.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
         }
