@@ -36,6 +36,7 @@ import {
   normalizeCompressedMime,
   type ImageSurfaceStatus,
 } from './imageTypes';
+import { discardStaleAsyncResult } from './asyncEpoch';
 import type {
   ImageRenderOptions,
   ImageRenderMetrics,
@@ -583,6 +584,9 @@ class ImageRenderWorkerRuntime {
         // ROS compressedDepth: PNG → 16UC1/32FC1, then same colormap path as RawImage.
         if (isCompressedDepthFormat(frame.format)) {
           const decoded = await decodeCompressedDepth(bytes, frame.format);
+          if (epoch !== this.#epoch) {
+            return;
+          }
           this.#renderRawFrame({
             receiveTime: frame.receiveTime,
             encoding: decoded.encoding,
@@ -600,6 +604,9 @@ class ImageRenderWorkerRuntime {
 
         if (kind === 'h264') {
           await this.#decoder.submitFrame(frame, bytes, sortKey);
+          if (epoch !== this.#epoch) {
+            return;
+          }
           this.#updateH264Pressure();
           this.#emitMetricsIfDue();
           return;
@@ -611,36 +618,38 @@ class ImageRenderWorkerRuntime {
           `Compressed image decode timed out: ${frame.format}`,
           closeCanvasImageSource,
         );
-        let sourceToClose: ImageBitmap | VideoFrame | null = imageSource;
-        try {
-          const width = 'displayWidth' in imageSource ? imageSource.displayWidth : imageSource.width;
-          const height = 'displayHeight' in imageSource ? imageSource.displayHeight : imageSource.height;
-          const bitmap = isImageBitmap(imageSource)
-            ? imageSource
-            : await withTimeout(
-                createImageBitmap(imageSource as ImageBitmapSource),
-                OUTPUT_TIMEOUT_MS,
-                `Compressed image bitmap creation timed out: ${frame.format}`,
-                closeImageBitmap,
-              );
-          if (isImageBitmap(imageSource)) {
-            sourceToClose = null;
-          }
-          closeCanvasImageSourceIfNeeded(sourceToClose);
-          sourceToClose = null;
-          this.#storeBitmap(bitmap, width, height, frame.format, frame.receiveTime);
-          this.#drawBitmap(bitmap, width, height);
-          this.#emitStatus({
-            phase: 'ready',
-            width,
-            height,
-            encoding: frame.format,
-            receiveTime: frame.receiveTime,
-          });
-        } catch (err) {
-          closeCanvasImageSourceIfNeeded(sourceToClose);
-          throw err;
+        if (discardStaleAsyncResult(imageSource, epoch, this.#epoch)) {
+          return;
         }
+        const width = 'displayWidth' in imageSource ? imageSource.displayWidth : imageSource.width;
+        const height = 'displayHeight' in imageSource ? imageSource.displayHeight : imageSource.height;
+        let bitmap: ImageBitmap;
+        if (isImageBitmap(imageSource)) {
+          bitmap = imageSource;
+        } else {
+          try {
+            bitmap = await withTimeout(
+              createImageBitmap(imageSource as ImageBitmapSource),
+              OUTPUT_TIMEOUT_MS,
+              `Compressed image bitmap creation timed out: ${frame.format}`,
+              closeImageBitmap,
+            );
+          } finally {
+            closeCanvasImageSource(imageSource);
+          }
+          if (discardStaleAsyncResult(bitmap, epoch, this.#epoch)) {
+            return;
+          }
+        }
+        this.#storeBitmap(bitmap, width, height, frame.format, frame.receiveTime);
+        this.#drawBitmap(bitmap, width, height);
+        this.#emitStatus({
+          phase: 'ready',
+          width,
+          height,
+          encoding: frame.format,
+          receiveTime: frame.receiveTime,
+        });
         return;
       }
 
@@ -736,6 +745,7 @@ class ImageRenderWorkerRuntime {
       return;
     }
     const { videoFrame, sourceFrame } = pending;
+    const epoch = this.#epoch;
     const now = performance.now();
     try {
       const frameTimeNs = timeToKey(sourceFrame.receiveTime);
@@ -763,6 +773,9 @@ class ImageRenderWorkerRuntime {
       if (this.#h264Pressure.mode === 'normal' && now - this.#lastH264BitmapAt >= 500) {
         try {
           const bitmap = await createImageBitmap(videoFrame);
+          if (discardStaleAsyncResult(bitmap, epoch, this.#epoch)) {
+            return;
+          }
           this.#storeBitmap(
             bitmap,
             width,
@@ -1212,12 +1225,6 @@ function timeToKey(time: Time): bigint {
 
 function closeCanvasImageSource(source: ImageBitmap | VideoFrame): void {
   source.close();
-}
-
-function closeCanvasImageSourceIfNeeded(source: ImageBitmap | VideoFrame | null): void {
-  if (source) {
-    closeCanvasImageSource(source);
-  }
 }
 
 function closeImageBitmap(bitmap: ImageBitmap): void {
