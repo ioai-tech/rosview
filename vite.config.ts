@@ -29,6 +29,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // protobufjs probes require('fs') at load; silent null avoids Vite's noisy external stub.
+      // Keep `node:fs` unaliased so Vitest/Node fixtures can still use the real module.
+      fs: path.resolve(__dirname, './src/shims/empty-fs.js'),
     },
   },
   // Native Vite asset URLs (`*.wasm?url`); no vite-plugin-wasm (ESM wasm import path unused).

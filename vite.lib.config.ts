@@ -36,6 +36,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.join(packageDir, 'src'),
+      // Same as SPA: quiet protobufjs's browser-side `require('fs')` probe.
+      fs: path.join(packageDir, 'src/shims/empty-fs.js'),
     },
   },
   assetsInclude: ['**/*.wasm'],
