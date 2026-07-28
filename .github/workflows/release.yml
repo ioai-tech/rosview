@@ -48,7 +48,7 @@ jobs:
       - run: npm ci
 
       - name: Download library artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-lib
           path: dist-lib/
