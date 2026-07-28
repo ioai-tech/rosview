@@ -643,7 +643,6 @@ function PlaybackProgressSlider() {
 ```typescript
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import wasm from 'vite-plugin-wasm';
 import path from 'path';
 
 export default defineConfig({
@@ -651,9 +650,10 @@ export default defineConfig({
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
   },
+  // 原生 Vite `*.wasm?url` + assetsInclude（无需 vite-plugin-wasm）
+  assetsInclude: ['**/*.wasm'],
   worker: {
     format: 'es',
-    plugins: () => [wasm()],
   },
   build: {
     target: 'esnext',
@@ -680,12 +680,11 @@ export default defineConfig({
 1. `tsc -p tsconfig.lib.json --emitDeclarationOnly` → 中间产物 `.tmp-dts/`（已 gitignore，不发布）
 2. `@microsoft/api-extractor`（`api-extractor.rosview.json` / `api-extractor.urdf-preview.json`）→ 单一 `dist-lib/rosview.d.ts` 与 `dist-lib/urdf-preview.d.ts`
 
-要点：`build.lib.entry` 使用**绝对路径**；公开入口 `src/entrypoints/index.ts` 用相对路径 re-export，避免 rollup 后的类型把 `@/` 暴露给消费者。完整配置以仓库内 `vite.lib.config.ts` 为准。
+要点：`build.lib.entry` 使用**绝对路径**；公开入口 `src/entrypoints/index.ts` 用相对路径 re-export，避免类型 rollup 后把 `@/` 暴露给消费者。完整配置以仓库内 `vite.lib.config.ts` 的 `rolldownOptions` / external 为准。
 
 ```typescript
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import wasm from 'vite-plugin-wasm';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 
@@ -693,13 +692,13 @@ const packageDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   root: packageDir,
-  plugins: [react(), wasm()],
+  plugins: [react()],
   resolve: {
     alias: { '@': path.join(packageDir, 'src') },
   },
+  assetsInclude: ['**/*.wasm'],
   worker: {
     format: 'es',
-    plugins: () => [wasm()],
   },
   build: {
     outDir: 'dist-lib',
@@ -711,7 +710,7 @@ export default defineConfig({
       formats: ['es'],
       fileName: (_format, entryName) => `${entryName}.es.js`,
     },
-    rollupOptions: {
+    rolldownOptions: {
       external: ['react', 'react-dom', 'react/jsx-runtime' /* + three / @react-three/* */],
       output: {
         assetFileNames: (assetInfo) => {
@@ -925,7 +924,7 @@ rosview/
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
     "vite": "^8.0.4",
-    "vite-plugin-wasm": "^3.5.0",
+    "@vitest/coverage-v8": "^4.1.4",
     "vitest": "^4.0.0"
   }
 }

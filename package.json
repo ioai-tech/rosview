@@ -124,6 +124,7 @@
     "@types/sql.js": "^1.4.11",
     "@types/three": "^0.173.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.4.23",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -132,7 +133,6 @@
     "cytoscape": "^3.33.2",
     "dockview": "^6.0.7",
     "dockview-core": "^6.0.7",
-    "esbuild": "^0.28.0",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
@@ -150,7 +150,6 @@
     "react-dom": "^19.2.6",
     "react-intl": "^10.1.2",
     "react-resizable-panels": "^4.10.0",
-    "rollup": "^4.52.5",
     "sonner": "^2.0.7",
     "sql.js": "^1.14.1",
     "tailwind-merge": "^3.5.0",
@@ -160,7 +159,6 @@
     "typescript-eslint": "^8.58.0",
     "uplot": "^1.6.31",
     "vite": "^8.0.14",
-    "vite-plugin-wasm": "^3.5.0",
     "vitest": "^4.1.4",
     "zustand": "^5.0.3"
   }

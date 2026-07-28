@@ -1,7 +1,6 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import wasm from 'vite-plugin-wasm';
 import path from 'path';
 
 export default defineConfig({
@@ -32,6 +31,7 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  // Native Vite asset URLs (`*.wasm?url`); no vite-plugin-wasm (ESM wasm import path unused).
   assetsInclude: ['**/*.wasm'],
   server: {
     headers: {
@@ -70,7 +70,6 @@ export default defineConfig({
   },
   worker: {
     format: 'es',
-    plugins: () => [wasm()],
     rolldownOptions: {
       onLog(level, log, defaultHandler) {
         if (level === 'warn' && typeof log !== 'string') {

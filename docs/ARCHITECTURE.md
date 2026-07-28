@@ -642,7 +642,9 @@ function PlaybackProgressSlider() {
 export default defineConfig({
   plugins: [react()],
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
-  worker: { format: 'es', plugins: () => [wasm()] },
+  // Native Vite `*.wasm?url` + assetsInclude (no vite-plugin-wasm).
+  assetsInclude: ['**/*.wasm'],
+  worker: { format: 'es' },
   build: {
     target: 'esnext',
     rolldownOptions: {
@@ -668,14 +670,15 @@ export default defineConfig({
 1. `tsc -p tsconfig.lib.json --emitDeclarationOnly` → intermediate `.tmp-dts/` (gitignored, not published)
 2. `@microsoft/api-extractor` (`api-extractor.rosview.json` / `api-extractor.urdf-preview.json`) → single `dist-lib/rosview.d.ts` and `dist-lib/urdf-preview.d.ts`
 
-Important: use an **absolute** `build.lib.entry`. The public entry `src/entrypoints/index.ts` re-exports via relative paths so rolled-up types stay free of fragile `@/` paths for consumers. See the checked-in `vite.lib.config.ts` for worker plugins and externals.
+Important: use an **absolute** `build.lib.entry`. The public entry `src/entrypoints/index.ts` re-exports via relative paths so rolled-up types stay free of fragile `@/` paths for consumers. See the checked-in `vite.lib.config.ts` for `rolldownOptions` externals and worker settings.
 
 ```typescript
 // ...path, fileURLToPath, packageDir as in vite.lib.config.ts
 
 export default defineConfig({
   root: packageDir,
-  plugins: [react(), wasm()],
+  plugins: [react()],
+  assetsInclude: ['**/*.wasm'],
   build: {
     outDir: 'dist-lib',
     sourcemap: false,
@@ -687,7 +690,7 @@ export default defineConfig({
       formats: ['es'],
       fileName: (_format, entryName) => `${entryName}.es.js`,
     },
-    rollupOptions: {
+    rolldownOptions: {
       external: ['react', 'react-dom', 'react/jsx-runtime' /* + three / @react-three/* */],
       output: {
         assetFileNames: (a) =>

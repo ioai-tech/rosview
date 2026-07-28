@@ -40,6 +40,7 @@ yarn.lock
 /public/examples/
 /test-results/
 /playwright-report/
+/coverage/
 .tmp-urdf-debug-*/
 
 # Python (fixture generator scripts, e.g. gen-test-hdf5.py / gen-test-bag.py)
