@@ -1,6 +1,6 @@
 {
   "name": "@ioai/rosview",
-  "version": "1.7.7",
+  "version": "1.7.8",
   "description": "High-performance robotics data visualization for MCAP, ROS bag, ROS2 db3, HDF5 and BVH — embeddable React component and standalone SPA",
   "keywords": [
     "ros",
@@ -49,7 +49,7 @@
     "*.css"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   },
   "overrides": {
     "@foxglove/rosmsg": "^5.0.5"
@@ -57,7 +57,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:lib": "tsc -b && vite build --config vite.lib.config.ts",
+    "build:lib": "tsc -b && vite build --config vite.lib.config.ts && npm run build:lib:types",
+    "build:lib:types": "tsc -p tsconfig.lib.json --emitDeclarationOnly && api-extractor run -c api-extractor.rosview.json --local && api-extractor run -c api-extractor.urdf-preview.json --local",
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run lint && npm test && npm run build:lib",
     "lint": "eslint \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\"",
@@ -88,7 +89,7 @@
     }
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
+    "@eslint/js": "^10.0.1",
     "@foxglove/message-definition": "^0.5.0",
     "@foxglove/omgidl-parser": "^1.2.2",
     "@foxglove/omgidl-serialization": "^1.2.3",
@@ -102,6 +103,7 @@
     "@ioai/wasm-zstd": "^1.1.2",
     "@mcap/browser": "^1.1.0",
     "@mcap/core": "^2.0.2",
+    "@microsoft/api-extractor": "^7.58.12",
     "@playwright/test": "^1.59.1",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-dialog": "^1.1.5",
@@ -122,6 +124,7 @@
     "@types/sql.js": "^1.4.11",
     "@types/three": "^0.173.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.4.23",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -130,8 +133,7 @@
     "cytoscape": "^3.33.2",
     "dockview": "^6.0.7",
     "dockview-core": "^6.0.7",
-    "esbuild": "^0.28.0",
-    "eslint": "^9.39.4",
+    "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "eventemitter3": "^5.0.1",
@@ -148,7 +150,6 @@
     "react-dom": "^19.2.6",
     "react-intl": "^10.1.2",
     "react-resizable-panels": "^4.10.0",
-    "rollup": "^4.52.5",
     "sonner": "^2.0.7",
     "sql.js": "^1.14.1",
     "tailwind-merge": "^3.5.0",
@@ -158,8 +159,6 @@
     "typescript-eslint": "^8.58.0",
     "uplot": "^1.6.31",
     "vite": "^8.0.14",
-    "vite-plugin-dts": "^4.5.4",
-    "vite-plugin-wasm": "^3.5.0",
     "vitest": "^4.1.4",
     "zustand": "^5.0.3"
   }

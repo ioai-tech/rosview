@@ -1,7 +1,6 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import wasm from 'vite-plugin-wasm';
 import path from 'path';
 
 export default defineConfig({
@@ -30,8 +29,12 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // protobufjs probes require('fs') at load; silent null avoids Vite's noisy external stub.
+      // Keep `node:fs` unaliased so Vitest/Node fixtures can still use the real module.
+      fs: path.resolve(__dirname, './src/shims/empty-fs.js'),
     },
   },
+  // Native Vite asset URLs (`*.wasm?url`); no vite-plugin-wasm (ESM wasm import path unused).
   assetsInclude: ['**/*.wasm'],
   server: {
     headers: {
@@ -70,7 +73,6 @@ export default defineConfig({
   },
   worker: {
     format: 'es',
-    plugins: () => [wasm()],
     rolldownOptions: {
       onLog(level, log, defaultHandler) {
         if (level === 'warn' && typeof log !== 'string') {
@@ -93,6 +95,10 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
+    // Modern browsers only (esnext); skip ~1KB modulepreload polyfill.
+    modulePreload: { polyfill: false },
+    // Large wasm/worker chunks make gzip size reporting slow (Vite build options).
+    reportCompressedSize: false,
     chunkSizeWarningLimit: 1200,
     rolldownOptions: {
       checks: {
@@ -111,14 +117,16 @@ export default defineConfig({
         defaultHandler(level, log);
       },
       output: {
-        codeSplitting: true,
-        manualChunks(id) {
-          if (id.includes('dockview')) return 'vendor-dockview';
-          if (id.includes('three')) return 'vendor-three';
-          if (id.includes('uplot')) return 'vendor-uplot';
-          if (id.includes('@mcap/core')) return 'vendor-mcap';
-          if (id.includes('@foxglove/rosbag')) return 'vendor-rosbag';
-          if (id.includes('@ioai/hdf5')) return 'vendor-ioai-hdf5';
+        // Prefer Rolldown codeSplitting.groups over deprecated manualChunks (Vite 8).
+        codeSplitting: {
+          groups: [
+            { name: 'vendor-dockview', test: /dockview/, priority: 30 },
+            { name: 'vendor-three', test: /(?:^|[\\/])three(?:[\\/]|$)/, priority: 30 },
+            { name: 'vendor-uplot', test: /(?:^|[\\/])uplot(?:[\\/]|$)/, priority: 30 },
+            { name: 'vendor-mcap', test: /@mcap[\\/]core/, priority: 30 },
+            { name: 'vendor-rosbag', test: /@foxglove[\\/]rosbag/, priority: 30 },
+            { name: 'vendor-ioai-hdf5', test: /@ioai[\\/]hdf5/, priority: 30 },
+          ],
         },
       },
     },

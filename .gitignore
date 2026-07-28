@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 dist-lib
+.tmp-dts
+.tmp-baseline-dist-lib
 *.local
 
 # Track package-lock.json for GitHub Actions (npm ci + setup-node cache: npm).
@@ -38,6 +40,7 @@ yarn.lock
 /public/examples/
 /test-results/
 /playwright-report/
+/coverage/
 .tmp-urdf-debug-*/
 
 # Python (fixture generator scripts, e.g. gen-test-hdf5.py / gen-test-bag.py)

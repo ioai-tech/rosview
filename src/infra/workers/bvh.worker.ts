@@ -28,7 +28,7 @@ class BvhWorkerImpl implements IWorkerSerializedSourceWorker {
   private _qualityScan = new DataQualityScanController();
 
   async initialize(args: { url?: string; file?: Blob; autoDataQualityScan?: boolean }): Promise<Initialization> {
-    let text = "";
+    let text: string;
     if (args.file) {
       this._totalBytes = args.file.size;
       text = await args.file.text();
