@@ -95,6 +95,10 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
+    // Modern browsers only (esnext); skip ~1KB modulepreload polyfill.
+    modulePreload: { polyfill: false },
+    // Large wasm/worker chunks make gzip size reporting slow (Vite build options).
+    reportCompressedSize: false,
     chunkSizeWarningLimit: 1200,
     rolldownOptions: {
       checks: {
@@ -113,14 +117,16 @@ export default defineConfig({
         defaultHandler(level, log);
       },
       output: {
-        codeSplitting: true,
-        manualChunks(id) {
-          if (id.includes('dockview')) return 'vendor-dockview';
-          if (id.includes('three')) return 'vendor-three';
-          if (id.includes('uplot')) return 'vendor-uplot';
-          if (id.includes('@mcap/core')) return 'vendor-mcap';
-          if (id.includes('@foxglove/rosbag')) return 'vendor-rosbag';
-          if (id.includes('@ioai/hdf5')) return 'vendor-ioai-hdf5';
+        // Prefer Rolldown codeSplitting.groups over deprecated manualChunks (Vite 8).
+        codeSplitting: {
+          groups: [
+            { name: 'vendor-dockview', test: /dockview/, priority: 30 },
+            { name: 'vendor-three', test: /(?:^|[\\/])three(?:[\\/]|$)/, priority: 30 },
+            { name: 'vendor-uplot', test: /(?:^|[\\/])uplot(?:[\\/]|$)/, priority: 30 },
+            { name: 'vendor-mcap', test: /@mcap[\\/]core/, priority: 30 },
+            { name: 'vendor-rosbag', test: /@foxglove[\\/]rosbag/, priority: 30 },
+            { name: 'vendor-ioai-hdf5', test: /@ioai[\\/]hdf5/, priority: 30 },
+          ],
         },
       },
     },

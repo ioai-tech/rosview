@@ -57,6 +57,8 @@ export default defineConfig({
     assetsDir: '.',
     /** Library + worker chunks: no .map in dist-lib (smaller publish / vendored copy). */
     sourcemap: false,
+    // Large worker/wasm outputs make gzip size reporting slow.
+    reportCompressedSize: false,
     copyPublicDir: false,
     lib: {
       entry: {

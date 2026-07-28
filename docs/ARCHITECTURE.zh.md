@@ -657,13 +657,16 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
+    modulePreload: { polyfill: false },
+    reportCompressedSize: false,
     rolldownOptions: {
       output: {
-        codeSplitting: true,
-        manualChunks(id) {
-          if (id.includes('dockview')) return 'vendor-dockview';
-          if (id.includes('three')) return 'vendor-three';
-          // ...
+        codeSplitting: {
+          groups: [
+            { name: 'vendor-dockview', test: /dockview/, priority: 30 },
+            { name: 'vendor-three', test: /(?:^|[\\/])three(?:[\\/]|$)/, priority: 30 },
+            // vendor-uplot、vendor-mcap、vendor-rosbag、vendor-ioai-hdf5 …
+          ],
         },
       },
     },

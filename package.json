@@ -49,7 +49,7 @@
     "*.css"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   },
   "overrides": {
     "@foxglove/rosmsg": "^5.0.5"
