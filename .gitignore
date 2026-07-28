@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 dist-lib
+.tmp-dts
+.tmp-baseline-dist-lib
 *.local
 
 # Track package-lock.json for GitHub Actions (npm ci + setup-node cache: npm).

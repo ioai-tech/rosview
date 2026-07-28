@@ -73,6 +73,7 @@ export async function waitForRosviewReady(
     if (diagnostics && (diagnostics.pageErrors.length > 0 || diagnostics.consoleErrors.length > 0)) {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}\n${formatDiagnostics(diagnostics)}`,
+        { cause: error },
       );
     }
     throw error;

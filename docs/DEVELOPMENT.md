@@ -8,7 +8,7 @@
 | `npm run lint` | ESLint on `src/**/*.ts(x)` and `tests/**/*.ts`. |
 | `npm run test` | Vitest unit tests. |
 | `npm run build` | `tsc` + Vite **SPA** build only (`vite.config.ts` → `dist/`). |
-| `npm run build:lib` | `tsc` + **npm package** build (`vite.lib.config.ts` → `dist-lib/`); used by `prepublishOnly` and embedders. |
+| `npm run build:lib` | `tsc` + Vite lib build (`vite.lib.config.ts` → JS/CSS/WASM) + `build:lib:types` (tsc → `.tmp-dts`, api-extractor → `dist-lib/*.d.ts`); used by `prepublishOnly` and embedders. |
 | `npm run test:e2e` | Playwright (requires fixture MCAP; see below). |
 
 ## Fixtures

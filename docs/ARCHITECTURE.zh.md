@@ -675,14 +675,16 @@ export default defineConfig({
 
 ### 7.2 库构建（嵌入式组件）
 
-`vite.lib.config.ts` — 构建为可被 `app/` 引入的 ESM 库；**类型声明在同一轮 `vite build` 内**由 `vite-plugin-dts` 生成，`rollupTypes: true` 借助 API Extractor 合并为单一 `dist-lib/rosview.d.ts`（无需额外脚本）。
+`vite.lib.config.ts` — 用 Vite [`build.lib`](https://cn.vite.dev/guide/build.html#library-mode) 产出可发布的 ESM 库（JS/CSS/WASM/workers）。**类型声明不由 Vite 生成**；`npm run build:lib` 另跑类型步骤：
 
-要点：`build.lib.entry` 使用**绝对路径**；`dts()` 中设置 `compilerOptions.rootDir = <包>/src` 与 `entryRoot: <包>/src`，避免声明镜像落在 `dist-lib/src/...` 或在 monorepo 非包目录 cwd 下出现空的 `insertTypesEntry` / 空 rollup 结果。完整配置以仓库内 `vite.lib.config.ts` 为准。
+1. `tsc -p tsconfig.lib.json --emitDeclarationOnly` → 中间产物 `.tmp-dts/`（已 gitignore，不发布）
+2. `@microsoft/api-extractor`（`api-extractor.rosview.json` / `api-extractor.urdf-preview.json`）→ 单一 `dist-lib/rosview.d.ts` 与 `dist-lib/urdf-preview.d.ts`
+
+要点：`build.lib.entry` 使用**绝对路径**；公开入口 `src/entrypoints/index.ts` 用相对路径 re-export，避免 rollup 后的类型把 `@/` 暴露给消费者。完整配置以仓库内 `vite.lib.config.ts` 为准。
 
 ```typescript
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import dts from 'vite-plugin-dts';
 import wasm from 'vite-plugin-wasm';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
@@ -691,21 +693,7 @@ const packageDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   root: packageDir,
-  plugins: [
-    react(),
-    wasm(),
-    dts({
-      compilerOptions: { rootDir: path.join(packageDir, 'src') },
-      include: ['src/**/*.ts', 'src/**/*.tsx'],
-      outDir: 'dist-lib',
-      entryRoot: path.join(packageDir, 'src'),
-      tsconfigPath: './tsconfig.app.json',
-      pathsToAliases: false,
-      rollupTypes: true,
-      insertTypesEntry: true,
-      copyDtsFiles: false,
-    }),
-  ],
+  plugins: [react(), wasm()],
   resolve: {
     alias: { '@': path.join(packageDir, 'src') },
   },
@@ -716,12 +704,15 @@ export default defineConfig({
   build: {
     outDir: 'dist-lib',
     lib: {
-      entry: path.join(packageDir, 'src/entrypoints/index.ts'),
+      entry: {
+        rosview: path.join(packageDir, 'src/entrypoints/index.ts'),
+        'urdf-preview': path.join(packageDir, 'src/entrypoints/urdf-preview.ts'),
+      },
       formats: ['es'],
-      fileName: 'rosview.es',
+      fileName: (_format, entryName) => `${entryName}.es.js`,
     },
     rollupOptions: {
-      external: ['react', 'react-dom', 'react/jsx-runtime'],
+      external: ['react', 'react-dom', 'react/jsx-runtime' /* + three / @react-three/* */],
       output: {
         assetFileNames: (assetInfo) => {
           if (assetInfo.name?.endsWith('.css')) return 'rosview.css';
@@ -755,7 +746,7 @@ export default defineConfig({
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:lib": "tsc -b && vite build --config vite.lib.config.ts",
+    "build:lib": "tsc -b && vite build --config vite.lib.config.ts && npm run build:lib:types",
     "typecheck": "tsc -b --noEmit",
     "lint": "eslint \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\"",
     "test": "vitest run",
@@ -917,14 +908,15 @@ rosview/
 ```json
 {
   "devDependencies": {
-    "@eslint/js": "^9.39.0",
+    "@eslint/js": "^10.0.0",
+    "@microsoft/api-extractor": "^7.58.12",
     "@types/node": "^24.12.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.171.0",
     "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.4.23",
-    "eslint": "^9.39.0",
+    "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
@@ -933,7 +925,6 @@ rosview/
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
     "vite": "^8.0.4",
-    "vite-plugin-dts": "^4.5.4",
     "vite-plugin-wasm": "^3.5.0",
     "vitest": "^4.0.0"
   }

@@ -464,7 +464,6 @@ async function loadMeshObject(
       let usedFallbackMaterial = false;
       let hasTexturedMaterial = false;
       if (Array.isArray(mesh.material)) {
-        hasTexturedMaterial = mesh.material.some((material) => hasTextureMaterial(material));
         return;
       }
       if (!mesh.material || mesh.material instanceof THREE.MeshBasicMaterial) {

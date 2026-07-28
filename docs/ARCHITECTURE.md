@@ -663,41 +663,32 @@ export default defineConfig({
 
 ### 7.2 Library Build (Embeddable Component)
 
-`vite.lib.config.ts` — outputs an ESM library bundle for npm. **Type declarations are emitted in the same `vite build` run** via `vite-plugin-dts`. With `rollupTypes: true`, API Extractor rolls declarations up to a single `dist-lib/rosview.d.ts` (no separate post-build script).
+`vite.lib.config.ts` — outputs an ESM library bundle for npm (JS/CSS/WASM/workers) via Vite [`build.lib`](https://vite.dev/guide/build.html#library-mode). **Type declarations are not emitted by Vite**; `npm run build:lib` runs a separate types step:
 
-Important: use an **absolute** `build.lib.entry`; in `dts()`, set `compilerOptions.rootDir` and `entryRoot` to `<package>/src` so emitted `.d.ts` mirror as `dist-lib/entrypoints/...` (not `dist-lib/src/...`) and `insertTypesEntry` stays correct when the monorepo is built from a cwd outside this package. See the checked-in `vite.lib.config.ts` for the full config (including `pathsToAliases: false`, worker plugins, and externals).
+1. `tsc -p tsconfig.lib.json --emitDeclarationOnly` → intermediate `.tmp-dts/` (gitignored, not published)
+2. `@microsoft/api-extractor` (`api-extractor.rosview.json` / `api-extractor.urdf-preview.json`) → single `dist-lib/rosview.d.ts` and `dist-lib/urdf-preview.d.ts`
+
+Important: use an **absolute** `build.lib.entry`. The public entry `src/entrypoints/index.ts` re-exports via relative paths so rolled-up types stay free of fragile `@/` paths for consumers. See the checked-in `vite.lib.config.ts` for worker plugins and externals.
 
 ```typescript
-import dts from 'vite-plugin-dts';
 // ...path, fileURLToPath, packageDir as in vite.lib.config.ts
 
 export default defineConfig({
   root: packageDir,
-  plugins: [
-    react(),
-    wasm(),
-    dts({
-      compilerOptions: { rootDir: path.join(packageDir, 'src') },
-      include: ['src/**/*.ts', 'src/**/*.tsx'],
-      outDir: 'dist-lib',
-      entryRoot: path.join(packageDir, 'src'),
-      tsconfigPath: './tsconfig.app.json',
-      pathsToAliases: false,
-      rollupTypes: true,
-      insertTypesEntry: true,
-      copyDtsFiles: false,
-    }),
-  ],
+  plugins: [react(), wasm()],
   build: {
     outDir: 'dist-lib',
     sourcemap: false,
     lib: {
-      entry: path.join(packageDir, 'src/entrypoints/index.ts'),
+      entry: {
+        rosview: path.join(packageDir, 'src/entrypoints/index.ts'),
+        'urdf-preview': path.join(packageDir, 'src/entrypoints/urdf-preview.ts'),
+      },
       formats: ['es'],
-      fileName: 'rosview.es',
+      fileName: (_format, entryName) => `${entryName}.es.js`,
     },
     rollupOptions: {
-      external: ['react', 'react-dom', 'react/jsx-runtime'],
+      external: ['react', 'react-dom', 'react/jsx-runtime' /* + three / @react-three/* */],
       output: {
         assetFileNames: (a) =>
           a.name?.endsWith('.css') ? 'rosview.css' : (a.name ?? '[name][extname]'),
