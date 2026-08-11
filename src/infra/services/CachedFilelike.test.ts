@@ -134,3 +134,95 @@ describe('CachedFilelike prefetch', () => {
     await expect(readPromise).resolves.toEqual(new Uint8Array([3]));
   });
 });
+
+// Regression tests for a bug where a remote `Filelike` adapter with a mismatched (async/bigint)
+// `size()` caused `read(offset, NaN)` calls to hang forever while `CachedFilelike` kept
+// re-fetching an already-downloaded ~50MiB block on a loop, with no error ever surfacing. See
+// `remoteBagReadable.test.ts` for the corresponding regression test at the adapter boundary.
+describe('CachedFilelike input validation', () => {
+  it('rejects non-finite read lengths synchronously instead of enqueueing an unsatisfiable request', async () => {
+    const reader = new TestFileReader();
+    const filelike = new CachedFilelike({ fileReader: reader, cacheSizeInBytes: 32, fetchBlockSizeInBytes: 8 });
+
+    expect(() => filelike.read(4, NaN)).toThrow(/invalid input/);
+    expect(() => filelike.read(NaN, 4)).toThrow(/invalid input/);
+    expect(() => filelike.read(0, Infinity)).toThrow(/invalid input/);
+    await flushAsyncWork();
+
+    // No fetch should ever be scheduled for an unsatisfiable range.
+    expect(reader.streams).toHaveLength(0);
+  });
+
+  it('rejects negative or non-integer offsets/lengths', () => {
+    const reader = new TestFileReader();
+    const filelike = new CachedFilelike({ fileReader: reader, cacheSizeInBytes: 32 });
+
+    expect(() => filelike.read(-1, 4)).toThrow(/invalid input/);
+    expect(() => filelike.read(0, -4)).toThrow(/invalid input/);
+    expect(() => filelike.read(1.5, 4)).toThrow(/invalid input/);
+  });
+
+  it('silently drops malformed prefetch requests instead of scheduling a fetch', async () => {
+    const reader = new TestFileReader();
+    const filelike = new CachedFilelike({ fileReader: reader, cacheSizeInBytes: 32, fetchBlockSizeInBytes: 8 });
+
+    filelike.prefetch(4, NaN);
+    filelike.prefetch(-1, 4);
+    filelike.prefetch(1.5, 4);
+    await flushAsyncWork();
+
+    expect(reader.streams).toHaveLength(0);
+  });
+});
+
+describe('CachedFilelike avoids re-fetching already-satisfied ranges', () => {
+  it('does not issue a second fetch for a block that is already fully downloaded', async () => {
+    const reader = new TestFileReader();
+    const filelike = new CachedFilelike({ fileReader: reader, cacheSizeInBytes: 32, fetchBlockSizeInBytes: 8 });
+
+    const firstRead = filelike.read(0, 8);
+    await flushAsyncWork();
+    expect(reader.streams).toHaveLength(1);
+
+    reader.streams[0].emitData([0, 1, 2, 3, 4, 5, 6, 7]);
+    await expect(firstRead).resolves.toEqual(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]));
+
+    // Requesting the exact same already-downloaded range again must be served from cache,
+    // not trigger a new HTTP-equivalent fetch.
+    const secondRead = await filelike.read(0, 8);
+    expect(secondRead).toEqual(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]));
+    expect(reader.streams).toHaveLength(1);
+  });
+});
+
+describe('CachedFilelike bounded error retries', () => {
+  it('gives up after a bounded number of consecutive errors, even when failures are spaced beyond the 100ms rapid-fault window', async () => {
+    let now = 0;
+    const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const reader = new TestFileReader();
+      const filelike = new CachedFilelike({ fileReader: reader, cacheSizeInBytes: 32, fetchBlockSizeInBytes: 8 });
+
+      const readPromise = filelike.read(0, 8);
+      await flushAsyncWork();
+
+      let settled = false;
+      void readPromise.catch(() => {
+        settled = true;
+      });
+
+      for (let i = 0; i < 20 && !settled; i++) {
+        const stream = reader.streams[reader.streams.length - 1];
+        now += 200; // well beyond the old 100ms rapid-double-fault window
+        stream.emit('error', new Error(`boom ${i}`));
+        await flushAsyncWork();
+      }
+
+      await expect(readPromise).rejects.toThrow(/giving up/);
+      // The retry budget must be small and bounded — not "keep retrying forever".
+      expect(reader.streams.length).toBeLessThan(20);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  });
+});

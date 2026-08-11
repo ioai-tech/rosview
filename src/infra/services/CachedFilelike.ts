@@ -20,6 +20,19 @@ export interface FileReader {
 const CACHE_BLOCK_SIZE = 1024 * 1024 * 50; // 50MiB blocks
 const DEFAULT_MAX_REQUEST_SIZE = CACHE_BLOCK_SIZE * 2;
 
+/**
+ * Max consecutive fetch failures for the *same* logical block before giving up and rejecting
+ * pending reads. Previously the only give-up condition was "two errors within 100ms of each
+ * other", which never triggers against a server/network that fails slowly-but-persistently
+ * (RTT > 100ms) — that failure mode retried forever. This bound guarantees termination
+ * regardless of error timing.
+ */
+const MAX_CONSECUTIVE_BLOCK_ERRORS = 6;
+
+function isFiniteNonNegativeInteger(value: number): boolean {
+  return Number.isInteger(value) && value >= 0;
+}
+
 export default class CachedFilelike implements Readable {
   #fileReader: FileReader;
   #cacheSizeInBytes: number = Infinity;
@@ -42,6 +55,7 @@ export default class CachedFilelike implements Readable {
   #prefetchRequests: Range[] = [];
 
   #lastErrorTime?: number;
+  #consecutiveBlockErrorCount: number = 0;
 
   public constructor(options: {
     fileReader: FileReader;
@@ -107,11 +121,23 @@ export default class CachedFilelike implements Readable {
       return Promise.resolve(new Uint8Array());
     }
 
+    // Fail fast on non-finite / negative / non-integer offsets or lengths (e.g. `NaN` from a
+    // caller doing arithmetic on an un-awaited `Promise`). Without this guard, a `NaN` `end`
+    // silently turns into a `read()` that can never be satisfied — `hasData()` is never true
+    // for a `NaN` bound — while the block-alignment logic keeps computing a plausible-looking,
+    // finite fetch range from the (valid) `start` and re-requesting it forever. See
+    // `bag.worker.ts`'s remote `Filelike.size()` adapter for the real-world case this fixes.
+    if (
+      !isFiniteNonNegativeInteger(offset) ||
+      !isFiniteNonNegativeInteger(length)
+    ) {
+      throw new Error(
+        `CachedFilelike#read invalid input: offset=${offset}, length=${length} (must be finite non-negative integers)`,
+      );
+    }
+
     const range = { start: offset, end: offset + length };
 
-    if (offset < 0 || length < 0) {
-      throw new Error("CachedFilelike#read invalid input");
-    }
     if (length > this.#cacheSizeInBytes) {
       throw new Error(`Requested more data than cache size: ${length} > ${this.#cacheSizeInBytes}`);
     }
@@ -138,11 +164,17 @@ export default class CachedFilelike implements Readable {
     if (length <= 0 || this.#closed) {
       return;
     }
-
-    const range = { start: offset, end: offset + length };
-    if (offset < 0 || length < 0 || length > this.#cacheSizeInBytes) {
+    // Best-effort: silently drop malformed prefetch requests rather than let a `NaN`/negative
+    // bound reach the same range-alignment code path that `read()` guards against above.
+    if (
+      !isFiniteNonNegativeInteger(offset) ||
+      !isFiniteNonNegativeInteger(length) ||
+      length > this.#cacheSizeInBytes
+    ) {
       return;
     }
+
+    const range = { start: offset, end: offset + length };
 
     void this.open()
       .then(async () => {
@@ -177,7 +209,14 @@ export default class CachedFilelike implements Readable {
       return;
     }
 
-    this.#readRequests = this.#readRequests.filter(({ range, resolve }) => {
+    this.#readRequests = this.#readRequests.filter(({ range, resolve, reject }) => {
+      // Second line of defense: `read()` already rejects non-finite ranges synchronously, but
+      // reject here too in case a request ever reaches the queue some other way — an
+      // unsatisfiable range must never sit in the queue silently forever.
+      if (!Number.isFinite(range.start) || !Number.isFinite(range.end)) {
+        reject(new Error(`CachedFilelike: unsatisfiable range [${range.start}, ${range.end})`));
+        return false;
+      }
       if (!this.#virtualBuffer.hasData(range.start, range.end)) {
         return true;
       }
@@ -227,6 +266,12 @@ export default class CachedFilelike implements Readable {
   }
 
   #getNextFixedFetchRange(queryRange: Range, fileSize: number): Range | undefined {
+    if (!Number.isFinite(queryRange.start) || !Number.isFinite(queryRange.end)) {
+      // Never schedule a fetch from a non-finite range: `#alignToFetchBlock` would otherwise
+      // happily derive a plausible, finite block from `queryRange.start` alone and re-fetch it
+      // forever, since the (bogus) query range itself can never be marked satisfied.
+      return undefined;
+    }
     if (queryRange.start >= fileSize) {
       return undefined;
     }
@@ -289,19 +334,31 @@ export default class CachedFilelike implements Readable {
         return;
       }
 
-      if (this.#keepReconnectingCallback) {
-        if (this.#lastErrorTime == undefined) {
-          this.#keepReconnectingCallback(true);
+      // Bounded regardless of `keepReconnectingCallback` and independent of the "two errors
+      // within 100ms" heuristic below, which never trips against a slowly-but-persistently
+      // failing server/network (RTT > 100ms) — that combination used to retry forever.
+      this.#consecutiveBlockErrorCount += 1;
+      const exhaustedRetryBudget = this.#consecutiveBlockErrorCount >= MAX_CONSECUTIVE_BLOCK_ERRORS;
+      const rapidDoubleFault =
+        !this.#keepReconnectingCallback &&
+        this.#lastErrorTime != undefined &&
+        Date.now() - this.#lastErrorTime < 100;
+
+      if (exhaustedRetryBudget || rapidDoubleFault) {
+        this.#closed = true;
+        const failure = exhaustedRetryBudget
+          ? new Error(
+              `CachedFilelike: giving up on ${range.start}-${range.end} after ${this.#consecutiveBlockErrorCount} consecutive errors: ${error.message}`,
+            )
+          : error;
+        for (const request of this.#readRequests) {
+          request.reject(failure);
         }
-      } else {
-        const lastErrorTime = this.#lastErrorTime;
-        if (lastErrorTime != undefined && Date.now() - lastErrorTime < 100) {
-          this.#closed = true;
-          for (const request of this.#readRequests) {
-            request.reject(error);
-          }
-          return;
-        }
+        return;
+      }
+
+      if (this.#keepReconnectingCallback && this.#lastErrorTime == undefined) {
+        this.#keepReconnectingCallback(true);
       }
 
       this.#lastErrorTime = Date.now();
@@ -317,6 +374,7 @@ export default class CachedFilelike implements Readable {
         return;
       }
 
+      this.#consecutiveBlockErrorCount = 0;
       if (this.#lastErrorTime != undefined) {
         this.#lastErrorTime = undefined;
         if (this.#keepReconnectingCallback) {

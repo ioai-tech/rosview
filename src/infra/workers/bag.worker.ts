@@ -19,6 +19,7 @@ import type { TransportDiagnostics, WorkerTransportConfig } from "./transport";
 import { SharedPayloadRing } from "./sharedPayloadRing";
 import { resolveRemoteCacheBytes } from './remoteCacheConfig';
 import { DataQualityScanController } from './dataQualityScanController';
+import { buildRemoteBagReadable, type SyncSizeBagReadable } from './remoteBagReadable';
 
 class BagWorker implements IWorkerSerializedSourceWorker {
   private _source?: BagIterableSource;
@@ -35,7 +36,7 @@ class BagWorker implements IWorkerSerializedSourceWorker {
     const url = typeof args.url === 'string' ? args.url : undefined;
     const file = args.file instanceof Blob ? args.file : undefined;
     let sourceArgs:
-      | { type: 'remote'; readable: { size: () => Promise<bigint>; read: (offset: number, length: number) => Promise<Uint8Array> } }
+      | { type: 'remote'; readable: SyncSizeBagReadable }
       | { type: 'file'; file: Blob };
     if (url) {
       const knownRaw = args.knownTotalBytes;
@@ -54,12 +55,7 @@ class BagWorker implements IWorkerSerializedSourceWorker {
         cacheSizeInBytes: resolveRemoteCacheBytes(),
       });
       this._cachedReadable = readable;
-      // We need to implement Filelike interface for rosbag
-      // For now, wrap it in an object that rosbag expects
-      const bagReadable = {
-        size: async () => BigInt(await readable.size()),
-        read: async (offset: number, length: number) => await readable.read(offset, length)
-      };
+      const bagReadable = await buildRemoteBagReadable(readable);
       sourceArgs = { type: "remote", readable: bagReadable };
     } else if (file) {
       this._cachedReadable = undefined;
