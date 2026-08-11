@@ -1,4 +1,4 @@
-import { Bag } from "@foxglove/rosbag";
+import { Bag, type Filelike } from "@foxglove/rosbag";
 import { BlobReader } from "@foxglove/rosbag/web";
 import { parse as parseMessageDefinition } from "@foxglove/rosmsg";
 import { MessageReader } from "@foxglove/rosmsg-serialization";
@@ -15,11 +15,14 @@ import type { MessageIteratorArgs, GetBackfillMessagesArgs } from '@/infra/worke
 import { loadDecompressHandlers } from "./decompressHandlers";
 import { addMs, toNano } from '@/shared/utils/time';
 
-/** Remote byte reader shape accepted by @foxglove/rosbag `Bag` (non-`BlobReader` paths). */
-interface RemoteBagReadable {
-  size: () => Promise<bigint>;
-  read: (offset: number, length: number) => Promise<Uint8Array>;
-}
+/**
+ * Remote byte reader shape accepted by @foxglove/rosbag `Bag` (non-`BlobReader` paths).
+ * Must structurally match the library's own `Filelike` (`size(): number`, synchronous) —
+ * previously this was hand-rolled with an async/bigint `size()`, which the compiler could
+ * not catch because callers cast past it (see the removed `as ConstructorParameters<...>`
+ * below). Deriving from `Filelike` directly means any future mismatch is a type error again.
+ */
+type RemoteBagReadable = Filelike;
 
 type BagSource = { type: "file"; file: Blob } | { type: "remote"; readable: RemoteBagReadable };
 
@@ -60,11 +63,12 @@ export class BagIterableSource implements IIterableSource {
   async initialize(): Promise<Initialization> {
     const decompressHandlers = await loadDecompressHandlers({ wasmBinary: this._wasmBinary });
 
-    const fileLike: BlobReader | RemoteBagReadable =
+    const fileLike: Filelike =
       this._source.type === "remote" ? this._source.readable : new BlobReader(this._source.file);
 
-    // Rosbag `Bag` accepts `BlobReader` or custom readers; remote readers use bigint `size()` which differs from `BlobReader` typing.
-    this._bag = new Bag(fileLike as ConstructorParameters<typeof Bag>[0], {
+    // `BlobReader` and `RemoteBagReadable` both satisfy `Filelike` structurally now, so this
+    // no longer needs an `as`-cast to bypass the type checker.
+    this._bag = new Bag(fileLike, {
       parse: false,
       decompress: {
         // RosView currently supports lz4-compressed ROS1 bag chunks.
