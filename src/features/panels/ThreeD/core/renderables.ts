@@ -556,6 +556,9 @@ function loadCollada(text: string, meshUrl: string, meshUpAxis: MeshUpAxis): THR
   const xml = new DOMParser().parseFromString(text, 'application/xml');
   const upAxis = (xml.querySelector('up_axis')?.textContent ?? 'Y_UP').trim().toUpperCase();
   const collada = new ColladaLoader().parse(xml.documentElement.outerHTML, meshUrl);
+  if (!collada) {
+    throw new Error(`Failed to parse Collada mesh: ${meshUrl}`);
+  }
   if (meshUpAxis === 'y_up' && upAxis === 'Y_UP') {
     collada.scene.rotateX(Math.PI / 2);
   }
