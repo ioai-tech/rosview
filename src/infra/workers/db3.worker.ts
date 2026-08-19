@@ -8,6 +8,7 @@ import type {
   IMessageCursor,
   PlaybackBufferStatus,
   PreparePlaybackBufferArgs,
+  SourceInitProgressCallback,
 } from "./types";
 import { RosDb3IterableSource } from '@/infra/sources/RosDb3IterableSource';
 import { MessageCursor } from "./MessageCursor";
@@ -16,6 +17,7 @@ import type { TransportDiagnostics, WorkerTransportConfig } from "./transport";
 import { SharedPayloadRing } from "./sharedPayloadRing";
 import { DataQualityScanController } from './dataQualityScanController';
 import { resolveWorkerHttpUrl } from '@/shared/utils/resolveWorkerHttpUrl';
+import { trackInitProgress } from './throttledInitProgress';
 
 class Db3Worker implements IWorkerSerializedSourceWorker {
   private _source?: RosDb3IterableSource;
@@ -29,7 +31,11 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
   };
   private _qualityScan = new DataQualityScanController();
 
-  async initialize(args: Record<string, unknown>): Promise<Initialization> {
+  async initialize(
+    args: Record<string, unknown>,
+    onProgress?: SourceInitProgressCallback,
+  ): Promise<Initialization> {
+    const report = trackInitProgress(onProgress);
     const sqlWasmBinary = args.sqlWasmBinary instanceof ArrayBuffer ? args.sqlWasmBinary : undefined;
 
     const rawFiles = args.files;
@@ -45,6 +51,12 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
       this._source = new RosDb3IterableSource({ type: "files", files }, { sqlWasmBinary });
       this._totalBytes = files.reduce((sum, f) => sum + f.size, 0);
       this._downloadedBytes = this._totalBytes;
+      report({
+        phase: "opening",
+        loadedBytes: this._downloadedBytes,
+        totalBytes: this._totalBytes,
+        transferredBytes: this._downloadedBytes,
+      });
     } else if (typeof args.url === "string" && args.url.length > 0) {
       // Remote URL: db3/SQLite cannot be range-streamed (random access over the
       // whole database), so download the file in full, then open it in memory.
@@ -52,7 +64,8 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
         typeof args.knownTotalBytes === "number" && Number.isFinite(args.knownTotalBytes)
           ? Math.floor(args.knownTotalBytes)
           : 0;
-      const data = await this._downloadToBytes(resolveWorkerHttpUrl(args.url), knownTotal);
+      report({ phase: "connecting", loadedBytes: 0, totalBytes: knownTotal });
+      const data = await this._downloadToBytes(resolveWorkerHttpUrl(args.url), knownTotal, report);
       this._source = new RosDb3IterableSource({ type: "data", datas: [data] }, { sqlWasmBinary });
       this._totalBytes = data.byteLength;
       this._downloadedBytes = data.byteLength;
@@ -60,6 +73,12 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
       throw new Error("Invalid arguments for Db3Worker: provide url or files");
     }
 
+    report({
+      phase: "opening",
+      loadedBytes: this._downloadedBytes,
+      totalBytes: this._totalBytes,
+      transferredBytes: this._downloadedBytes,
+    });
     const init = await this._source.initialize();
     this._initialization = init;
     this._loaded = true;
@@ -67,7 +86,11 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
     return init;
   }
 
-  private async _downloadToBytes(url: string, knownTotal: number): Promise<Uint8Array> {
+  private async _downloadToBytes(
+    url: string,
+    knownTotal: number,
+    report: (update: { phase: "downloading"; loadedBytes: number; totalBytes: number; transferredBytes: number }) => void,
+  ): Promise<Uint8Array> {
     const resp = await fetch(url);
     if (!resp.ok) {
       throw new Error(`Db3Worker: failed to download db3 (${resp.status} ${resp.statusText})`);
@@ -83,6 +106,12 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
       const buf = new Uint8Array(await resp.arrayBuffer());
       this._totalBytes = buf.byteLength;
       this._downloadedBytes = buf.byteLength;
+      report({
+        phase: "downloading",
+        loadedBytes: buf.byteLength,
+        totalBytes: buf.byteLength,
+        transferredBytes: buf.byteLength,
+      });
       return buf;
     }
 
@@ -96,6 +125,12 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
         chunks.push(value);
         received += value.byteLength;
         this._downloadedBytes = received;
+        report({
+          phase: "downloading",
+          loadedBytes: received,
+          totalBytes: this._totalBytes,
+          transferredBytes: received,
+        });
       }
     }
 

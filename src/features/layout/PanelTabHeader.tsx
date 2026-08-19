@@ -4,7 +4,14 @@ import { useIntl } from 'react-intl';
 import { Separator } from '@/shared/ui/separator';
 import { useElementWidth } from '@/shared/hooks/useElementWidth';
 import type { PanelType } from '../panels/framework';
-import { getPanelTypeFromId, listPanelStates, usePanelActions } from '../panels/framework';
+import {
+  extractPrimaryTopicFromConfig,
+  getPanelConfig,
+  getPanelState,
+  getPanelTypeFromId,
+  listPanelStates,
+  usePanelActions,
+} from '../panels/framework';
 import { PANEL_TYPE_MESSAGE_SLUG } from '../panels/framework/panelMessageSlug';
 import { PanelTypeIcon } from '../panels/framework/panelIcons';
 import {
@@ -98,9 +105,15 @@ export const PanelTabHeader: React.FC<IDockviewPanelHeaderProps> = ({ api, conta
 
   const addPanelWithPlacement = useCallback(
     (type: PanelType, placement: 'replace' | 'right' | 'below' | 'within') => {
+      const sourceConfig = getPanelConfig(api.id) ?? getPanelState(api.id)?.config;
+      const inheritedTopic =
+        type === 'RawMessages' ? extractPrimaryTopicFromConfig(sourceConfig) : undefined;
+      const config = inheritedTopic ? { topic: inheritedTopic } : undefined;
+
       if (placement === 'replace') {
         openDockviewPanel({
           type,
+          config,
           position: { referencePanel: api.id, direction: 'within' },
         });
         window.setTimeout(() => {
@@ -110,6 +123,7 @@ export const PanelTabHeader: React.FC<IDockviewPanelHeaderProps> = ({ api, conta
       }
       openDockviewPanel({
         type,
+        config,
         position: { referencePanel: api.id, direction: placement },
       });
     },

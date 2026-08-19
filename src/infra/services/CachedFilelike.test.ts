@@ -12,6 +12,10 @@ class TestStream extends EventEmitter<FileStreamEvents> implements FileStream {
   public emitData(data: number[]): void {
     this.emit('data', new Uint8Array(data));
   }
+
+  public emitProgress(received: number, total: number): void {
+    this.emit('progress', received, total);
+  }
 }
 
 class TestFileReader {
@@ -172,6 +176,30 @@ describe('CachedFilelike input validation', () => {
     await flushAsyncWork();
 
     expect(reader.streams).toHaveLength(0);
+  });
+});
+
+describe('CachedFilelike download progress', () => {
+  it('forwards stream progress to onDownloadProgress', async () => {
+    const reader = new TestFileReader();
+    const updates: Array<{ loadedBytes: number; totalBytes: number; transferredBytes: number }> = [];
+    const filelike = new CachedFilelike({
+      fileReader: reader,
+      cacheSizeInBytes: 32,
+      fetchBlockSizeInBytes: 8,
+      onDownloadProgress: (info) => updates.push({ ...info }),
+    });
+
+    const readPromise = filelike.read(0, 8);
+    await flushAsyncWork();
+    expect(reader.streams).toHaveLength(1);
+
+    reader.streams[0].emitProgress(4, 8);
+    reader.streams[0].emitData([0, 1, 2, 3, 4, 5, 6, 7]);
+    await readPromise;
+
+    expect(updates.some((update) => update.loadedBytes === 4 && update.totalBytes === 8)).toBe(true);
+    expect(updates[0].transferredBytes).toBeGreaterThan(0);
   });
 });
 

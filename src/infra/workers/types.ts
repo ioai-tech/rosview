@@ -1,3 +1,4 @@
+import type { SourceInitPhase } from '@/core/types/player';
 import type { DataQualityReport, Initialization, MessageEvent, Time, TimeRange } from '@/core/types/ros';
 import type { TransportDiagnostics, WorkerTransportConfig } from './transport';
 import type { Range } from '@/shared/utils/ranges';
@@ -43,6 +44,20 @@ export interface LoadProgress {
   bufferedAheadMs?: number;
 }
 
+export type { SourceInitPhase };
+
+export interface SourceInitProgress {
+  phase: SourceInitPhase;
+  /** Bytes received in the current HTTP range (or full file for db3). */
+  loadedBytes: number;
+  /** Size of the current request, or file size when known. */
+  totalBytes: number;
+  /** Session-cumulative HTTP bytes (monotonic). */
+  transferredBytes?: number;
+}
+
+export type SourceInitProgressCallback = (progress: SourceInitProgress) => void;
+
 /** `T` is the deserialized message payload carried in {@link MessageEvent.message}. */
 export interface IMessageCursor<T = unknown> {
   next(): Promise<IteratorResult<MessageEvent<T>>>;
@@ -54,7 +69,10 @@ export interface IMessageCursor<T = unknown> {
 }
 
 export interface IWorkerSerializedSourceWorker {
-  initialize(args: Record<string, unknown>): Promise<Initialization>;
+  initialize(
+    args: Record<string, unknown>,
+    onProgress?: SourceInitProgressCallback,
+  ): Promise<Initialization>;
   configureTransport(config: WorkerTransportConfig): Promise<void>;
   startDataQualityScan(): Promise<void>;
   getMessageCursor(args: MessageIteratorArgs): Promise<IMessageCursor<unknown>>;

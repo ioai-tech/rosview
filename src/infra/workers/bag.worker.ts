@@ -8,6 +8,7 @@ import type {
   IMessageCursor,
   PlaybackBufferStatus,
   PreparePlaybackBufferArgs,
+  SourceInitProgressCallback,
 } from "./types";
 import { BagIterableSource } from '@/infra/sources/BagIterableSource';
 import { MessageCursor } from "./MessageCursor";
@@ -19,6 +20,7 @@ import type { TransportDiagnostics, WorkerTransportConfig } from "./transport";
 import { SharedPayloadRing } from "./sharedPayloadRing";
 import { resolveRemoteCacheBytes } from './remoteCacheConfig';
 import { DataQualityScanController } from './dataQualityScanController';
+import { trackInitProgress } from './throttledInitProgress';
 import { buildRemoteBagReadable, type SyncSizeBagReadable } from './remoteBagReadable';
 
 class BagWorker implements IWorkerSerializedSourceWorker {
@@ -32,7 +34,12 @@ class BagWorker implements IWorkerSerializedSourceWorker {
   };
   private _qualityScan = new DataQualityScanController();
 
-  async initialize(args: Record<string, unknown>): Promise<Initialization> {
+  async initialize(
+    args: Record<string, unknown>,
+    onProgress?: SourceInitProgressCallback,
+  ): Promise<Initialization> {
+    const report = trackInitProgress(onProgress);
+    report({ phase: "connecting", loadedBytes: 0, totalBytes: 0 });
     const url = typeof args.url === 'string' ? args.url : undefined;
     const file = args.file instanceof Blob ? args.file : undefined;
     let sourceArgs:
@@ -53,6 +60,14 @@ class BagWorker implements IWorkerSerializedSourceWorker {
       const readable = new CachedFilelike({
         fileReader,
         cacheSizeInBytes: resolveRemoteCacheBytes(),
+        onDownloadProgress: (info) => {
+          report({
+            phase: "downloading",
+            loadedBytes: info.loadedBytes,
+            totalBytes: info.totalBytes,
+            transferredBytes: info.transferredBytes,
+          });
+        },
       });
       this._cachedReadable = readable;
       const bagReadable = await buildRemoteBagReadable(readable);
@@ -72,6 +87,7 @@ class BagWorker implements IWorkerSerializedSourceWorker {
       );
     }
 
+    report({ phase: "opening" });
     this._source = new BagIterableSource(sourceArgs, { wasmBinary: zstdWasmBinary });
     const init = await this._source.initialize();
     this._initialization = init;

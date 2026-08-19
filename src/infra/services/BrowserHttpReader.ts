@@ -1,6 +1,8 @@
+export type HttpReadProgress = (received: number, expected: number) => void;
+
 export interface HttpReader {
   size(): number;
-  read(offset: number, length: number, signal?: AbortSignal): Promise<Uint8Array>;
+  read(offset: number, length: number, signal?: AbortSignal, onProgress?: HttpReadProgress): Promise<Uint8Array>;
 }
 
 export type BrowserHttpReaderOptions = {
@@ -99,7 +101,12 @@ export class BrowserHttpReader implements HttpReader {
     return this._size;
   }
 
-  async read(offset: number, length: number, signal?: AbortSignal): Promise<Uint8Array> {
+  async read(
+    offset: number,
+    length: number,
+    signal?: AbortSignal,
+    onProgress?: HttpReadProgress,
+  ): Promise<Uint8Array> {
     if (length === 0) {
       return new Uint8Array();
     }
@@ -108,8 +115,15 @@ export class BrowserHttpReader implements HttpReader {
       for (let pos = offset; pos < offset + length; pos += RANGE_PART_BYTES) {
         parts.push({ start: pos, len: Math.min(RANGE_PART_BYTES, offset + length - pos) });
       }
+      const receivedByPart = new Array<number>(parts.length).fill(0);
       const chunks = await Promise.all(
-        parts.map(({ start, len }) => this.#readOneRange(start, len, signal)),
+        parts.map(({ start, len }, index) =>
+          this.#readOneRange(start, len, signal, (received) => {
+            receivedByPart[index] = received;
+            const sum = receivedByPart.reduce((acc, value) => acc + value, 0);
+            onProgress?.(sum, length);
+          }),
+        ),
       );
       const out = new Uint8Array(length);
       let at = 0;
@@ -119,7 +133,7 @@ export class BrowserHttpReader implements HttpReader {
       }
       return out;
     }
-    return this.#readOneRange(offset, length, signal);
+    return this.#readOneRange(offset, length, signal, onProgress);
   }
 
   async #fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
@@ -142,7 +156,12 @@ export class BrowserHttpReader implements HttpReader {
     throw new Error(`fetchWithRetry exhausted for ${url}`);
   }
 
-  async #readOneRange(offset: number, length: number, signal?: AbortSignal): Promise<Uint8Array> {
+  async #readOneRange(
+    offset: number,
+    length: number,
+    signal?: AbortSignal,
+    onProgress?: HttpReadProgress,
+  ): Promise<Uint8Array> {
     const end = offset + length - 1;
     const response = await this.#fetchWithRetry(this._url, {
       headers: { Range: `bytes=${offset}-${end}` },
@@ -158,7 +177,10 @@ export class BrowserHttpReader implements HttpReader {
       );
     }
 
-    const buf = new Uint8Array(await response.arrayBuffer());
+    const headerLen = Number(response.headers.get('content-length') ?? '');
+    const expected =
+      Number.isFinite(headerLen) && headerLen > 0 ? headerLen : length;
+    const buf = await this.#readResponseBody(response, expected, onProgress);
 
     if (response.status === 206) {
       if (buf.byteLength === length) {
@@ -180,5 +202,40 @@ export class BrowserHttpReader implements HttpReader {
       return buf.subarray(0, length);
     }
     throw new Error(`Unexpected response length ${buf.byteLength} for range length ${length}`);
+  }
+
+  async #readResponseBody(
+    response: Response,
+    expected: number,
+    onProgress?: HttpReadProgress,
+  ): Promise<Uint8Array> {
+    if (!response.body) {
+      const buf = new Uint8Array(await response.arrayBuffer());
+      onProgress?.(buf.byteLength, expected > 0 ? expected : buf.byteLength);
+      return buf;
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (value) {
+        chunks.push(value);
+        received += value.byteLength;
+        onProgress?.(received, expected > 0 ? expected : received);
+      }
+    }
+
+    const out = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return out;
   }
 }

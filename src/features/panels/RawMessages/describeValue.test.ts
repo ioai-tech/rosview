@@ -35,4 +35,16 @@ describe('describeValue', () => {
     expect(visual.text).toContain('100.500000000');
     expect(visual.kind).toBe('number');
   });
+
+  it('describes Float64Array as an expandable Array(n) preview', () => {
+    const visual = describeValue(new Float64Array(16), 256);
+    expect(visual.text).toBe('Array(16)');
+    expect(visual.kind).toBe('array');
+  });
+
+  it('still treats Uint8Array as binary', () => {
+    const visual = describeValue(new Uint8Array([0x00, 0x01]), 256);
+    expect(visual.kind).toBe('binary');
+    expect(visual.text).toBe('Uint8Array(2) 0x0001');
+  });
 });

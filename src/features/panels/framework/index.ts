@@ -1,4 +1,5 @@
 export { createPanelInstanceId, getPanelTypeFromId, markPanelInstanceId } from './ids';
+export { extractPrimaryTopicFromConfig } from './extractPrimaryTopicFromConfig';
 export {
   collectExtras,
   FOXGLOVE_PANEL_TITLE_KEY,

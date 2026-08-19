@@ -5,7 +5,14 @@ import EventEmitter from "eventemitter3";
 
 export type FileStreamEvents = {
   data: (chunk: Uint8Array) => void;
+  progress: (received: number, total: number) => void;
   error: (err: Error) => void;
+};
+
+export type DownloadProgressInfo = {
+  loadedBytes: number;
+  totalBytes: number;
+  transferredBytes: number;
 };
 
 export interface FileStream extends EventEmitter<FileStreamEvents> {
@@ -43,6 +50,9 @@ export default class CachedFilelike implements Readable {
   #virtualBuffer: VirtualLRUBuffer;
   #closed: boolean = false;
   #keepReconnectingCallback?: (reconnecting: boolean) => void;
+  #onDownloadProgress?: (info: DownloadProgressInfo) => void;
+  #transferredBytes = 0;
+  #currentRequestReceived = 0;
 
   #currentConnection: { stream: FileStream; remainingRange: Range; kind: "read" | "prefetch" } | undefined;
 
@@ -64,6 +74,7 @@ export default class CachedFilelike implements Readable {
     maxRequestSizeInBytes?: number;
     preferCacheViews?: boolean;
     keepReconnectingCallback?: (reconnecting: boolean) => void;
+    onDownloadProgress?: (info: DownloadProgressInfo) => void;
   }) {
     this.#fileReader = options.fileReader;
     this.#cacheSizeInBytes = options.cacheSizeInBytes ?? this.#cacheSizeInBytes;
@@ -80,6 +91,7 @@ export default class CachedFilelike implements Readable {
     );
     this.#preferCacheViews = options.preferCacheViews ?? false;
     this.#keepReconnectingCallback = options.keepReconnectingCallback;
+    this.#onDownloadProgress = options.onDownloadProgress;
     this.#virtualBuffer = new VirtualLRUBuffer({ size: 0 });
   }
 
@@ -326,6 +338,22 @@ export default class CachedFilelike implements Readable {
 
     const stream = this.#fileReader.fetch(range.start, range.end - range.start);
     this.#currentConnection = { stream, remainingRange: range, kind };
+    this.#currentRequestReceived = 0;
+    const requestTotal = range.end - range.start;
+
+    stream.on("progress", (received: number, total: number) => {
+      const currentConnection = this.#currentConnection;
+      if (!currentConnection || stream !== currentConnection.stream) {
+        return;
+      }
+      const safeReceived = Math.max(0, received);
+      const delta = safeReceived - this.#currentRequestReceived;
+      if (delta > 0) {
+        this.#transferredBytes += delta;
+        this.#currentRequestReceived = safeReceived;
+      }
+      this.#reportDownloadProgress(safeReceived, total > 0 ? total : requestTotal);
+    });
 
     stream.on("error", (error: Error) => {
       console.error(`Connection error @ ${range.start}-${range.end}:`, error);
@@ -384,6 +412,10 @@ export default class CachedFilelike implements Readable {
 
       this.#virtualBuffer.copyFrom(chunk, currentConnection.remainingRange.start);
       bytesRead += chunk.byteLength;
+      if (this.#currentRequestReceived === 0 && chunk.byteLength > 0) {
+        this.#transferredBytes += chunk.byteLength;
+        this.#reportDownloadProgress(bytesRead, requestTotal);
+      }
 
       if (this.#virtualBuffer.hasData(range.start, range.end)) {
         stream.destroy();
@@ -397,6 +429,14 @@ export default class CachedFilelike implements Readable {
       }
 
       this.#updateState();
+    });
+  }
+
+  #reportDownloadProgress(loadedBytes: number, totalBytes: number): void {
+    this.#onDownloadProgress?.({
+      loadedBytes,
+      totalBytes,
+      transferredBytes: this.#transferredBytes,
     });
   }
 }

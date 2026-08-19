@@ -25,6 +25,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+/** Arrays and numeric TypedArrays. Uint8Array stays binary so image payloads do not explode. */
+export function isExpandableArray(value: unknown): value is ArrayLike<unknown> {
+  if (Array.isArray(value)) return true;
+  return ArrayBuffer.isView(value) && !(value instanceof DataView) && !(value instanceof Uint8Array);
+}
+
 export function buildRowsForShape(
   root: unknown,
   maxExpandedDepth: number,
@@ -46,7 +52,7 @@ export function buildRowsForShape(
         ? 'u8'
         : value instanceof ArrayBuffer
           ? 'ab'
-          : Array.isArray(value)
+          : isExpandableArray(value)
             ? 'arr'
             : isPlainObject(value)
               ? 'obj'
@@ -61,7 +67,7 @@ export function buildRowsForShape(
       walk(new Uint8Array(value), path, key, depth, parentIsArray);
       return;
     }
-    if (Array.isArray(value)) {
+    if (isExpandableArray(value)) {
       const expandable = value.length > 0;
       pushRow({ id: path, path, key, depth, expandable, parentIsArray });
       if (depth >= maxExpandedDepth) return;

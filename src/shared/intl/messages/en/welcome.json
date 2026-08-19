@@ -50,8 +50,12 @@
   "welcome.openDirectory": "Choose folder",
   "welcome.fileTypes": "mcap · bag · db3 · hdf5 · bvh",
   "welcome.directoryHint": "All matching files in folder",
-  "welcome.loadingTitle": "Opening…",
+  "welcome.loadingTitle": "Loading",
   "welcome.loadingPhase.preparing": "Preparing…",
+  "welcome.loadingSpeed": "{speed}/s",
+  "welcome.loadingEtaSeconds": "about {n}s",
+  "welcome.loadingEtaMinutes": "about {n} min",
+  "welcome.loadingEtaHours": "about {n} hr",
   "welcome.cancelLoading": "Cancel",
   "welcome.manualOpenFileHint": "Please manually open the {name} file.",
   "welcome.manualOpenFolderHint": "Please manually open the {name} folder."
