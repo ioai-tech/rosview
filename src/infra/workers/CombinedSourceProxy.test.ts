@@ -75,6 +75,27 @@ describe('CombinedSourceProxy', () => {
     expect(sourceB.initialize).toHaveBeenCalledTimes(1);
   });
 
+  it('aggregates initialize progress from members', async () => {
+    const sourceA = makeMockWorkerSource({
+      initialize: vi.fn(async (_args, onProgress) => {
+        onProgress?.({ phase: 'downloading', loadedBytes: 10, totalBytes: 40, transferredBytes: 10 });
+        return makeInit({ topics: [{ name: '/a', type: 'std_msgs/String' }] });
+      }),
+    });
+    const sourceB = makeMockWorkerSource({
+      initialize: vi.fn(async (_args, onProgress) => {
+        onProgress?.({ phase: 'downloading', loadedBytes: 20, totalBytes: 60, transferredBytes: 20 });
+        return makeInit({ topics: [{ name: '/b', type: 'std_msgs/String' }] });
+      }),
+    });
+    const updates: Array<{ loadedBytes: number; totalBytes: number }> = [];
+    const proxy = new CombinedSourceProxy([makeMember('a.mcap', sourceA), makeMember('b.mcap', sourceB)]);
+    await proxy.initialize({}, (progress) => {
+      updates.push({ loadedBytes: progress.loadedBytes, totalBytes: progress.totalBytes });
+    });
+    expect(updates.some((update) => update.loadedBytes === 30 && update.totalBytes === 100)).toBe(true);
+  });
+
   it('excludes a member that fails to initialize, terminates its worker, and records a problem', async () => {
     const sourceA = makeMockWorkerSource({
       initialize: vi.fn(async () => makeInit({ topics: [{ name: '/a', type: 'std_msgs/String' }] })),

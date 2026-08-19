@@ -9,6 +9,7 @@ import type {
   MessageIteratorArgs,
   PlaybackBufferStatus,
   PreparePlaybackBufferArgs,
+  SourceInitProgressCallback,
 } from "./types";
 import type { TransportDiagnostics, WorkerTransportConfig } from "./transport";
 import { SharedPayloadRing } from "./sharedPayloadRing";
@@ -27,7 +28,11 @@ class BvhWorkerImpl implements IWorkerSerializedSourceWorker {
   private _totalBytes = 0;
   private _qualityScan = new DataQualityScanController();
 
-  async initialize(args: { url?: string; file?: Blob; autoDataQualityScan?: boolean }): Promise<Initialization> {
+  async initialize(
+    args: { url?: string; file?: Blob; autoDataQualityScan?: boolean },
+    onProgress?: SourceInitProgressCallback,
+  ): Promise<Initialization> {
+    onProgress?.({ phase: "connecting", loadedBytes: 0, totalBytes: 0 });
     let text: string;
     if (args.file) {
       this._totalBytes = args.file.size;
@@ -43,6 +48,12 @@ class BvhWorkerImpl implements IWorkerSerializedSourceWorker {
       throw new Error("BvhWorker: neither url nor file provided");
     }
 
+    onProgress?.({
+      phase: "opening",
+      loadedBytes: this._totalBytes,
+      totalBytes: this._totalBytes,
+      transferredBytes: this._totalBytes,
+    });
     this._source = new BvhIterableSource(text, "bvh");
     const init = await this._source.initialize();
     this._initialization = init;

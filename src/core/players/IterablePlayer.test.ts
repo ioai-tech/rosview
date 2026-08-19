@@ -1216,3 +1216,34 @@ describe('IterablePlayer topic metadata', () => {
     player.close();
   });
 });
+
+describe('IterablePlayer initialize progress', () => {
+  it('emits loadedBytes while presence is still initializing', async () => {
+    const gate = deferred<Initialization>();
+    const source = makeSource([]);
+    source.initialize = vi.fn(async (_args, onProgress) => {
+      onProgress?.({ phase: 'downloading', loadedBytes: 12, totalBytes: 100, transferredBytes: 12 });
+      await gate.promise;
+      return makeInitialization();
+    });
+
+    const player = new IterablePlayer(source);
+    let latestState: PlayerState | undefined;
+    player.setListener((state) => {
+      latestState = state;
+    });
+
+    const pending = player.initialize({});
+    await flushAsyncWork();
+
+    expect(latestState?.presence).toBe('initializing');
+    expect(latestState?.progress.loadedBytes).toBe(12);
+    expect(latestState?.progress.totalBytes).toBe(100);
+    expect(latestState?.progress.initPhase).toBe('downloading');
+    expect(useMessagePipelineStore.getState().playerState.progress.loadedBytes).toBe(12);
+
+    gate.resolve(makeInitialization());
+    await pending;
+    player.close();
+  });
+});

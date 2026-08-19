@@ -50,8 +50,12 @@
   "welcome.openDirectory": "选择文件夹",
   "welcome.fileTypes": "mcap · bag · db3 · hdf5 · bvh",
   "welcome.directoryHint": "导入文件夹内全部匹配文件",
-  "welcome.loadingTitle": "正在打开…",
+  "welcome.loadingTitle": "加载中",
   "welcome.loadingPhase.preparing": "准备中…",
+  "welcome.loadingSpeed": "{speed}/s",
+  "welcome.loadingEtaSeconds": "约 {n} 秒",
+  "welcome.loadingEtaMinutes": "约 {n} 分钟",
+  "welcome.loadingEtaHours": "约 {n} 小时",
   "welcome.cancelLoading": "取消",
   "welcome.manualOpenFileHint": "请手动打开 {name} 文件。",
   "welcome.manualOpenFolderHint": "请手动打开 {name} 文件夹。"

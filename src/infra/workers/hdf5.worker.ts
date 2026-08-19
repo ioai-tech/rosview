@@ -10,6 +10,7 @@ import type {
   MessageIteratorArgs,
   PlaybackBufferStatus,
   PreparePlaybackBufferArgs,
+  SourceInitProgressCallback,
 } from './types';
 import type { TransportDiagnostics, WorkerTransportConfig } from './transport';
 import { SharedPayloadRing } from './sharedPayloadRing';
@@ -30,12 +31,16 @@ class Hdf5WorkerImpl implements IWorkerSerializedSourceWorker {
   };
   private _qualityScan = new DataQualityScanController();
 
-  async initialize(args: {
-    url?: string;
-    file?: Blob;
-    autoDataQualityScan?: boolean;
-    hdf5WasmBinary?: ArrayBuffer;
-  }): Promise<Initialization> {
+  async initialize(
+    args: {
+      url?: string;
+      file?: Blob;
+      autoDataQualityScan?: boolean;
+      hdf5WasmBinary?: ArrayBuffer;
+    },
+    onProgress?: SourceInitProgressCallback,
+  ): Promise<Initialization> {
+    onProgress?.({ phase: 'connecting', loadedBytes: 0, totalBytes: 0 });
     if (!args.hdf5WasmBinary) {
       throw new Error('Hdf5Worker: hdf5WasmBinary required (pass wasm bytes from main thread for inline workers)');
     }
@@ -58,6 +63,7 @@ class Hdf5WorkerImpl implements IWorkerSerializedSourceWorker {
       throw err;
     }
 
+    onProgress?.({ phase: 'opening', loadedBytes: 0, totalBytes: 0 });
     this._source = new Hdf5IterableSource(this._h5file as never, {
       fileName: this._mounted.path,
     });

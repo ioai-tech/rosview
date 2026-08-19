@@ -15,6 +15,8 @@ import type {
   MessageIteratorArgs,
   PlaybackBufferStatus,
   PreparePlaybackBufferArgs,
+  SourceInitProgress,
+  SourceInitProgressCallback,
 } from './types';
 import type { TransportDiagnostics } from './transport';
 import type { WorkerSerializedSource } from './WorkerSerializedSource';
@@ -38,6 +40,22 @@ function errorFromReason(reason: unknown): Error {
   return reason instanceof Error ? reason : new Error(errorMessage(reason));
 }
 
+function aggregateInitProgress(parts: Array<SourceInitProgress | undefined>): SourceInitProgress {
+  const defined = parts.filter((part): part is SourceInitProgress => part != null);
+  if (defined.length === 0) {
+    return { phase: 'connecting', loadedBytes: 0, totalBytes: 0 };
+  }
+  const loadedBytes = defined.reduce((sum, part) => sum + part.loadedBytes, 0);
+  const totalBytes = defined.reduce((sum, part) => sum + part.totalBytes, 0);
+  const transferredBytes = defined.reduce((sum, part) => sum + (part.transferredBytes ?? 0), 0);
+  const phase = defined.some((part) => part.phase === 'downloading')
+    ? 'downloading'
+    : defined.some((part) => part.phase === 'opening')
+      ? 'opening'
+      : 'connecting';
+  return { phase, loadedBytes, totalBytes, transferredBytes };
+}
+
 /**
  * Merges N independent `WorkerSerializedSource` instances (each backed by its
  * own Worker, possibly a different format) into a single `ISourceHandle` that
@@ -57,9 +75,23 @@ export class CombinedSourceProxy implements ISourceHandle {
     this._members = members;
   }
 
-  async initialize(args: Record<string, unknown>): Promise<Initialization> {
+  async initialize(
+    args: Record<string, unknown>,
+    onProgress?: SourceInitProgressCallback,
+  ): Promise<Initialization> {
+    const memberProgress: Array<SourceInitProgress | undefined> = this._members.map(() => undefined);
     const results = await Promise.allSettled(
-      this._members.map((member) => member.source.initialize({ ...member.initArgs, ...args })),
+      this._members.map((member, memberIndex) =>
+        member.source.initialize(
+          { ...member.initArgs, ...args },
+          onProgress
+            ? (progress) => {
+                memberProgress[memberIndex] = progress;
+                onProgress(aggregateInitProgress(memberProgress));
+              }
+            : undefined,
+        ),
+      ),
     );
 
     const succeededSources: Array<{ label: string; initialization: Initialization }> = [];

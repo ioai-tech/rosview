@@ -9,7 +9,7 @@ import type {
 import { MAX_PLAYBACK_SPEED } from '@/core/types/player';
 import type { DataQualityReport, Time, Initialization, MessageEvent, TimeRange } from '@/core/types/ros';
 import type { ISourceHandle } from '@/infra/workers/ISourceHandle';
-import type { IMessageCursor } from '@/infra/workers/types';
+import type { IMessageCursor, SourceInitProgress } from '@/infra/workers/types';
 import { addMs, toNano } from '@/shared/utils/time';
 import { useMessagePipelineStore } from '@/core/pipeline/store';
 import { messageBus } from '@/core/pipeline/messageBus';
@@ -387,7 +387,9 @@ export class IterablePlayer implements Player {
 
     try {
       this._advancePlaybackEpoch();
-      this._initialization = await this._source.initialize(args);
+      this._initialization = await this._source.initialize(args, (progress) => {
+        this._applyInitProgress(progress);
+      });
       this._topicLastMessageNs.clear();
       this._currentTime = this._initialization.start;
       this._state.presence = "ready";
@@ -1192,6 +1194,25 @@ export class IterablePlayer implements Player {
     if (t < start) return this._initialization.start;
     if (t > end) return this._initialization.end;
     return time;
+  }
+
+  private _applyInitProgress(progress: SourceInitProgress): void {
+    if (this._state.presence !== "initializing") {
+      return;
+    }
+    const percent =
+      progress.totalBytes > 0
+        ? Math.min(100, (progress.loadedBytes / progress.totalBytes) * 100)
+        : undefined;
+    this._state.progress = {
+      ...this._state.progress,
+      initPhase: progress.phase,
+      loadedBytes: progress.loadedBytes,
+      totalBytes: progress.totalBytes,
+      transferredBytes: progress.transferredBytes,
+      percent,
+    };
+    this._emitState();
   }
 
   private _startLoadProgressPolling(): void {

@@ -50,8 +50,12 @@
   "welcome.openDirectory": "フォルダを選ぶ",
   "welcome.fileTypes": "mcap · bag · db3 · hdf5 · bvh",
   "welcome.directoryHint": "フォルダ内の該当ファイルすべて",
-  "welcome.loadingTitle": "開いています…",
+  "welcome.loadingTitle": "読み込み中",
   "welcome.loadingPhase.preparing": "準備中…",
+  "welcome.loadingSpeed": "{speed}/s",
+  "welcome.loadingEtaSeconds": "約 {n} 秒",
+  "welcome.loadingEtaMinutes": "約 {n} 分",
+  "welcome.loadingEtaHours": "約 {n} 時間",
   "welcome.cancelLoading": "キャンセル",
   "welcome.manualOpenFileHint": "{name} ファイルを手動で開いてください。",
   "welcome.manualOpenFolderHint": "{name} フォルダを手動で開いてください。"

@@ -19,6 +19,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useIntl } from 'react-intl';
+import { sourceDisplayName } from '@/shared/utils/sourceDisplayName';
 import {
   Menubar,
   MenubarContent,
@@ -168,8 +169,10 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const hasOpenMenu =
     onOpenFilePick || onOpenDirectory || onOpenTarPick || onOpenRemotePrompt || onOpenSampleDialog;
-  const showCenter = Boolean(sourceLoading || (sourceName && sourceName.trim().length > 0));
-  const centerLabel = sourceLoading ? formatMessage({ id: 'navbar.sourceLoading' }) : (sourceName ?? '');
+  const displayName = sourceDisplayName(sourceName);
+  const showCenter = Boolean(sourceLoading || displayName);
+  const centerLabel = sourceLoading ? formatMessage({ id: 'navbar.sourceLoading' }) : (displayName ?? '');
+  const centerTitle = sourceLoading ? centerLabel : (sourceName?.trim() || centerLabel);
   const brandText = brandLabel ?? formatMessage({ id: 'common.productName' });
   const brandAccessibleName = brandLabel ?? formatMessage({ id: 'navbar.goHome' });
 
@@ -352,7 +355,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 className={`block min-w-0 flex-1 truncate text-center text-sm font-medium tracking-tight ${
                   sourceLoading ? 'text-muted-foreground' : 'text-foreground'
                 }`}
-                title={centerLabel}
+                title={centerTitle}
               >
                 {centerLabel}
               </span>

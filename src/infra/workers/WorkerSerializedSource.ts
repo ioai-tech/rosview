@@ -9,6 +9,7 @@ import type {
   LoadProgress,
   PlaybackBufferStatus,
   PreparePlaybackBufferArgs,
+  SourceInitProgressCallback,
 } from "./types";
 import type { TransportDiagnostics } from "./transport";
 import { isSharedPayloadRef } from "./transport";
@@ -62,7 +63,10 @@ export class WorkerSerializedSource implements ISourceHandle {
     }
   }
 
-  async initialize(args: Record<string, unknown>): Promise<Initialization> {
+  async initialize(
+    args: Record<string, unknown>,
+    onProgress?: SourceInitProgressCallback,
+  ): Promise<Initialization> {
     console.debug("WorkerSerializedSource: calling initialize");
     try {
       // Ensure all objects passed to Comlink are plain objects
@@ -84,7 +88,12 @@ export class WorkerSerializedSource implements ISourceHandle {
         this._transportConfigured = true;
       }
       const result = await this._raceWorkerFailure(
-        this._wrapAbortableInitialize(this._remote.initialize(sanitizedArgs)),
+        this._wrapAbortableInitialize(
+          this._remote.initialize(
+            sanitizedArgs,
+            onProgress ? Comlink.proxy(onProgress) : undefined,
+          ),
+        ),
       );
       console.debug("WorkerSerializedSource: initialize result received");
       return result;

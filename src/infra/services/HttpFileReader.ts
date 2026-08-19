@@ -8,7 +8,11 @@ class HttpFileStream extends EventEmitter<FileStreamEvents> implements FileStrea
 
   constructor(reader: BrowserHttpReader, offset: number, length: number) {
     super();
-    reader.read(offset, length, this._abortController.signal)
+    reader.read(offset, length, this._abortController.signal, (received, total) => {
+      if (!this._destroyed) {
+        this.emit("progress", received, total);
+      }
+    })
       .then((data) => {
         if (!this._destroyed) {
           this.emit("data", data);

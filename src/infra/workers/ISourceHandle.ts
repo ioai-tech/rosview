@@ -5,6 +5,7 @@ import type {
   IMessageCursor,
   LoadProgress,
   MessageIteratorArgs,
+  SourceInitProgressCallback,
   PlaybackBufferStatus,
   PreparePlaybackBufferArgs,
 } from './types';
@@ -25,7 +26,10 @@ export type ResolveHighFrequencyLaneOptions = {
  * file or several.
  */
 export interface ISourceHandle {
-  initialize(args: Record<string, unknown>): Promise<Initialization>;
+  initialize(
+    args: Record<string, unknown>,
+    onProgress?: SourceInitProgressCallback,
+  ): Promise<Initialization>;
   getMessageCursor(args: MessageIteratorArgs): Promise<IMessageCursor<unknown>>;
   getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]>;
   getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null>;

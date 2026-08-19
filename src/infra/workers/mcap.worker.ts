@@ -11,6 +11,7 @@ import type {
   IMessageCursor,
   PlaybackBufferStatus,
   PreparePlaybackBufferArgs,
+  SourceInitProgressCallback,
 } from "./types";
 import { McapIndexedIterableSource } from '@/infra/sources/McapIndexedIterableSource';
 import { loadDecompressHandlers } from '@/infra/sources/decompressHandlers';
@@ -27,6 +28,7 @@ import type { Range } from '@/shared/utils/ranges';
 import { compactTimeRanges, inferProgressTimeRangeCompaction } from '@/shared/utils/timeRanges';
 import { workerPerf } from './workerPerf';
 import { DataQualityScanController } from './dataQualityScanController';
+import { trackInitProgress } from './throttledInitProgress';
 import {
   getPlayableTimeRanges,
   isByteRangeCovered,
@@ -58,16 +60,21 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
   };
   private _qualityScan = new DataQualityScanController();
 
-  async initialize(args: Record<string, unknown>): Promise<Initialization> {
+  async initialize(
+    args: Record<string, unknown>,
+    onProgress?: SourceInitProgressCallback,
+  ): Promise<Initialization> {
     workerPerf.configure({
       enabled: args.workerPerf === true,
       label: "mcap",
     });
     console.debug("McapWorker: initialize starting", args);
+    const report = trackInitProgress(onProgress);
     try {
       let rawReadable: IReadable;
       const url = typeof args.url === 'string' ? args.url : undefined;
       const file = args.file instanceof Blob ? args.file : undefined;
+      report({ phase: "connecting", loadedBytes: 0, totalBytes: 0 });
       if (url) {
         const knownRaw = args.knownTotalBytes;
         const knownTotalBytes =
@@ -85,6 +92,14 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
           fileReader,
           cacheSizeInBytes: this._remoteCacheBytes,
           preferCacheViews: true,
+          onDownloadProgress: (info) => {
+            report({
+              phase: "downloading",
+              loadedBytes: info.loadedBytes,
+              totalBytes: info.totalBytes,
+              transferredBytes: info.transferredBytes,
+            });
+          },
         });
         this._cachedReadable = cachedReadable;
         rawReadable = {
@@ -131,6 +146,7 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
           decompressHandlers,
         }),
       );
+      report({ phase: "opening" });
       this._source = new McapIndexedIterableSource(reader);
       const init = await workerPerf.timeAsync(
         "initialize.source",
