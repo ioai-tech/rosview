@@ -14,7 +14,7 @@ import { scheduleFrame } from '@/shared/utils/rafScheduler';
 import { TopicQuickPicker } from '../framework/TopicQuickPicker';
 import { PanelTopicBar } from '../framework/PanelTopicBar';
 import type { RawMessagesConfig } from './defaults';
-import { buildRowsForMessageEvent, type FlatRow } from './shapeTree';
+import { buildRowsForMessageEvent, isExpandableArray, type FlatRow } from './shapeTree';
 
 interface RawMessagesPanelProps {
   player: Player;
@@ -110,7 +110,7 @@ function readValueAtPath(event: MessageEvent | null | undefined, path: string): 
   const parts = pathToParts(path.replace(/^message\./, ''));
   let current: unknown = event.message;
   for (const part of parts) {
-    if (Array.isArray(current)) {
+    if (isExpandableArray(current)) {
       const idx = Number(part);
       if (!Number.isInteger(idx)) return undefined;
       current = current[idx];
@@ -158,7 +158,7 @@ function previewPrimitive(value: unknown): string {
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (value instanceof Uint8Array) return `Uint8Array(${value.byteLength})`;
   if (value instanceof ArrayBuffer) return `ArrayBuffer(${value.byteLength})`;
-  if (Array.isArray(value)) return `Array(${value.length})`;
+  if (isExpandableArray(value)) return `Array(${value.length})`;
   if (isPlainObject(value)) return `{${Object.keys(value).length} keys}`;
   if (typeof value === 'bigint') return `${value.toString()}n`;
   if (typeof value === 'function') return '[Function]';
@@ -206,7 +206,7 @@ export function describeValue(
   if (value instanceof ArrayBuffer) {
     return describeValue(new Uint8Array(value), maxBinaryPreviewBytes, options);
   }
-  if (Array.isArray(value)) return { text: `Array(${value.length})`, kind: 'array' };
+  if (isExpandableArray(value)) return { text: `Array(${value.length})`, kind: 'array' };
   if (isPlainObject(value)) {
     return { text: previewObject(value) ?? `{${Object.keys(value).length} keys}`, kind: 'object' };
   }
@@ -257,7 +257,9 @@ function serializeForCopy(value: unknown, binaryFormat: BinaryCopyFormat): unkno
     return { __type: 'Uint8Array', data: Array.from(value) };
   }
   if (value instanceof ArrayBuffer) return serializeForCopy(new Uint8Array(value), binaryFormat);
-  if (Array.isArray(value)) return value.map((entry) => serializeForCopy(entry, binaryFormat));
+  if (isExpandableArray(value)) {
+    return Array.from(value, (entry) => serializeForCopy(entry, binaryFormat));
+  }
   if (isPlainObject(value)) {
     const out: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) out[key] = serializeForCopy(entry, binaryFormat);
