@@ -3,7 +3,7 @@ import type { Initialization, MessageEvent } from '@/core/types/ros';
 import type { WorkerSerializedSource } from './WorkerSerializedSource';
 import { CombinedSourceProxy, type CombinedSourceMember } from './CombinedSourceProxy';
 import { CombinedMessageCursor } from './CombinedMessageCursor';
-import type { IMessageCursor } from './types';
+import type { IMessageCursor, SourceInitProgressCallback } from './types';
 
 function makeInit(overrides: Partial<Initialization> = {}): Initialization {
   return {
@@ -77,13 +77,13 @@ describe('CombinedSourceProxy', () => {
 
   it('aggregates initialize progress from members', async () => {
     const sourceA = makeMockWorkerSource({
-      initialize: vi.fn(async (_args, onProgress) => {
+      initialize: vi.fn(async (_args: Record<string, unknown>, onProgress?: SourceInitProgressCallback) => {
         onProgress?.({ phase: 'downloading', loadedBytes: 10, totalBytes: 40, transferredBytes: 10 });
         return makeInit({ topics: [{ name: '/a', type: 'std_msgs/String' }] });
       }),
     });
     const sourceB = makeMockWorkerSource({
-      initialize: vi.fn(async (_args, onProgress) => {
+      initialize: vi.fn(async (_args: Record<string, unknown>, onProgress?: SourceInitProgressCallback) => {
         onProgress?.({ phase: 'downloading', loadedBytes: 20, totalBytes: 60, transferredBytes: 20 });
         return makeInit({ topics: [{ name: '/b', type: 'std_msgs/String' }] });
       }),

@@ -5,6 +5,7 @@ import { useMessagePipelineStore } from '@/core/pipeline/store';
 import type { Initialization, MessageEvent } from '@/core/types/ros';
 import type { PlayerState } from '@/core/types/player';
 import type { WorkerSerializedSource } from '@/infra/workers/WorkerSerializedSource';
+import type { SourceInitProgressCallback } from '@/infra/workers/types';
 
 const TOPIC = '/camera/front/image/compressed';
 
@@ -1221,7 +1222,7 @@ describe('IterablePlayer initialize progress', () => {
   it('emits loadedBytes while presence is still initializing', async () => {
     const gate = deferred<Initialization>();
     const source = makeSource([]);
-    source.initialize = vi.fn(async (_args, onProgress) => {
+    source.initialize = vi.fn(async (_args: Record<string, unknown>, onProgress?: SourceInitProgressCallback) => {
       onProgress?.({ phase: 'downloading', loadedBytes: 12, totalBytes: 100, transferredBytes: 12 });
       await gate.promise;
       return makeInitialization();
