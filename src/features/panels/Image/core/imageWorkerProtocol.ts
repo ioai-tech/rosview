@@ -86,6 +86,8 @@ export interface ImageRenderMetrics {
   decodeQueueSize: number;
   mediaLagMs: number;
   resyncCount: number;
+  /** True while every incoming frame is discarded pending a random-access point. */
+  waitingForIdr: boolean;
   codec?: string;
 }
 
@@ -97,4 +99,13 @@ export type ImageRenderWorkerEvent =
   | {
       type: 'metrics';
       metrics: ImageRenderMetrics;
+    }
+  /**
+   * The worker cannot resume decoding from the frames it has. The panel should
+   * fetch a bootstrap batch starting at the nearest IDR before the playhead.
+   * Waiting for the next in-band IDR is not viable: keyframe intervals of
+   * several seconds are common and some recordings hold a single IDR.
+   */
+  | {
+      type: 'needsBootstrap';
     };

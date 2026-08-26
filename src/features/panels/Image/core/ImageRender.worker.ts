@@ -18,7 +18,8 @@ import {
   decodedFrameLatenessMs,
   initialH264PressureState,
   isH264HardLimitExceeded,
-  shouldDropDecodedH264Frame,
+  isH264StreamDiscontinuity,
+  isSupersededH264Output,
   updateDecodeDurationEwma,
   updateH264Pressure,
   type H264PressureState,
@@ -82,6 +83,16 @@ const DEFAULT_VIEWPORT: ImageViewport = {
 const OUTPUT_TIMEOUT_MS = 5000;
 const METRICS_INTERVAL_MS = 1000;
 const H264_RESYNC_COOLDOWN_MS = 200;
+/** Minimum spacing between bootstrap requests sent to the panel. */
+const H264_BOOTSTRAP_REQUEST_COOLDOWN_MS = 1500;
+/**
+ * How long the worker waits for an in-band IDR before asking the panel to
+ * bootstrap from the nearest preceding one. Streams with a single IDR, or with a
+ * keyframe interval of several seconds, would otherwise stay blank indefinitely.
+ */
+const H264_IDR_WAIT_TIMEOUT_MS = 500;
+/** How long a stalled H.264 panel stays silent before reporting the stall. */
+const H264_STALL_REPORT_MS = 4000;
 
 // ---------- H.264 decoder ----------
 
@@ -94,6 +105,7 @@ class WorkerH264Decoder {
   #submitted = new Map<number, {
     frame: ImageWorkerFrameEnvelope;
     startedAt: number;
+    queueDepth: number;
     generation: number;
   }>();
   #callbacks: {
@@ -165,6 +177,7 @@ class WorkerH264Decoder {
       this.#submitted.set(timestamp, {
         frame,
         startedAt: performance.now(),
+        queueDepth: decoder.decodeQueueSize,
         generation,
       });
     }
@@ -233,7 +246,11 @@ class WorkerH264Decoder {
         this.#callbacks.output({
           videoFrame: frame,
           sourceFrame: submitted.frame,
-          decodeMs: performance.now() - submitted.startedAt,
+          // Elapsed time also covers the wait behind frames already queued in
+          // the decoder, so amortise it to approximate per-frame decode cost.
+          // Without this the sample tracks pipeline latency and permanently
+          // reports overload on healthy multi-stream playback.
+          decodeMs: (performance.now() - submitted.startedAt) / (submitted.queueDepth + 1),
         });
       },
       error: (error) => {
@@ -320,9 +337,23 @@ class ImageRenderWorkerRuntime {
   #h264Pressure: H264PressureState = initialH264PressureState();
   #h264DecodeMs = 0;
   #h264WaitingForIdr = false;
+  #h264WaitingForIdrSince: number | null = null;
   #h264ConfigBeforeIdr: ImageWorkerFrameEnvelope[] = [];
   #h264RecentConfig: ImageWorkerFrameEnvelope[] = [];
   #h264NeedsResync = false;
+  /**
+   * Leading `#pendingH264Frames` entries that form an in-flight bootstrap GOP.
+   * They are a dependency chain that cannot be shortened, so backpressure must
+   * never discard them; doing so throws away the only decodable prefix and
+   * leaves the panel waiting for a random-access point it already had.
+   */
+  #h264ProtectedQueueCount = 0;
+  #h264LastEnqueuedTimeNs: bigint | null = null;
+  #h264FrameIntervalMs = 0;
+  #lastH264BootstrapRequestAt = -Infinity;
+  /** Wall clock of the last visible H.264 progress, used by the stall watchdog. */
+  #h264ProgressAt: number | null = null;
+  #h264StallReported = false;
   #lastH264RenderAt = -Infinity;
   #lastH264BitmapAt = -Infinity;
   #droppedH264Frames = 0;
@@ -387,6 +418,7 @@ class ImageRenderWorkerRuntime {
         this.#isPlaying = message.isPlaying;
         this.#updateH264Pressure();
         this.#trimPendingH264FramesIfNeeded();
+        this.#reportH264StallIfDue();
         this.#emitMetricsIfDue();
         return;
 
@@ -408,6 +440,7 @@ class ImageRenderWorkerRuntime {
         this.#epoch += 1;
         this.#pendingFrame = null;
         this.#pendingH264Frames = [];
+        this.#h264ProtectedQueueCount = 0;
         this.#disposePendingH264Output();
         this.#haltUntilReset = false;
         this.#resetH264RuntimeState();
@@ -425,6 +458,7 @@ class ImageRenderWorkerRuntime {
         this.#epoch += 1;
         this.#pendingFrame = null;
         this.#pendingH264Frames = [];
+        this.#h264ProtectedQueueCount = 0;
         this.#disposePendingH264Output();
         this.#haltUntilReset = false;
         this.#decoder.dispose();
@@ -440,6 +474,7 @@ class ImageRenderWorkerRuntime {
     this.#epoch += 1;
     this.#pendingFrame = null;
     this.#pendingH264Frames = [];
+    this.#h264ProtectedQueueCount = 0;
     this.#disposePendingH264Output();
     this.#haltUntilReset = false;
     this.#resetH264RuntimeState();
@@ -453,7 +488,7 @@ class ImageRenderWorkerRuntime {
 
     const h264Frames = frames.filter(isH264Frame).slice(0, H264_SEEK_MAX_FRAMES);
     if (h264Frames.length === 0 || !h264Frames.some((frame) => containsH264IdrNal(frame.data))) {
-      this.#h264WaitingForIdr = true;
+      this.#beginWaitForH264Idr();
       this.#emitMetricsIfDue(true);
       return;
     }
@@ -461,6 +496,7 @@ class ImageRenderWorkerRuntime {
     for (const frame of h264Frames) {
       this.#enqueueH264Frame(frame, { applyBackpressure: false });
     }
+    this.#h264ProtectedQueueCount = this.#pendingH264Frames.length;
 
     this.#emitMetricsIfDue(true);
     if (!this.#isProcessing) {
@@ -472,7 +508,11 @@ class ImageRenderWorkerRuntime {
     frame: ImageWorkerFrameEnvelope,
     options: { applyBackpressure?: boolean } = {},
   ): void {
+    const live = options.applyBackpressure !== false;
     this.#h264RecentConfig = updateH264ConfigPackets(this.#h264RecentConfig, frame);
+    if (live) {
+      this.#trackH264Cadence(frame);
+    }
     if (this.#h264WaitingForIdr && !containsH264IdrNal(frame.data)) {
       if (isH264ConfigOnly(frame.data)) {
         this.#h264ConfigBeforeIdr = updateH264ConfigPackets(
@@ -482,24 +522,125 @@ class ImageRenderWorkerRuntime {
         return;
       }
       this.#droppedH264Frames += 1;
-      if (options.applyBackpressure !== false) {
+      if (live) {
+        this.#requestH264BootstrapIfIdrWaitStalled();
         this.#emitMetricsIfDue();
       }
       return;
     }
     if (containsH264IdrNal(frame.data)) {
-      this.#h264WaitingForIdr = false;
+      this.#clearWaitForH264Idr();
       if (this.#h264ConfigBeforeIdr.length > 0) {
         this.#pendingH264Frames.push(...this.#h264ConfigBeforeIdr);
         this.#h264ConfigBeforeIdr = [];
       }
     }
     this.#pendingH264Frames.push(frame);
-    if (options.applyBackpressure !== false) {
+    if (live) {
       this.#updateH264Pressure();
       this.#trimPendingH264FramesIfNeeded();
       this.#emitMetricsIfDue();
     }
+  }
+
+  /**
+   * Track the stream's frame cadence and detect breaks in it. A delta frame that
+   * follows a gap references pictures this decoder never saw (forward seek, loop
+   * wrap, or a skipped backlog), so it must not be fed to the decoder.
+   */
+  #trackH264Cadence(frame: ImageWorkerFrameEnvelope): void {
+    const frameTimeNs = timeToKey(frame.receiveTime);
+    const previousNs = this.#h264LastEnqueuedTimeNs;
+    this.#h264LastEnqueuedTimeNs = frameTimeNs;
+    if (previousNs == null) {
+      // Arm the stall watchdog from the first live frame.
+      this.#h264ProgressAt ??= performance.now();
+      return;
+    }
+    const gapMs = Number(frameTimeNs - previousNs) / 1_000_000;
+    if (gapMs <= 0) {
+      return;
+    }
+    if (
+      !containsH264IdrNal(frame.data) &&
+      isH264StreamDiscontinuity(gapMs, this.#h264FrameIntervalMs)
+    ) {
+      this.#droppedH264Frames += this.#pendingH264Frames.length;
+      this.#pendingH264Frames = [];
+      this.#h264ProtectedQueueCount = 0;
+      this.#beginWaitForH264Idr();
+      this.#resyncH264Decoder();
+      this.#requestH264Bootstrap();
+      // Leave the cadence estimate untouched so the jump does not become the
+      // baseline for the next continuity check.
+      return;
+    }
+    this.#h264FrameIntervalMs = updateDecodeDurationEwma(this.#h264FrameIntervalMs, gapMs);
+  }
+
+  #beginWaitForH264Idr(): void {
+    this.#h264WaitingForIdr = true;
+    this.#h264WaitingForIdrSince = performance.now();
+    this.#h264ConfigBeforeIdr = [...this.#h264RecentConfig];
+  }
+
+  #clearWaitForH264Idr(): void {
+    this.#h264WaitingForIdr = false;
+    this.#h264WaitingForIdrSince = null;
+  }
+
+  /**
+   * Ask the panel for a bootstrap batch starting at the nearest *preceding* IDR.
+   * Waiting for the next in-band IDR is not a recovery: recordings exist whose
+   * keyframe interval is several seconds, and others carry exactly one IDR for
+   * the whole file, so the wait can never end.
+   */
+  #requestH264Bootstrap(): void {
+    const now = performance.now();
+    if (now - this.#lastH264BootstrapRequestAt < H264_BOOTSTRAP_REQUEST_COOLDOWN_MS) {
+      return;
+    }
+    this.#lastH264BootstrapRequestAt = now;
+    workerScope.postMessage({ type: 'needsBootstrap' } satisfies ImageRenderWorkerEvent);
+  }
+
+  #requestH264BootstrapIfIdrWaitStalled(): void {
+    const since = this.#h264WaitingForIdrSince;
+    if (since == null || performance.now() - since < H264_IDR_WAIT_TIMEOUT_MS) {
+      return;
+    }
+    this.#requestH264Bootstrap();
+  }
+
+  /**
+   * Surface a stall instead of leaving a silently frozen canvas: every H.264
+   * discard path only moves a metrics counter, so without this the panel looks
+   * like a still image with no explanation.
+   */
+  #reportH264StallIfDue(): void {
+    const progressAt = this.#h264ProgressAt;
+    if (progressAt == null || !this.#isPlaying) {
+      return;
+    }
+    if (performance.now() - progressAt < H264_STALL_REPORT_MS) {
+      return;
+    }
+    if (this.#h264StallReported) {
+      return;
+    }
+    this.#h264StallReported = true;
+    console.warn(
+      `ImageRenderWorker: no H.264 frame rendered for ${H264_STALL_REPORT_MS}ms ` +
+        `(dropped=${this.#droppedH264Frames}, queue=${this.#pendingH264Frames.length}, ` +
+        `waitingForIdr=${this.#h264WaitingForIdr})`,
+    );
+    this.#emitStatus({ phase: 'stalled' });
+    this.#requestH264Bootstrap();
+  }
+
+  #noteH264Progress(): void {
+    this.#h264ProgressAt = performance.now();
+    this.#h264StallReported = false;
   }
 
   #enqueueFrame(frame: ImageWorkerFrameEnvelope): void {
@@ -511,6 +652,13 @@ class ImageRenderWorkerRuntime {
   }
 
   #trimPendingH264FramesIfNeeded(): void {
+    if (this.#h264ProtectedQueueCount > 0) {
+      // An in-flight bootstrap GOP is still draining. Its frames are a
+      // dependency chain, and a bootstrap batch legitimately exceeds the live
+      // queue bounds, so trimming here would discard the decodable prefix that
+      // was just fetched.
+      return;
+    }
     const queueSpanMs = h264QueueSpanMs(this.#pendingH264Frames);
     const hardLimitExceeded = isH264HardLimitExceeded(
       this.#pendingH264Frames.length,
@@ -558,16 +706,20 @@ class ImageRenderWorkerRuntime {
     const plan = applyH264HardLimit(this.#pendingH264Frames, true);
     this.#droppedH264Frames += plan.droppedFrames;
     this.#pendingH264Frames = plan.frames;
-    this.#h264WaitingForIdr = true;
-    this.#h264ConfigBeforeIdr = [...this.#h264RecentConfig];
+    this.#h264ProtectedQueueCount = 0;
+    this.#beginWaitForH264Idr();
     this.#resyncH264Decoder();
     this.#updateH264Pressure();
     this.#emitMetricsIfDue(true);
+    this.#requestH264Bootstrap();
   }
 
   #takeNextFrame(): ImageWorkerFrameEnvelope | null {
     const h264Frame = this.#pendingH264Frames.shift();
     if (h264Frame) {
+      if (this.#h264ProtectedQueueCount > 0) {
+        this.#h264ProtectedQueueCount -= 1;
+      }
       return h264Frame;
     }
     const frame = this.#pendingFrame;
@@ -740,19 +892,19 @@ class ImageRenderWorkerRuntime {
     this.#lastDecodedH264TimeNs = frameTimeNs;
     this.#h264DecodeMs = updateDecodeDurationEwma(this.#h264DecodeMs, output.decodeMs);
 
-    if (
-      this.#isPlaying &&
-      shouldDropDecodedH264Frame(this.#playbackTimeNs, frameTimeNs)
-    ) {
-      output.videoFrame.close();
-      this.#droppedH264Frames += 1;
-      this.#updateH264Pressure();
-      this.#emitMetricsIfDue();
-      return;
-    }
-
-    if (this.#pendingDecodedH264) {
-      this.#pendingDecodedH264.videoFrame.close();
+    // Newest-wins: the freshest decoded frame always takes the paint slot, so the
+    // canvas keeps advancing no matter how far behind the playhead the pipeline
+    // runs. Lateness alone is never a reason to discard output.
+    const pending = this.#pendingDecodedH264;
+    if (pending) {
+      if (isSupersededH264Output(frameTimeNs, timeToKey(pending.sourceFrame.receiveTime))) {
+        output.videoFrame.close();
+        this.#droppedH264Frames += 1;
+        this.#updateH264Pressure();
+        this.#emitMetricsIfDue();
+        return;
+      }
+      pending.videoFrame.close();
       this.#droppedH264Frames += 1;
     }
     this.#pendingDecodedH264 = {
@@ -796,20 +948,12 @@ class ImageRenderWorkerRuntime {
     const epoch = this.#epoch;
     const now = performance.now();
     try {
-      const frameTimeNs = timeToKey(sourceFrame.receiveTime);
-      if (
-        this.#isPlaying &&
-        shouldDropDecodedH264Frame(this.#playbackTimeNs, frameTimeNs)
-      ) {
-        this.#droppedH264Frames += 1;
-        return;
-      }
-
       const width = videoFrame.displayWidth || videoFrame.codedWidth;
       const height = videoFrame.displayHeight || videoFrame.codedHeight;
       this.#drawCanvasImageSource(videoFrame, width, height);
       this.#lastH264RenderAt = now;
       this.#renderedH264Frames += 1;
+      this.#noteH264Progress();
       this.#emitStatus({
         phase: 'ready',
         width,
@@ -846,6 +990,7 @@ class ImageRenderWorkerRuntime {
   }
 
   #handleH264DecoderError(error: Error): void {
+    console.warn('ImageRenderWorker: H.264 decode failed', error);
     this.#resyncH264Decoder();
     const recovery = selectLatestCompleteH264Gop(
       this.#pendingH264Frames,
@@ -854,14 +999,18 @@ class ImageRenderWorkerRuntime {
     );
     if (recovery.resync) {
       this.#pendingH264Frames = recovery.frames;
-      this.#h264WaitingForIdr = false;
+      this.#h264ProtectedQueueCount = 0;
+      this.#clearWaitForH264Idr();
       this.#droppedH264Frames += recovery.droppedFrames;
       void this.#drainLatestFrame();
     } else {
       this.#droppedH264Frames += this.#pendingH264Frames.length;
       this.#pendingH264Frames = [];
-      this.#h264WaitingForIdr = true;
-      this.#h264ConfigBeforeIdr = [...this.#h264RecentConfig];
+      this.#h264ProtectedQueueCount = 0;
+      this.#beginWaitForH264Idr();
+      // Nothing in the queue can restart decoding, and the next in-band IDR may
+      // never arrive, so pull a fresh GOP from before the current playhead.
+      this.#requestH264Bootstrap();
     }
     if (this.#renderedH264Frames === 0 && !this.#cachedFrame) {
       this.#emitStatus({ phase: 'error', message: error.message });
@@ -909,9 +1058,15 @@ class ImageRenderWorkerRuntime {
     this.#h264DecodeMs = 0;
     // After close()/configure(), WebCodecs requires the next VCL chunk to be an
     // IDR. Keep recent SPS/PPS so a bare IDR can still reconfigure the decoder.
-    this.#h264WaitingForIdr = true;
-    this.#h264ConfigBeforeIdr = [...this.#h264RecentConfig];
+    this.#beginWaitForH264Idr();
     this.#h264NeedsResync = false;
+    this.#h264LastEnqueuedTimeNs = null;
+    this.#h264FrameIntervalMs = 0;
+    this.#h264ProgressAt = null;
+    this.#h264StallReported = false;
+    // #lastH264BootstrapRequestAt is intentionally preserved: a bootstrap runs
+    // through here, so clearing it would let a bootstrap that fails to produce
+    // output immediately request another one.
     this.#lastH264RenderAt = -Infinity;
     this.#lastH264BitmapAt = -Infinity;
     this.#droppedH264Frames = 0;
@@ -942,6 +1097,7 @@ class ImageRenderWorkerRuntime {
       decodeQueueSize: this.#decoder.decodeQueueSize,
       mediaLagMs,
       resyncCount: this.#h264ResyncCount,
+      waitingForIdr: this.#h264WaitingForIdr,
       codec: this.#decoder.codec,
     };
     workerScope.postMessage({ type: 'metrics', metrics } satisfies ImageRenderWorkerEvent);
