@@ -9,8 +9,14 @@ Publishing is fully automated: once you push a version tag, GitHub Actions handl
 ## Prerequisites
 
 - You must have push access to the `main` branch and tag creation rights.
-- The `NPM_TOKEN` secret must be set in the GitHub repository settings (Settings > Secrets > Actions).
-  The token must have **Publish** scope for the npm scope used by this package (e.g. `@ioai`).
+- **npm Trusted Publishing** must be configured for `@ioai/rosview` on [npmjs.com](https://www.npmjs.com):
+  - Publisher: **GitHub Actions**
+  - Organization or user: `ioai-tech`
+  - Repository: `rosview`
+  - Workflow filename: `release.yml`
+  - Allowed actions: **npm publish**
+- Tags must be pushed to **`ioai-tech/rosview`** (GitHub-hosted runners only).
+- npm CLI **≥ 11.5.1** (Node 24 in CI satisfies this).
 
 ---
 
@@ -45,7 +51,7 @@ Go to **Actions** tab on GitHub and watch the `Release` workflow:
 | Job | What it does |
 |-----|-------------|
 | `validate` | Runs lint, unit tests, full SPA build, and library build |
-| `publish-npm` | Publishes `@ioai/rosview` to npm (requires `NPM_TOKEN`) |
+| `publish-npm` | Publishes `@ioai/rosview` to npm via Trusted Publishing (OIDC) |
 | `github-release` | Creates a GitHub Release with GitHub auto-generated release notes |
 
 If any job fails, fix the issue and re-push the tag:
@@ -86,10 +92,8 @@ The release workflow automatically marks releases as **pre-release** on GitHub w
 
 ---
 
-## Required GitHub secrets
+## npm authentication
 
-| Secret | Description |
-|--------|-------------|
-| `NPM_TOKEN` | npm automation token with Publish scope for the package's npm organization / scope |
-
-Set it at: **Repository -> Settings -> Secrets and variables -> Actions -> New repository secret**
+Publishing uses **Trusted Publishing** (OIDC) — no `NPM_TOKEN` secret is required for
+`npm publish`. If CI ever needs to install private npm dependencies during `npm ci`,
+use a separate **read-only** token via `NPM_READ_TOKEN` on the install step only.
