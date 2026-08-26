@@ -35,7 +35,8 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
+      id-token: write # OIDC for npm Trusted Publishing
+      contents: read
     steps:
       - uses: actions/checkout@v7
 
@@ -53,10 +54,10 @@ jobs:
           name: dist-lib
           path: dist-lib/
 
+      # Authenticate via npm Trusted Publishing (OIDC). Do not set
+      # NODE_AUTH_TOKEN here — classic publish tokens are deprecated.
       - name: Publish
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   github-release:
     name: Create GitHub Release
