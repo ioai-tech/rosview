@@ -27,7 +27,8 @@ export interface CompressedVideoMessage {
 }
 
 export interface ImageSurfaceStatus {
-  phase: 'idle' | 'decoding' | 'ready' | 'error';
+  /** `stalled`: frames keep arriving but none of them reach the canvas. */
+  phase: 'idle' | 'decoding' | 'ready' | 'stalled' | 'error';
   width?: number;
   height?: number;
   encoding?: string;

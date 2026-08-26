@@ -84,6 +84,8 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const h264BootstrapGenerationRef = useRef(0);
   const h264BufferedLiveRef = useRef<RosMessageEvent[]>([]);
   const consumerModeRef = useRef<'latest' | 'all'>('latest');
+  /** Set by the subscription effect so worker-driven bootstrap requests can reuse it. */
+  const requestH264BootstrapRef = useRef<(() => void) | null>(null);
   const [status, setStatus] = useState<ImageSurfaceStatus>({ phase: 'idle' });
   const [metrics, setMetrics] = useState<ImageRenderMetrics | null>(null);
   const imageConsumerId = `${panelId}:image-main`;
@@ -140,6 +142,10 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       const data = event.data as ImageRenderWorkerEvent;
       if (data.type === 'metrics') {
         setMetrics(data.metrics);
+        return;
+      }
+      if (data.type === 'needsBootstrap') {
+        requestH264BootstrapRef.current?.();
         return;
       }
       if (data.type !== 'status') {
@@ -289,6 +295,21 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       }
     };
 
+    // The worker asks for this when it cannot resume from the frames it holds
+    // (broken reference chain, decoder error, or discarded backlog). Recordings
+    // with multi-second keyframe intervals — or a single IDR for the whole file —
+    // would otherwise stay frozen waiting for a random-access point.
+    requestH264BootstrapRef.current = () => {
+      if (!h264OrderedModeRef.current || h264BootstrapInFlightRef.current) {
+        return;
+      }
+      const currentTime = player.getCurrentTime();
+      if (!currentTime) {
+        return;
+      }
+      void runBootstrap(currentTime, true);
+    };
+
     const activateH264OrderedMode = async (triggerMessage?: RosMessageEvent) => {
       if (h264OrderedModeRef.current) {
         if (triggerMessage) {
@@ -366,6 +387,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       h264SeekRepairAbortRef.current = null;
       h264BufferedLiveRef.current = [];
       h264BootstrapInFlightRef.current = false;
+      requestH264BootstrapRef.current = null;
       player.unregisterHighFrequencyConsumer(imageConsumerId);
       worker.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
     };
@@ -485,6 +507,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       data-h264-media-lag-ms={metrics?.mediaLagMs}
       data-h264-resync-count={metrics?.resyncCount}
       data-h264-rendered-frames={metrics?.renderedFrames}
+      data-h264-waiting-for-idr={metrics ? String(metrics.waitingForIdr) : undefined}
     >
       <PanelTopicBar className="border-zinc-800 bg-zinc-950">
         <TopicQuickPicker
@@ -529,6 +552,9 @@ function getStatusText(status: ImageSurfaceStatus): string | null {
   }
   if (status.phase === 'error') {
     return status.message ?? 'Image decode failed';
+  }
+  if (status.phase === 'stalled') {
+    return status.message ?? 'Video stalled — recovering';
   }
   if (status.phase === 'decoding' && !status.width && !status.height) {
     return 'Decoding latest frame...';

@@ -9,8 +9,15 @@ import { getH264MessagePayload, isH264MessageEvent, toWorkerFrame } from './mess
 /** Progressive lookback windows when searching for a keyframe before a seek target. */
 export const H264_SEEK_WINDOWS_MS = [2000, 5000, 10_000, 30_000] as const;
 
-/** Maximum frame messages posted for one seek repair. */
-export const H264_SEEK_MAX_FRAMES = 180;
+/**
+ * Maximum frame messages posted for one seek repair.
+ *
+ * Must exceed one GOP for the recordings we support, otherwise a seek target
+ * further than this from its IDR silently lands on the wrong frame. Robot
+ * recordings routinely use a 256-frame (8.5s at 30fps) keyframe interval, and
+ * some carry a single IDR for the whole file.
+ */
+export const H264_SEEK_MAX_FRAMES = 600;
 
 /** Forward read when bootstrapping at/before the file's first IDR. */
 export const H264_BOOTSTRAP_FORWARD_MS = 2_000;
