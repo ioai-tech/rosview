@@ -1,5 +1,6 @@
 import type { Player } from '@/core/types/player';
 import type { MessageEvent as RosMessageEvent, Time } from '@/core/types/ros';
+import { withTimeout } from '@/shared/utils/asyncTimeout';
 import { addMs, toNano } from '@/shared/utils/time';
 import { containsH264IdrNal } from './h264';
 import { selectLatestCompleteH264Gop } from './h264Queue';
@@ -21,6 +22,8 @@ export const H264_SEEK_MAX_FRAMES = 600;
 
 /** Forward read when bootstrapping at/before the file's first IDR. */
 export const H264_BOOTSTRAP_FORWARD_MS = 2_000;
+export const H264_BOOTSTRAP_DEADLINE_MS = 15_000;
+export const H264_BOOTSTRAP_WINDOW_TIMEOUT_MS = 5_000;
 
 function maxReceiveTime(a: Time, b: Time): Time {
   return toNano(a) >= toNano(b) ? a : b;
@@ -201,14 +204,24 @@ export async function fetchH264BootstrapFrames(
 
   const coverageEnd = options.coverageEndTime ?? targetTime;
   const queryEnd = addMs(coverageEnd, H264_BOOTSTRAP_FORWARD_MS);
+  const deadline = Date.now() + H264_BOOTSTRAP_DEADLINE_MS;
 
   for (const windowMs of H264_SEEK_WINDOWS_MS) {
+    if (options.signal?.aborted || Date.now() >= deadline) {
+      return [];
+    }
     const start = addMs(targetTime, -windowMs);
-    const messages = await player.getMessagesInTimeRange({
-      start,
-      end: queryEnd,
-      topics: [topic],
-    });
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const messages = await withTimeout(
+      player.getMessagesInTimeRange({
+        start,
+        end: queryEnd,
+        topics: [topic],
+        signal: options.signal,
+      }),
+      Math.min(H264_BOOTSTRAP_WINDOW_TIMEOUT_MS, remainingMs),
+      'H.264 bootstrap range read timed out',
+    );
     if (options.signal?.aborted) {
       return [];
     }

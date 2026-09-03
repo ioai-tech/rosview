@@ -14,5 +14,7 @@
   "playback.samplingFps.aria": "サンプリング FPS",
   "playback.loop.aria": "ループ再生モード",
   "playback.loop.loop": "ループ",
-  "playback.loop.once": "1 回"
+  "playback.loop.once": "1 回",
+  "playback.buffering": "バッファ中",
+  "playback.retry": "再試行"
 }

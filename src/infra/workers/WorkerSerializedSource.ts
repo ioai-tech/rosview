@@ -135,6 +135,14 @@ export class WorkerSerializedSource implements ISourceHandle {
     });
   }
 
+  private _wrapCursor(cursor: IMessageCursor<unknown>): IMessageCursor<unknown> {
+    return {
+      next: () => this._raceWorkerFailure(cursor.next()),
+      nextBatch: (durationMs, options) => this._raceWorkerFailure(cursor.nextBatch(durationMs, options)),
+      end: () => this._raceWorkerFailure(cursor.end()),
+    };
+  }
+
   private _wrapAbortableInitialize<T>(operation: Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       this._pendingInitializeReject = (error) => {
@@ -164,11 +172,12 @@ export class WorkerSerializedSource implements ISourceHandle {
   }
 
   async getMessageCursor(args: MessageIteratorArgs): Promise<IMessageCursor<unknown>> {
-    return await this._remote.getMessageCursor(args);
+    const cursor = await this._raceWorkerFailure(this._remote.getMessageCursor(args));
+    return this._wrapCursor(cursor);
   }
 
   async getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
-    return await this._remote.getBackfillMessages(args);
+    return await this._raceWorkerFailure(this._remote.getBackfillMessages(args));
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {
@@ -176,11 +185,11 @@ export class WorkerSerializedSource implements ISourceHandle {
   }
 
   async preparePlaybackBuffer(args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus> {
-    return await this._remote.preparePlaybackBuffer(args);
+    return await this._raceWorkerFailure(this._remote.preparePlaybackBuffer(args));
   }
 
   async getLoadProgress(): Promise<LoadProgress> {
-    return await this._remote.getLoadProgress();
+    return await this._raceWorkerFailure(this._remote.getLoadProgress());
   }
 
   async startDataQualityScan(): Promise<void> {

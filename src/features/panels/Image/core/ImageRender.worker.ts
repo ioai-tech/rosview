@@ -81,6 +81,7 @@ const DEFAULT_VIEWPORT: ImageViewport = {
 };
 
 const OUTPUT_TIMEOUT_MS = 5000;
+const WECODECS_CONFIG_TIMEOUT_MS = 3000;
 const METRICS_INTERVAL_MS = 1000;
 const H264_RESYNC_COOLDOWN_MS = 200;
 /** Minimum spacing between bootstrap requests sent to the panel. */
@@ -156,6 +157,10 @@ class WorkerH264Decoder {
     return this.#decoder?.state === 'configured' ? this.#decoder.decodeQueueSize : 0;
   }
 
+  public sweepPending(): void {
+    this.#sweepSubmitted();
+  }
+
   public async submitFrame(
     frame: ImageWorkerFrameEnvelope,
     data: Uint8Array<ArrayBuffer>,
@@ -193,6 +198,18 @@ class WorkerH264Decoder {
       this.#submitted.delete(timestamp);
       throw error;
     }
+    this.#sweepSubmitted();
+  }
+
+  #sweepSubmitted(now = performance.now()): void {
+    for (const [timestamp, submitted] of this.#submitted) {
+      if (now - submitted.startedAt <= OUTPUT_TIMEOUT_MS) {
+        continue;
+      }
+      this.#submitted.delete(timestamp);
+      this.#callbacks.error(new Error('H.264 decode timed out'));
+      return;
+    }
   }
 
   async #ensureDecoder(data: Uint8Array<ArrayBuffer>): Promise<void> {
@@ -217,7 +234,11 @@ class WorkerH264Decoder {
       ];
       for (const candidate of candidates) {
         try {
-          const support = await VideoDecoder.isConfigSupported(candidate);
+          const support = await withTimeout(
+            VideoDecoder.isConfigSupported(candidate),
+            WECODECS_CONFIG_TIMEOUT_MS,
+            'VideoDecoder.isConfigSupported timed out',
+          );
           if (support.supported) {
             supportedConfig = support.config ?? candidate;
             break;
@@ -629,11 +650,6 @@ class ImageRenderWorkerRuntime {
       return;
     }
     this.#h264StallReported = true;
-    console.warn(
-      `ImageRenderWorker: no H.264 frame rendered for ${H264_STALL_REPORT_MS}ms ` +
-        `(dropped=${this.#droppedH264Frames}, queue=${this.#pendingH264Frames.length}, ` +
-        `waitingForIdr=${this.#h264WaitingForIdr})`,
-    );
     this.#emitStatus({ phase: 'stalled' });
     this.#requestH264Bootstrap();
   }
@@ -1078,6 +1094,7 @@ class ImageRenderWorkerRuntime {
   }
 
   #emitMetricsIfDue(force = false): void {
+    this.#decoder.sweepPending();
     const now = performance.now();
     if (!force && now - this.#lastMetricsAt < METRICS_INTERVAL_MS) {
       return;
@@ -1445,5 +1462,13 @@ const runtime = new ImageRenderWorkerRuntime();
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 
 workerScope.onmessage = (event: MessageEvent<ImageRenderWorkerRequest>) => {
-  runtime.handle(event.data);
+  try {
+    runtime.handle(event.data);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    workerScope.postMessage({
+      type: 'status',
+      status: { phase: 'error', message },
+    } satisfies ImageRenderWorkerEvent);
+  }
 };

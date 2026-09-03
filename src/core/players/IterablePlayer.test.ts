@@ -680,13 +680,18 @@ describe('IterablePlayer playback clock', () => {
       expect(cursor.nextBatch).toHaveBeenCalledTimes(3);
       expect(cursor.end).not.toHaveBeenCalled();
       expect(source.getMessageCursor).toHaveBeenCalledTimes(1);
+      expect(latestState?.progress.buffering).toBe(false);
+
+      now = 1200;
+      runNextRaf();
+      await Promise.resolve();
       expect(latestState?.progress.buffering).toBe(true);
 
       sparseBatch.resolve([sparseMessage]);
       await flushAsyncWork();
       expect(latestState?.progress.buffering).toBe(false);
 
-      now = 1200;
+      now = 1500;
       runNextRaf();
       await flushAsyncWork();
 
@@ -833,7 +838,7 @@ describe('IterablePlayer playback clock', () => {
       runNextRaf();
       await flushAsyncWork();
 
-      expect(latestState?.progress.buffering).toBe(true);
+      expect(latestState?.progress.buffering).toBe(false);
       expect(player.getCurrentTime()).toEqual({ sec: 0, nsec: 600_000_000 });
 
       now = 1000;
@@ -1246,5 +1251,164 @@ describe('IterablePlayer initialize progress', () => {
     gate.resolve(makeInitialization());
     await pending;
     player.close();
+  });
+});
+
+describe('IterablePlayer playback watchdogs', () => {
+  function installFakePlaybackClock() {
+    let now = 0;
+    let nextRafId = 1;
+    const oldPerformanceNow = performance.now;
+    const oldRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const oldCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    const rafCallbacks = new Map<number, FrameRequestCallback>();
+    Object.defineProperty(performance, 'now', {
+      configurable: true,
+      value: () => now,
+    });
+    globalThis.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
+      const id = nextRafId++;
+      rafCallbacks.set(id, cb);
+      return id;
+    });
+    globalThis.cancelAnimationFrame = vi.fn((id: number) => {
+      rafCallbacks.delete(id);
+    });
+    return {
+      get now() {
+        return now;
+      },
+      set now(value: number) {
+        now = value;
+      },
+      runNextRaf() {
+        const id = Math.min(...rafCallbacks.keys());
+        const callback = rafCallbacks.get(id);
+        rafCallbacks.delete(id);
+        callback?.(now);
+      },
+      restore() {
+        Object.defineProperty(performance, 'now', {
+          configurable: true,
+          value: oldPerformanceNow,
+        });
+        globalThis.requestAnimationFrame = oldRequestAnimationFrame;
+        globalThis.cancelAnimationFrame = oldCancelAnimationFrame;
+      },
+    };
+  }
+
+  it('keeps scheduling ticks when a current-time subscriber throws', async () => {
+    const clock = installFakePlaybackClock();
+    const source = makeSource([]);
+    const cursor = {
+      nextBatch: vi.fn(async () => [makeImageMessageAtMs(150)]),
+      end: vi.fn(async () => undefined),
+    };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source);
+    const times: number[] = [];
+
+    try {
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.subscribeCurrentTime(() => {
+        throw new Error('subscriber failed');
+      });
+      player.subscribeCurrentTime((time) => {
+        times.push(time.sec + time.nsec / 1e9);
+      });
+      player.play();
+
+      clock.now = 100;
+      clock.runNextRaf();
+      await flushAsyncWork();
+      clock.now = 200;
+      clock.runNextRaf();
+      await flushAsyncWork();
+
+      expect(times.length).toBeGreaterThan(1);
+    } finally {
+      player.close();
+      clock.restore();
+    }
+  });
+
+  it('does not let a stalled cursor close block the next seek', async () => {
+    const clock = installFakePlaybackClock();
+    const source = makeSource([makeImageMessageAtMs(100)]);
+    const hangingEnd = deferred<void>();
+    const firstCursor = {
+      nextBatch: vi.fn(async () => []),
+      end: vi.fn(() => hangingEnd.promise),
+    };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(firstCursor as never);
+    const player = new IterablePlayer(source, { cursorCloseTimeoutMs: 20 });
+
+    try {
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.play();
+      clock.now = 100;
+      clock.runNextRaf();
+      await flushAsyncWork();
+      expect(source.getMessageCursor).toHaveBeenCalledTimes(1);
+
+      const seekStartedAt = Date.now();
+      player.seek({ sec: 0, nsec: 200_000_000 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await flushAsyncWork();
+
+      expect(firstCursor.end).toHaveBeenCalledTimes(1);
+      expect(Date.now() - seekStartedAt).toBeLessThan(200);
+    } finally {
+      hangingEnd.resolve();
+      player.close();
+      clock.restore();
+    }
+  });
+
+  it('pauses with a retryable error after repeated nextBatch timeouts', async () => {
+    const clock = installFakePlaybackClock();
+    const source = makeSource([]);
+    const cursor = {
+      nextBatch: vi.fn(() => new Promise<MessageEvent[]>(() => undefined)),
+      end: vi.fn(async () => undefined),
+    };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source, {
+      rpcTimeoutMs: 20,
+      sourceFailureThreshold: 2,
+    });
+    let latestState: PlayerState | undefined;
+
+    try {
+      player.setListener((state) => {
+        latestState = state;
+      });
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.play();
+
+      clock.now = 100;
+      clock.runNextRaf();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      clock.now = 200;
+      clock.runNextRaf();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      clock.now = 700;
+      clock.runNextRaf();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(latestState?.progress.buffering).toBe(false);
+      expect(latestState?.progress.playbackError).toMatch(/timed out/);
+      expect(latestState?.activeData?.isPlaying).toBe(false);
+    } finally {
+      player.close();
+      clock.restore();
+    }
   });
 });

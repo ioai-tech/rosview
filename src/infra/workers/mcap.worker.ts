@@ -231,7 +231,7 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
 
   async getLoadProgress(): Promise<LoadProgress> {
     if (this._cachedReadable) {
-      const bufferStatus = this._scheduleTimePrefixPrefetch(this._prefetchAnchor, DEFAULT_PREFETCH_AHEAD_MS);
+      const bufferStatus = this._playbackBufferStatus(this._prefetchAnchor, DEFAULT_PREFETCH_AHEAD_MS);
       const downloadedByteRanges = this._cachedReadable.getDownloadedRanges();
       const loadedBytes = downloadedByteRanges.reduce((sum, range) => sum + (range.end - range.start), 0);
       const totalBytes = this._totalBytes || (await this._cachedReadable.size());
@@ -302,7 +302,7 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
     return this._qualityScan.start();
   }
 
-  private _scheduleTimePrefixPrefetch(
+  private _playbackBufferStatus(
     anchor: TimeRange["start"] | undefined = this._prefetchAnchor,
     minAheadMs = DEFAULT_PREFETCH_AHEAD_MS,
   ): PlaybackBufferStatus {
@@ -318,16 +318,31 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
 
     const downloadedByteRanges = this._cachedReadable.getDownloadedRanges();
     const ready = isByteRangeCovered(plan.byteRange, downloadedByteRanges);
-    if (!ready) {
-      this._cachedReadable.prefetch(plan.byteRange.start, plan.byteRange.end - plan.byteRange.start, {
-        replace: true,
-      });
-    }
     return {
       ready,
       bufferedUntil: fromNano(plan.endNs),
       bufferedAheadMs: Math.max(0, Number(plan.endNs - anchorNs) / 1_000_000),
     };
+  }
+
+  private _scheduleTimePrefixPrefetch(
+    anchor: TimeRange["start"] | undefined = this._prefetchAnchor,
+    minAheadMs = DEFAULT_PREFETCH_AHEAD_MS,
+  ): PlaybackBufferStatus {
+    const status = this._playbackBufferStatus(anchor, minAheadMs);
+    if (!this._cachedReadable || !anchor || status.ready) {
+      return status;
+    }
+
+    const anchorNs = toNano(anchor);
+    const plan = this._buildPlaybackBufferPlan(anchorNs, minAheadMs);
+    if (!plan) {
+      return status;
+    }
+    this._cachedReadable.prefetch(plan.byteRange.start, plan.byteRange.end - plan.byteRange.start, {
+      replace: true,
+    });
+    return status;
   }
 
   private _buildPlaybackBufferPlan(

@@ -1,6 +1,6 @@
 {
   "name": "@ioai/rosview",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "High-performance robotics data visualization for MCAP, ROS bag, ROS2 db3, HDF5 and BVH — embeddable React component and standalone SPA",
   "keywords": [
     "ros",
@@ -68,7 +68,9 @@
     "gen:e2e:fixtures": "node scripts/gen-e2e-fixtures.mjs",
     "benchmark:h264": "node scripts/benchmark-h264.mjs",
     "pretest:e2e": "npm run gen:e2e:fixtures",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:perf": "playwright test tests/playback-perf.spec.ts",
+    "perf:compare": "node scripts/compare-playback-perf.mjs"
   },
   "peerDependencies": {
     "@react-three/drei": "^10.0.0",

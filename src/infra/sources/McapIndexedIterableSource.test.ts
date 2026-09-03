@@ -329,3 +329,48 @@ describe('McapIndexedIterableSource data quality scanning', () => {
     expect(report.issueCounts.topic_frame_drop).toBe(0);
   });
 });
+
+describe('McapIndexedIterableSource initialize', () => {
+  it('keeps unsupported schema channels visible with a warning', async () => {
+    const reader = {
+      chunkIndexes: [
+        {
+          messageStartTime: 0n,
+          messageEndTime: 1_000_000_000n,
+          messageIndexOffsets: new Map<number, bigint>([[1, 0n]]),
+        },
+      ],
+      channelsById: new Map([
+        [
+          1,
+          {
+            id: 1,
+            topic: '/camera/head/color',
+            schemaId: 1,
+            messageEncoding: 'cdr',
+            metadata: new Map<string, string>(),
+          },
+        ],
+      ]),
+      schemasById: new Map([
+        [
+          1,
+          {
+            name: '/camera/head/color_schema',
+            encoding: 'jsonschema',
+            data: new TextEncoder().encode('{"type":"object"}'),
+          },
+        ],
+      ]),
+      statistics: {
+        channelMessageCounts: new Map([[1, 10n]]),
+      },
+      readMessages: async function* () {},
+    };
+    const source = new McapIndexedIterableSource(reader as never);
+    const init = await source.initialize();
+    expect(init.topics.map((topic) => topic.name)).toEqual(['/camera/head/color']);
+    expect(init.problems.some((problem) => /jsonschema|ros2msg|cdr/i.test(problem.message))).toBe(true);
+    expect(init.topicStats['/camera/head/color']?.messageCount).toBe(10);
+  });
+});

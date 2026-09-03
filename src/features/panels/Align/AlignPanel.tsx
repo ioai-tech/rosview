@@ -50,6 +50,8 @@ export const AlignPanel: React.FC<AlignPanelProps> = (props) => {
 
   const centerTimeRef = useRef<Time>(player.getCurrentTime() ?? { sec: 0, nsec: 0 });
   const [centerTick, setCenterTick] = useState(0);
+  const isPlaying = useMessagePipeline((state) => state.playerState.activeData?.isPlaying ?? false);
+  const fetchAbortRef = useRef<AbortController | null>(null);
 
   const imageTopicNames = useMemo(
     () => sortedTopics.filter((t) => isRosImageSchema(t.type)).map((t) => t.name),
@@ -94,7 +96,14 @@ export const AlignPanel: React.FC<AlignPanelProps> = (props) => {
 
   useEffect(() => {
     return player.subscribeCurrentTime((time) => {
+      const previous = centerTimeRef.current;
       centerTimeRef.current = time;
+      const previousNs = toNano(previous);
+      const nextNs = toNano(time);
+      const jumped = nextNs + 5_000_000n < previousNs || nextNs > previousNs + 200_000_000n;
+      if (isPlaying && !jumped) {
+        return;
+      }
       if (debounceTimerRef.current != null) {
         window.clearTimeout(debounceTimerRef.current);
       }
@@ -103,7 +112,16 @@ export const AlignPanel: React.FC<AlignPanelProps> = (props) => {
         setCenterTick((v) => v + 1);
       }, 180);
     });
-  }, [player]);
+  }, [isPlaying, player]);
+
+  const wasPlayingRef = useRef(isPlaying);
+  useEffect(() => {
+    const wasPlaying = wasPlayingRef.current;
+    wasPlayingRef.current = isPlaying;
+    if (wasPlaying && !isPlaying) {
+      setCenterTick((value) => value + 1);
+    }
+  }, [isPlaying]);
 
   const fetchRange = useCallback(async () => {
     if (activeTopics.length === 0 || !player.getMessagesInTimeRange) {
@@ -118,12 +136,26 @@ export const AlignPanel: React.FC<AlignPanelProps> = (props) => {
     if (key === lastRangeFetchKeyRef.current) {
       return;
     }
-    lastRangeFetchKeyRef.current = key;
+    fetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
     try {
-      const msgs = await player.getMessagesInTimeRange({ start, end, topics: activeTopics });
+      const msgs = await player.getMessagesInTimeRange({
+        start,
+        end,
+        topics: activeTopics,
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) {
+        return;
+      }
+      lastRangeFetchKeyRef.current = key;
       const next = msgs.map((m) => messageToAlignPoint(m, timeMode));
       setPoints(next);
     } catch (e) {
+      if (controller.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) {
+        return;
+      }
       console.warn('AlignPanel: range read failed', e);
     }
   }, [activeTopics, activeTopicsKey, player, timeMode, windowHalfMs]);

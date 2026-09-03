@@ -78,6 +78,9 @@ export const RosViewProvider: React.FC<RosViewProviderProps> = ({
   const playerPresence = useMessagePipeline(
     (state: MessagePipelineState) => state.playerState.presence,
   );
+  const playerBuffering = useMessagePipeline(
+    (state: MessagePipelineState) => state.playerState.progress.buffering === true,
+  );
 
   return (
     <RosViewThemeContext.Provider value={contextValue}>
@@ -86,6 +89,7 @@ export const RosViewProvider: React.FC<RosViewProviderProps> = ({
         data-language={language}
         data-theme={resolvedTheme}
         data-player-presence={playerPresence}
+        data-player-buffering={playerBuffering ? 'true' : 'false'}
         className={`rosview-root-shell ${resolvedTheme === 'dark' ? 'dark' : ''}`}
       >
         <div className="h-full w-full min-h-0 min-w-0">

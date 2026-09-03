@@ -38,9 +38,11 @@ yarn.lock
 
 # test files
 /public/examples/
+/public/user-mcaps/
 /test-results/
 /playwright-report/
 /coverage/
+/tmp/playback-perf/
 .tmp-urdf-debug-*/
 
 # Python (fixture generator scripts, e.g. gen-test-hdf5.py / gen-test-bag.py)

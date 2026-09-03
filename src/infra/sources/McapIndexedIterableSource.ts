@@ -76,9 +76,46 @@ export class McapIndexedIterableSource implements IIterableSource {
       }
     }
 
+    const registerTopic = (channel: {
+      topic: string;
+      schemaId: number;
+      metadata: Map<string, string>;
+    }) => {
+      const schemaName =
+        channel.schemaId === 0
+          ? "unknown"
+          : this._reader.schemasById.get(channel.schemaId)?.name ?? "unknown";
+      topics.push({
+        name: channel.topic,
+        type: schemaName,
+      });
+
+      if (!publishersByTopic[channel.topic]) {
+        publishersByTopic[channel.topic] = [];
+      }
+      const publisher = channel.metadata.get("publisher") ?? "unknown";
+      if (!publishersByTopic[channel.topic].includes(publisher)) {
+        publishersByTopic[channel.topic].push(publisher);
+      }
+
+      const messageCount = topicMessageCounts.get(channel.topic) ?? 0;
+      const firstNs = topicFirstNs.get(channel.topic);
+      const lastNs = topicLastNs.get(channel.topic);
+      const durationSec =
+        firstNs != null && lastNs != null && lastNs > firstNs ? Number(lastNs - firstNs) / 1e9 : undefined;
+      const frequency =
+        durationSec != null && durationSec > 0 && messageCount > 1 ? (messageCount - 1) / durationSec : 0;
+
+      topicStats[channel.topic] = {
+        messageCount,
+        frequency: frequency > 0 ? frequency : 0,
+        durationSec,
+      };
+    };
+
     for (const channel of this._reader.channelsById.values()) {
       const schema = channel.schemaId !== 0 ? this._reader.schemasById.get(channel.schemaId) : undefined;
-      
+
       try {
         const parsedChannel = parseChannel({
           messageEncoding: channel.messageEncoding,
@@ -95,33 +132,7 @@ export class McapIndexedIterableSource implements IIterableSource {
           datatypes[name] = definition;
         }
 
-        topics.push({
-          name: channel.topic,
-          type: schema?.name ?? "unknown",
-        });
-
-        if (!publishersByTopic[channel.topic]) {
-          publishersByTopic[channel.topic] = [];
-        }
-        const publisher = channel.metadata.get("publisher") ?? "unknown";
-        if (!publishersByTopic[channel.topic].includes(publisher)) {
-          publishersByTopic[channel.topic].push(publisher);
-        }
-        
-        const messageCount = topicMessageCounts.get(channel.topic) ?? 0;
-        const firstNs = topicFirstNs.get(channel.topic);
-        const lastNs = topicLastNs.get(channel.topic);
-        const durationSec =
-          firstNs != null && lastNs != null && lastNs > firstNs ? Number(lastNs - firstNs) / 1e9 : undefined;
-        const frequency =
-          durationSec != null && durationSec > 0 && messageCount > 1 ? (messageCount - 1) / durationSec : 0;
-
-        topicStats[channel.topic] = {
-          messageCount,
-          frequency: frequency > 0 ? frequency : 0,
-          durationSec,
-        };
-
+        registerTopic(channel);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`Failed to parse channel ${channel.id}:`, err);
@@ -129,6 +140,15 @@ export class McapIndexedIterableSource implements IIterableSource {
           severity: "warn",
           message: `Channel ${channel.id} (${channel.topic}): ${msg}`,
         });
+        this._channelsById.set(channel.id, {
+          datatypes: new Map(),
+          deserialize: (data) => ({
+            _rosviewDecodeFailed: true,
+            message: msg,
+            byteLength: data.byteLength,
+          }),
+        });
+        registerTopic(channel);
       }
     }
 

@@ -78,7 +78,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
   const cancelFrameRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     async function readTopicTimeBounds() {
       if (!player.getMessagesInTimeRange || !startTime || !endTime || topics.length === 0) {
         setSamplesByTopic(new Map());
@@ -89,12 +89,16 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
           start: startTime,
           end: endTime,
           topics: topics.map((topic) => topic.name),
+          signal: controller.signal,
         });
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setSamplesByTopic(buildTopicSamples(messages));
         }
       } catch (error) {
-        if (!cancelled) {
+        if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+          return;
+        }
+        if (!controller.signal.aborted) {
           console.warn('TimelinePanel: failed to read topic time bounds', error);
           setSamplesByTopic(new Map());
         }
@@ -102,7 +106,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
     }
     void readTopicTimeBounds();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [player, topics, startTime, endTime]);
 
