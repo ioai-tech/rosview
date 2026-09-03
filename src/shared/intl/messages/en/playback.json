@@ -14,5 +14,7 @@
   "playback.samplingFps.aria": "Sampling FPS",
   "playback.loop.aria": "Playback loop mode",
   "playback.loop.loop": "Loop",
-  "playback.loop.once": "Once"
+  "playback.loop.once": "Once",
+  "playback.buffering": "Buffering",
+  "playback.retry": "Retry"
 }

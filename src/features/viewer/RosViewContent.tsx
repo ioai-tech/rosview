@@ -14,6 +14,7 @@ import { openRawMessagesPanel } from '@/features/workspace/sidebar/topic-list/op
 import { useIntl } from 'react-intl';
 import { WelcomeScreen } from '@/features/workspace/common/WelcomeScreen';
 import { LoadingOverlay } from '@/features/workspace/common/LoadingOverlay';
+import { PlaybackBufferingOverlay } from '@/features/workspace/common/PlaybackBufferingOverlay';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
 import type { MessagePipelineState } from '@/core/pipeline/store';
 import { useMessagePipelineStore } from '@/core/pipeline/store';
@@ -373,7 +374,9 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
                     sourceName={loadingSourceName}
                     onCancel={onCancelLoading}
                   />
-                ) : null}
+                ) : (
+                  <PlaybackBufferingOverlay player={player} />
+                )}
               </main>
             </ResizablePanel>
           </ResizablePanelGroup>

@@ -18,6 +18,7 @@ import {
   type ImageSurfaceStatus,
 } from './core/imageTypes';
 import { executeH264Bootstrap } from './core/h264SeekRepair';
+import { pushH264LiveEvent } from './core/h264LiveBuffer';
 import { isH264MessageEvent, toWorkerFrame } from './core/messageFrameAdapter';
 import { applyDepthTopicPreset } from './core/depthColorDefaults';
 import type { ImageConfig } from './defaults';
@@ -138,6 +139,21 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       );
     }
 
+    const handleWorkerFailure = (message: string) => {
+      h264SeekRepairAbortRef.current?.abort();
+      h264BufferedLiveRef.current = [];
+      h264BootstrapInFlightRef.current = false;
+      const nextStatus: ImageSurfaceStatus = { phase: 'error', message };
+      lastUiStatusRef.current = nextStatus;
+      setStatus(nextStatus);
+    };
+    worker.onerror = (event) => {
+      handleWorkerFailure(event.message || 'Image worker crashed');
+    };
+    worker.onmessageerror = () => {
+      handleWorkerFailure('Image worker failed to deserialize a message');
+    };
+
     worker.onmessage = (event) => {
       const data = event.data as ImageRenderWorkerEvent;
       if (data.type === 'metrics') {
@@ -239,7 +255,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
 
     const handleH264Frame = (event: RosMessageEvent) => {
       if (h264BootstrapInFlightRef.current) {
-        h264BufferedLiveRef.current.push(event);
+        pushH264LiveEvent(h264BufferedLiveRef.current, event);
         return;
       }
       postImageFrame(worker, event);
@@ -281,13 +297,18 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
         if (controller.signal.aborted || generation !== h264BootstrapGenerationRef.current) {
           return false;
         }
-        if (success) {
-          h264BufferedLiveRef.current = [];
-        }
+        h264BufferedLiveRef.current = [];
         return success;
+      } catch (error) {
+        if (controller.signal.aborted || generation !== h264BootstrapGenerationRef.current) {
+          return false;
+        }
+        console.warn('ImagePanel: H.264 bootstrap failed', error);
+        return false;
       } finally {
         if (generation === h264BootstrapGenerationRef.current) {
           h264BootstrapInFlightRef.current = false;
+          h264BufferedLiveRef.current = [];
         }
         if (h264SeekRepairAbortRef.current === controller) {
           h264SeekRepairAbortRef.current = null;
@@ -320,7 +341,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
 
       h264OrderedModeRef.current = true;
       if (triggerMessage) {
-        h264BufferedLiveRef.current.push(triggerMessage);
+        pushH264LiveEvent(h264BufferedLiveRef.current, triggerMessage);
       }
 
       if (consumerModeRef.current !== 'all') {
@@ -423,7 +444,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
           h264SeekRepairAbortRef.current = controller;
           void (async () => {
             try {
-              const success = await executeH264Bootstrap({
+              await executeH264Bootstrap({
                 player,
                 worker,
                 topic,
@@ -432,16 +453,14 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
                 signal: controller.signal,
                 preserveFrame: true,
               });
-              if (
-                success &&
-                !controller.signal.aborted &&
-                generation === h264BootstrapGenerationRef.current
-              ) {
-                h264BufferedLiveRef.current = [];
+            } catch (error) {
+              if (!controller.signal.aborted && generation === h264BootstrapGenerationRef.current) {
+                console.warn('ImagePanel: H.264 seek bootstrap failed', error);
               }
             } finally {
               if (generation === h264BootstrapGenerationRef.current) {
                 h264BootstrapInFlightRef.current = false;
+                h264BufferedLiveRef.current = [];
               }
               if (h264SeekRepairAbortRef.current === controller) {
                 h264SeekRepairAbortRef.current = null;

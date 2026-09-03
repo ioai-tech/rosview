@@ -6,6 +6,7 @@ export interface GetMessagesInTimeRangeArgs {
   start: Time;
   end: Time;
   topics: string[];
+  signal?: AbortSignal;
 }
 
 export interface StreamMessagesInTimeRangeArgs extends GetMessagesInTimeRangeArgs {
@@ -72,6 +73,8 @@ export interface PlayerState {
     fallbackBackfillCount?: number;
     /** Playback is intentionally waiting for a continuous local buffer. */
     buffering?: boolean;
+    /** Retryable playback-time error, distinct from initialization problems. */
+    playbackError?: string;
     /** Estimated continuous local buffer ahead of the current playback time. */
     bufferedAheadMs?: number;
     /** Background data quality scan report (session-only). */

@@ -1,7 +1,31 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from 'vite';
+import fs from 'node:fs';
+import path from 'node:path';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
+
+/** Vite copies public/ and dereference symlinks; keep local MCAPs as links. */
+function preserveUserMcapSymlinks(): Plugin {
+  return {
+    name: 'preserve-user-mcap-symlinks',
+    closeBundle() {
+      const src = path.resolve(import.meta.dirname, 'public/user-mcaps');
+      const dst = path.resolve(import.meta.dirname, 'dist/user-mcaps');
+      if (!fs.existsSync(src)) {
+        return;
+      }
+      fs.rmSync(dst, { recursive: true, force: true });
+      fs.mkdirSync(dst, { recursive: true });
+      for (const name of fs.readdirSync(src)) {
+        if (!name.endsWith('.mcap')) {
+          continue;
+        }
+        const target = fs.realpathSync(path.join(src, name));
+        fs.symlinkSync(target, path.join(dst, name));
+      }
+    },
+  };
+}
 
 export default defineConfig({
   // Relative base so the SPA works both at domain root (rosview.com) and under a path prefix (io-ai.tech/rosview/).
@@ -25,7 +49,7 @@ export default defineConfig({
       },
     },
   },
-  plugins: [react()],
+  plugins: [react(), preserveUserMcapSymlinks()],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),

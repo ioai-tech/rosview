@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { withTimeout } from './asyncTimeout';
+import { TimeoutError, withTimeout } from '@/shared/utils/asyncTimeout';
 
 describe('withTimeout', () => {
   it('resolves when the wrapped promise finishes before the timeout', async () => {
@@ -10,7 +10,7 @@ describe('withTimeout', () => {
     vi.useFakeTimers();
     try {
       const pending = withTimeout(new Promise<string>(() => undefined), 100, 'decode timed out');
-      const assertion = expect(pending).rejects.toThrow('decode timed out');
+      const assertion = expect(pending).rejects.toThrow(TimeoutError);
       await vi.advanceTimersByTimeAsync(100);
 
       await assertion;

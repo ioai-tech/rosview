@@ -54,8 +54,15 @@ function messageKey(event: MessageEvent): string {
   return `${event.topic}|${event.schemaName}|${receive}|${publish}`;
 }
 
-async function readSegment(player: Player, args: GetMessagesInTimeRangeArgs): Promise<MessageEvent[]> {
+async function readSegment(
+  player: Player,
+  args: GetMessagesInTimeRangeArgs,
+  signal?: AbortSignal,
+): Promise<MessageEvent[]> {
   if (!player.getMessagesInTimeRange) return [];
+  if (signal) {
+    return player.getMessagesInTimeRange({ ...args, signal });
+  }
   return rangeQueryCache.getOrCreate(player, args);
 }
 
@@ -101,7 +108,7 @@ export async function readPlotRange({
       start: segment.start,
       end: segment.end,
       topics: uniqueTopics,
-    });
+    }, signal);
     for (const event of messages) {
       deduped.set(messageKey(event), event);
       if (messageLimit != null && deduped.size >= messageLimit) {
@@ -163,6 +170,7 @@ export async function readPlotRangeIncremental({
         end: segment.end,
         topics: uniqueTopics,
         maxMessages: messageLimit == null ? undefined : messageLimit - deduped.size,
+        signal,
       })) {
         assertNotAborted(signal);
         const added = appendNewMessages(deduped, messages, messageLimit);
@@ -181,7 +189,7 @@ export async function readPlotRangeIncremental({
         start: segment.start,
         end: segment.end,
         topics: uniqueTopics,
-      });
+      }, signal);
       const added = appendNewMessages(deduped, messages, messageLimit);
       const progress = { completed: i + 1, total: segments.length, messages: deduped.size };
       if (added.length > 0) {
