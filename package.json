@@ -135,7 +135,7 @@
     "protobufjs": "^8.7.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-intl": "^10.1.22",
+    "react-intl": "^12.1.1",
     "react-resizable-panels": "^4.12.3",
     "sonner": "^2.0.8",
     "sql.js": "^1.14.2",
