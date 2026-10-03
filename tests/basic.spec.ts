@@ -21,6 +21,29 @@ test('can trigger file input from welcome screen', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Choose file' })).toBeEnabled();
 });
 
+test('margin utilities on <p> survive the SPA shell reset', async ({ page }) => {
+  // Tailwind v4 emits utilities inside `@layer utilities`, and an unlayered
+  // declaration beats every layered one. The SPA shell reset in
+  // src/entrypoints/standalone.css therefore has to stay in `@layer base`,
+  // otherwise `mt-4` / `mx-auto` on this hero paragraph silently stop
+  // applying (the subtitle snaps to the left edge and the page shifts up).
+  await page.goto('/');
+  const subtitle = page.locator('#rosview-root p[data-readability]');
+  await expect(subtitle).toBeVisible();
+  const measured = await subtitle.evaluate((el) => {
+    const style = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    const parent = el.parentElement!.getBoundingClientRect();
+    return {
+      marginTop: style.marginTop,
+      insetLeft: box.left - parent.left,
+      insetRight: parent.right - box.right,
+    };
+  });
+  expect(measured.marginTop).not.toBe('0px');
+  expect(Math.abs(measured.insetLeft - measured.insetRight)).toBeLessThan(1);
+});
+
 test('language dropdown menu opens from icon button', async ({ page }) => {
   await page.goto('/');
   await page.locator('nav').getByLabel('Select language').first().click();

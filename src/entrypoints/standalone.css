@@ -1,16 +1,29 @@
-html,
-body,
-#root {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-}
+/*
+ * SPA shell reset — applies to the standalone app only (imported by
+ * `src/entrypoints/main.tsx`), never to the embeddable library build.
+ *
+ * It lives in `@layer base` on purpose. Tailwind v4 emits utilities inside
+ * `@layer utilities`, and an unlayered declaration beats every layered one no
+ * matter the specificity: an unlayered `body, p { margin: 0 }` here would
+ * silently cancel `mt-*` / `mx-*` / `mb-*` on every `<p>` in the app. With the
+ * reset in the base layer the cascade is explicit:
+ * base < components < utilities, which is the order src/index.css declares.
+ */
+@layer base {
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+  }
 
-body {
-  min-width: 320px;
-}
+  body {
+    min-width: 320px;
+  }
 
-body,
-p {
-  margin: 0;
+  body,
+  p {
+    margin: 0;
+  }
 }
