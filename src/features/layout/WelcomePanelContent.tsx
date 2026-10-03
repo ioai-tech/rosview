@@ -60,7 +60,7 @@ export const WelcomePanelContent: React.FC<WelcomePanelContentProps> = ({ welcom
                 key={def.type}
                 type="button"
                 onClick={() => handleSelect(def.type)}
-                className="group flex flex-col items-start gap-2 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                className="group flex flex-col items-start gap-2 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 hover:bg-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
               >
                 <div className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground transition-colors group-hover:border-primary/40 group-hover:text-primary">
                   <PanelTypeIcon type={def.type} className="h-5 w-5" />

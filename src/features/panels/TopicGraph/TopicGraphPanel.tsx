@@ -86,14 +86,14 @@ export const TopicGraphPanel: React.FC<TopicGraphPanelProps> = ({
         <div className="absolute top-2 right-2 z-10 flex gap-1">
           <button
             onClick={() => setRankDir((prev) => (prev === 'LR' ? 'TB' : 'LR'))}
-            className="p-1.5 bg-background/80 border rounded-md hover:bg-accent shadow-sm"
+            className="p-1.5 bg-background/80 border rounded-md hover:bg-accent shadow-xs"
             title={formatMessage({ id: 'panels.topicGraph.toolbar.toggleOrientation' })}
           >
             <ArrowRightLeft size={14} className={rankDir === 'TB' ? 'rotate-90 transition-transform' : 'transition-transform'} />
           </button>
           <button
             onClick={() => graphRef.current?.fit()}
-            className="p-1.5 bg-background/80 border rounded-md hover:bg-accent shadow-sm"
+            className="p-1.5 bg-background/80 border rounded-md hover:bg-accent shadow-xs"
             title={formatMessage({ id: 'panels.topicGraph.toolbar.fitView' })}
           >
             <Maximize size={14} />

@@ -87,7 +87,7 @@ export const TopicRow: React.FC<TopicRowProps> = ({ topic, isSelected, onSelect 
           writeTopicDragPayload(event.dataTransfer, { name: topic.name, type: topic.type });
         }}
         className={cn(
-          'flex w-full cursor-grab items-start gap-3 p-2 outline-none',
+          'flex w-full cursor-grab items-start gap-3 p-2 outline-hidden',
           'active:cursor-grabbing focus-visible:ring-1 focus-visible:ring-ring/50',
         )}
       >
@@ -121,7 +121,7 @@ export const TopicRow: React.FC<TopicRowProps> = ({ topic, isSelected, onSelect 
                 <MoreHorizontal className="size-4" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[10rem]">
+            <DropdownMenuContent align="end" className="min-w-40">
               <DropdownMenuItem className="text-xs" onSelect={handleCopyTopicName}>
                 {formatMessage({ id: 'sidebar.topicRow.copyTopicName' })}
               </DropdownMenuItem>

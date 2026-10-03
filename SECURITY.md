@@ -52,6 +52,7 @@ High/critical issues are fixed by upgrading the affected package when the parent
 
 A waiver is the advisory id plus the reason, kept in the table below. `npm run check:audit` reads this section as its allowlist, so an id deleted from here starts failing CI again. Keep the table short, keep it toolchain-only, and delete entries as soon as a fix exists — a stale waiver is a silent hole.
 
+There are currently **no waivers**: the Tailwind 3 → 4 migration removed the last one — the `braces` stack-exhaustion advisory reached through `tailwindcss@3` → `chokidar`/`fast-glob`/`micromatch` — because v4 pulls none of that toolchain. `npm run check:audit` reports zero advisories.
+
 | Advisory | Chain | Why there is no fix yet | Review |
 |---|---|---|---|
-| [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) | `tailwindcss@3` → `chokidar`, `fast-glob`, `micromatch` → `braces` | `braces` is affected in every published release (latest is 3.0.3), so no override can reach a patch. npm's only suggested fix installs `tailwindcss@4`, a deferred major migration (see the Dependabot policy). Build-time watcher/glob tooling only; nothing in `dist-lib` imports any of it. | Re-check on the monthly Dependabot run; drop when Tailwind 4 lands or `braces` publishes a patch. |

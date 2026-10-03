@@ -379,7 +379,7 @@ export const AlignPanel: React.FC<AlignPanelProps> = (props) => {
         />
         {hover ? (
           <div
-            className="absolute z-20 pointer-events-none rounded border border-border bg-card/95 px-2 py-1 text-[10px] font-mono shadow max-w-[min(360px,90vw)]"
+            className="absolute z-20 pointer-events-none rounded border border-border bg-card/95 px-2 py-1 text-[10px] font-mono shadow-sm max-w-[min(360px,90vw)]"
             style={{
               left: clamp(hover.x + 8, 4, containerSize.w - 200),
               top: clamp(hover.y + 8, 4, containerSize.h - 80),

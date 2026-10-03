@@ -1,6 +1,191 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/*
+ * Tailwind CSS v4 — CSS-first configuration.
+ * https://tailwindcss.com/docs/upgrade-guide
+ *
+ * Preflight is intentionally NOT imported. v3 turned it off with
+ * `corePlugins: { preflight: false }`, an option v4 removed, so instead of
+ * `@import "tailwindcss"` the layers are imported one by one: a global reset
+ * would restyle the host page this component is embedded into and would fight
+ * uPlot / Dockview, which ship their own border chrome. The scoped replacement
+ * is the "Scoped preflight" block below.
+ */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+/* `source(none)` turns off automatic detection (binary fixtures, docs, specs);
+   the explicit `@source` list below is the only input. */
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+/*
+ * Files scanned for class names (was `content` in tailwind.config.js).
+ * Automatic detection stays off: binary fixtures, docs and specs must never
+ * enter the candidate pool, and `*.test.*` stays excluded because plot paths
+ * such as `numbers[-2:-1]` parse as arbitrary properties and emit invalid CSS
+ * during minification.
+ */
+@source '../index.html';
+@source './';
+@source not './**/*.test.{ts,tsx}';
+
+/*
+ * Automatic detection is still on for everything else in the repository, so the
+ * paths that are not styling sources are excluded explicitly: specs, fixtures,
+ * docs and build scripts would otherwise inject arbitrary-property candidates
+ * such as `[browser:pageerror]` into the bundle.
+ */
+@source not '../tests';
+@source not '../test-fixtures';
+@source not '../docs';
+@source not '../scripts';
+@source not '../public';
+@source not '../.github';
+
+/*
+ * Was `darkMode: ['class']`. The `dark` class is toggled on `#rosview-root`
+ * itself, so the variant has to match the root element too, not only its
+ * descendants.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens ported from `theme.extend` in tailwind.config.js.
+ * `inline` is required: the token values are CSS variables declared on the
+ * scoped root, so utilities must resolve `hsl(var(--…))` on the element that
+ * uses them instead of copying it into a `:root` variable the host page cannot
+ * see. Without `inline`, `var(--border)` would be unresolved on `:root`.
+ */
+@theme inline {
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+
+  --color-annotation-accent: hsl(var(--annotation-accent));
+  --color-annotation-row-active: hsl(var(--annotation-row-active-bg));
+  --color-annotation-row-selected: hsl(var(--annotation-row-selected-bg));
+  --color-annotation-danger: hsl(var(--annotation-danger));
+  --color-annotation-warning: hsl(var(--annotation-warning));
+  --color-annotation-success: hsl(var(--annotation-success));
+
+  /* Was `borderRadius: { lg, md, sm }` — keeps the shadcn radius maths. */
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+@theme {
+  --animate-indeterminate-loading: indeterminate 1.5s infinite linear;
+
+  @keyframes indeterminate {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(285.7%);
+    }
+  }
+}
+
+/*
+ * Legacy JS config — kept for the single option v4 cannot express in CSS:
+ * scoping every generated utility under the widget root. See that file for the
+ * details; theme, dark mode and sources all live above now.
+ */
+@config '../tailwind.config.js';
+
+@utility max-w-readable {
+  #rosview-root & {
+    max-width: 80ch;
+  }
+}
+
+@utility ros-playback-center-x {
+  #rosview-root & {
+    transform: translateX(-50%);
+    translate: none;
+  }
+}
+
+@utility ros-playback-center-xy {
+  #rosview-root & {
+    transform: translate(-50%, -50%);
+    translate: none;
+  }
+}
+
+@utility loading-spinner {
+  #rosview-root & {
+    width: 32px;
+    height: 32px;
+    border: 3px solid hsl(var(--muted));
+    border-top-color: hsl(var(--primary));
+    border-radius: 50%;
+    animation: ros-spin 0.8s linear infinite;
+    will-change: transform;
+  }
+}
+
+@utility annotation-marker-form {
+  #rosview-root & {
+    --annotation-cell-font-size: 13px;
+    --annotation-cell-sub-font-size: 11px;
+  }
+
+  #rosview-root & .annotation-field-shell + .annotation-field-shell {
+    border-top: 1px solid hsl(var(--border));
+    padding-top: 12px;
+  }
+
+  #rosview-root & [data-slot='select-trigger'] {
+    border-color: #c4c4c4;
+    border-radius: 0;
+    background-color: hsl(var(--background));
+    box-shadow: none;
+  }
+}
+
+@utility annotation-field-shell {
+  #rosview-root .annotation-marker-form & + & {
+    border-top: 1px solid hsl(var(--border));
+    padding-top: 12px;
+  }
+}
 
 /* ── Scoped preflight (tailwind preflight: false in tailwind.config.js) ──
    Limited to #rosview-root so resets never touch the host page.
@@ -206,54 +391,11 @@
   }
 }
 
-@layer utilities {
-  #rosview-root .max-w-readable {
-    max-width: 80ch;
-  }
-}
-
 @layer components {
-  #rosview-root .ros-playback-center-x {
-    transform: translateX(-50%);
-    translate: none;
-  }
-
-  #rosview-root .ros-playback-center-xy {
-    transform: translate(-50%, -50%);
-    translate: none;
-  }
-
-  #rosview-root .loading-spinner {
-    width: 32px;
-    height: 32px;
-    border: 3px solid hsl(var(--muted));
-    border-top-color: hsl(var(--primary));
-    border-radius: 50%;
-    animation: ros-spin 0.8s linear infinite;
-    will-change: transform;
-  }
-
   @keyframes ros-spin {
     to {
       transform: rotate(360deg);
     }
-  }
-
-  #rosview-root .annotation-marker-form {
-    --annotation-cell-font-size: 13px;
-    --annotation-cell-sub-font-size: 11px;
-  }
-
-  #rosview-root .annotation-marker-form .annotation-field-shell + .annotation-field-shell {
-    border-top: 1px solid hsl(var(--border));
-    padding-top: 12px;
-  }
-
-  #rosview-root .annotation-marker-form [data-slot='select-trigger'] {
-    border-color: #c4c4c4;
-    border-radius: 0;
-    background-color: hsl(var(--background));
-    box-shadow: none;
   }
 }
 

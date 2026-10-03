@@ -1871,7 +1871,7 @@ export const ThreeDPanel: React.FC<ThreeDPanelProps> = ({
     : 0;
 
   return (
-    <div className={`relative h-full w-full overflow-hidden [contain:strict] ${colors.panelBackgroundClassName}`}>
+    <div className={`relative h-full w-full overflow-hidden contain-strict ${colors.panelBackgroundClassName}`}>
       <div
         className={`absolute top-2 left-2 z-10 px-2 py-1 rounded text-[10px] font-mono pointer-events-none ${
           isMeshLoading ? 'animate-pulse' : ''

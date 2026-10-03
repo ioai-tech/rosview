@@ -13,7 +13,7 @@ import { PanelTypeIcon } from '../panels/framework/panelIcons';
 
 /** Shared row style for tab header dropdown items with a leading icon. */
 export const panelTabDropdownIconRowClass =
-  'flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none';
+  'flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden';
 
 export interface PanelTabAddPanelDefinitionsSubmenusProps {
   definitions: PanelDefinition<unknown>[];

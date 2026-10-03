@@ -138,7 +138,7 @@ export function PlotChartLegend({
 
   return (
     <div
-      className={`absolute left-2 top-2 z-20 w-80 max-w-[min(28rem,70%)] rounded border border-border bg-card/80 text-foreground opacity-65 shadow-sm backdrop-blur transition-opacity hover:bg-card/95 hover:opacity-100 focus-within:bg-card/95 focus-within:opacity-100 ${
+      className={`absolute left-2 top-2 z-20 w-80 max-w-[min(28rem,70%)] rounded border border-border bg-card/80 text-foreground opacity-65 shadow-xs backdrop-blur-sm transition-opacity hover:bg-card/95 hover:opacity-100 focus-within:bg-card/95 focus-within:opacity-100 ${
         expanded ? 'bottom-2 flex flex-col' : ''
       }`}
       onClick={stopPanelInteraction}
@@ -175,7 +175,7 @@ export function PlotChartLegend({
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              className="h-7 w-full rounded border border-border bg-background px-2 text-[11px] outline-none focus:border-primary"
+              className="h-7 w-full rounded border border-border bg-background px-2 text-[11px] outline-hidden focus:border-primary"
               placeholder={formatMessage({ id: 'panels.plot.legend.searchPlaceholder' })}
               aria-label={formatMessage({ id: 'panels.plot.legend.searchPlaceholder' })}
             />

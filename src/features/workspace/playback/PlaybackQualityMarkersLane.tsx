@@ -71,8 +71,8 @@ export const PlaybackQualityMarkersLane = React.memo(function PlaybackQualityMar
         type="button"
         className={
           isError
-            ? 'absolute top-0 z-[12] h-full bg-destructive shadow-sm ring-1 ring-destructive/60 hover:bg-destructive'
-            : 'absolute top-0 z-[6] h-full bg-amber-500/80 hover:bg-amber-500'
+            ? 'absolute top-0 z-12 h-full bg-destructive shadow-xs ring-1 ring-destructive/60 hover:bg-destructive'
+            : 'absolute top-0 z-6 h-full bg-amber-500/80 hover:bg-amber-500'
         }
         style={{ left: `${left}%`, width: `${width}%` }}
         title={`${range.scope}: ${range.topicNames.join(', ')} (${range.count})`}

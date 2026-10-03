@@ -303,7 +303,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
         {showResetZoom && (
           <button
             type="button"
-            className="absolute right-2 top-2 z-20 inline-flex h-7 items-center gap-1 rounded border border-border bg-card/95 px-2 text-[11px] text-foreground shadow-sm hover:bg-accent"
+            className="absolute right-2 top-2 z-20 inline-flex h-7 items-center gap-1 rounded border border-border bg-card/95 px-2 text-[11px] text-foreground shadow-xs hover:bg-accent"
             onClick={(event) => {
               event.stopPropagation();
               resetViewport();

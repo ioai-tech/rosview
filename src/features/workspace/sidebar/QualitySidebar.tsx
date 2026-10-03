@@ -255,7 +255,7 @@ export const QualitySidebar: React.FC<QualitySidebarProps> = ({
                 <span className="truncate">{severityLabel}</span>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="min-w-[7rem]">
+            <DropdownMenuContent align="start" className="min-w-28">
               <DropdownMenuRadioGroup
                 value={severityValue}
                 onValueChange={(value) =>
@@ -285,7 +285,7 @@ export const QualitySidebar: React.FC<QualitySidebarProps> = ({
                 <span className="truncate">{typeLabel}</span>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="max-h-[min(18rem,60vh)] min-w-[12rem] overflow-y-auto">
+            <DropdownMenuContent align="start" className="max-h-[min(18rem,60vh)] min-w-48 overflow-y-auto">
               <DropdownMenuRadioGroup
                 value={typeValue}
                 onValueChange={(value) =>
@@ -350,7 +350,7 @@ export const QualitySidebar: React.FC<QualitySidebarProps> = ({
                 <div
                   role="button"
                   tabIndex={0}
-                  className="cursor-pointer rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  className="cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                   onClick={() => onSeek(range.start)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {

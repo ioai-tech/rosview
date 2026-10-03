@@ -146,7 +146,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside
-      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-border/70 bg-card [container-name:sidebar] [container-type:inline-size]"
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-border/70 bg-card [container-name:sidebar] @container"
     >
       <Tabs.Root
         value={tabValue}
@@ -192,7 +192,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <Tabs.Content
           value="topics"
-          className="flex-1 min-h-0 overflow-hidden outline-none data-[state=active]:flex flex-col"
+          className="flex-1 min-h-0 overflow-hidden outline-hidden data-[state=active]:flex flex-col"
         >
           <div className="px-2 py-2 border-b border-border/60 bg-background">
             <div className="relative flex items-center">
@@ -203,7 +203,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 placeholder={formatMessage({ id: 'sidebar.topicFilter' })}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-background border border-input rounded-sm text-xs pl-6 pr-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-ring/40 transition-all"
+                className="w-full bg-background border border-input rounded-sm text-xs pl-6 pr-2 py-1.5 focus:outline-hidden focus:ring-2 focus:ring-ring/40 transition-all"
               />
             </div>
           </div>
@@ -234,7 +234,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {showDatasetsTab ? (
           <Tabs.Content
             value="datasets"
-            className="flex-1 min-h-0 overflow-hidden outline-none data-[state=active]:flex flex-col"
+            className="flex-1 min-h-0 overflow-hidden outline-hidden data-[state=active]:flex flex-col"
           >
             <ScrollArea className="flex-1 min-h-0">
               <div className="border-b border-border/50">
@@ -272,12 +272,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           aria-current={isActive ? 'true' : undefined}
                           onClick={() => onDatasetSelect(group.groupId)}
                           className={cn(
-                            'flex w-full cursor-pointer items-center gap-3 p-2 outline-none',
+                            'flex w-full cursor-pointer items-center gap-3 p-2 outline-hidden',
                             'focus-visible:ring-1 focus-visible:ring-ring/50',
                           )}
                         >
                           <div className="min-w-0 flex-1 overflow-hidden text-left">
-                            <div className="line-clamp-2 break-words text-[12px] font-medium leading-[18px] text-foreground">
+                            <div className="line-clamp-2 wrap-break-word text-[12px] font-medium leading-[18px] text-foreground">
                               {displayName}
                               {!isMerged && primary.kind === 'url' && primary.url ? (
                                 <>
@@ -289,7 +289,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               ) : null}
                             </div>
                             {isMerged ? (
-                              <div className="line-clamp-3 break-words text-[10px] font-normal leading-[16px] text-muted-foreground">
+                              <div className="line-clamp-3 wrap-break-word text-[10px] font-normal leading-[16px] text-muted-foreground">
                                 {group.members.map((m) => m.name).join(' · ')}
                               </div>
                             ) : null}
@@ -321,7 +321,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <Tabs.Content
           value="quality"
-          className="flex-1 min-h-0 overflow-hidden outline-none data-[state=active]:flex flex-col"
+          className="flex-1 min-h-0 overflow-hidden outline-hidden data-[state=active]:flex flex-col"
         >
           <QualitySidebar
             report={dataQualityReport}
@@ -346,7 +346,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <Tabs.Content
           value="settings"
-          className="flex-1 min-h-0 overflow-hidden outline-none data-[state=active]:flex flex-col"
+          className="flex-1 min-h-0 overflow-hidden outline-hidden data-[state=active]:flex flex-col"
         >
           <PanelSettingsTab player={player} topics={topics} />
         </Tabs.Content>
@@ -354,7 +354,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Tabs.Content
             key={tab.id}
             value={tab.id}
-            className="flex-1 min-h-0 overflow-hidden outline-none data-[state=active]:flex flex-col"
+            className="flex-1 min-h-0 overflow-hidden outline-hidden data-[state=active]:flex flex-col"
           >
             <SidebarExtensionHost contribution={tab} context={extensionContext} />
           </Tabs.Content>

@@ -13,6 +13,7 @@
  */
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,7 +32,7 @@ export default defineConfig({
   define: {
     'import.meta.env.VITE_SAMPLE_DATASETS_MANIFEST_URL': JSON.stringify('off'),
   },
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       '@': path.join(packageDir, 'src'),

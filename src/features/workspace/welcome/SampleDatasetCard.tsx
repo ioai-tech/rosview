@@ -23,10 +23,10 @@ export const SampleDatasetCard: React.FC<SampleDatasetCardProps> = ({ sample, on
       <button
         type="button"
         onClick={() => void onSelect(sample)}
-        className="block h-full w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        className="block h-full w-full text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       >
         <Card className="flex h-full flex-col overflow-hidden border-border py-0 shadow-none">
-          <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden bg-muted">
+          <div className="relative aspect-4/3 w-full shrink-0 overflow-hidden bg-muted">
             {cover ? (
               <img
                 src={cover}
@@ -52,10 +52,10 @@ export const SampleDatasetCard: React.FC<SampleDatasetCardProps> = ({ sample, on
     <button
       type="button"
       onClick={() => void onSelect(sample)}
-      className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      className="block w-full text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       <Card className="flex overflow-hidden border-border py-0 shadow-none">
-        <div className="relative h-[4.5rem] w-20 shrink-0 bg-muted">
+        <div className="relative h-18 w-20 shrink-0 bg-muted">
           {cover ? (
             <img src={cover} alt="" className="size-full object-cover" loading="lazy" />
           ) : (

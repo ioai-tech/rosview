@@ -91,8 +91,8 @@ function notifyMergeWithUndo(
     // align-items/gap/margin directly; scoped to this toast only, so
     // simple toast.error()/toast.success() calls elsewhere are unaffected.
     classNames: {
-      toast: '!flex-col !items-stretch !gap-2.5',
-      actionButton: '!ml-0 !mr-0 !w-full !justify-center',
+      toast: 'flex-col! items-stretch! gap-2.5!',
+      actionButton: 'ml-0! mr-0! w-full! justify-center!',
     },
     action: {
       label: offlineIntl.formatMessage({ id: 'viewer.mergeToast.action' }),

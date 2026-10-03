@@ -46,7 +46,7 @@ const MENUBAR_PREFERENCES = 'menubar-preferences';
 
 /** Navbar-only: no thick focus ring on menubar triggers (Radix uses `data-highlighted`). */
 const menubarTriggerClassName =
-  'h-8 shrink-0 gap-2 border border-transparent px-2.5 text-xs font-medium text-muted-foreground shadow-none hover:text-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 data-[highlighted]:border-transparent';
+  'h-8 shrink-0 gap-2 border border-transparent px-2.5 text-xs font-medium text-muted-foreground shadow-none hover:text-foreground focus-visible:outline-hidden focus-visible:ring-0 focus-visible:ring-offset-0 data-highlighted:border-transparent';
 
 /** Icon-only triggers (language / theme), aligned with previous ghost `size="icon"` buttons. */
 const menubarIconTriggerClassName = `${menubarTriggerClassName} size-8 shrink-0 gap-0 px-0 justify-center`;
@@ -183,7 +183,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {showNavbarBrand ? (
             <button
               type="button"
-              className="min-w-0 max-w-[min(11rem,28vw)] shrink truncate rounded-sm text-left text-sm font-semibold tracking-tight text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:max-w-[11rem]"
+              className="min-w-0 max-w-[min(11rem,28vw)] shrink truncate rounded-sm text-left text-sm font-semibold tracking-tight text-foreground transition-colors hover:text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:max-w-44"
               onClick={onBrandClick}
               title={brandAccessibleName}
               aria-label={brandAccessibleName}

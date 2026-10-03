@@ -139,7 +139,7 @@ Fixed-width sidebar (collapsible) on the left with three tabs:
 
 - Light / Dark / System theme modes
 - DockView theme synchronized: `dockview-theme-*` + `ros-dockview-theme-*` classes
-- Tailwind CSS `darkMode: ['class']` — `dark` class toggled on the root `#rosview-root` element
+- Tailwind CSS v4 `@custom-variant dark (&:where(.dark, .dark *))` — `dark` class toggled on the root `#rosview-root` element
 - Embeddable: host application can control the theme via prop
 
 ---
@@ -222,7 +222,7 @@ Fixed-width sidebar (collapsible) on the left with three tabs:
 
 | Library | Purpose |
 |---------|---------|
-| Tailwind CSS ^3.4 | Atomic CSS; `important: '#rosview-root'` prevents style leakage when embedded |
+| Tailwind CSS ^4.3 | Atomic CSS (CSS-first config, `@tailwindcss/vite`, no Preflight so the host page is never reset); `important: '#rosview-root'` prevents style leakage when embedded |
 | Radix UI | Headless UI (Dialog, DropdownMenu, Tabs, Slider, Tooltip, …) |
 | class-variance-authority | Component variant management (shadcn style) |
 | tailwind-merge | Merge Tailwind class strings safely |

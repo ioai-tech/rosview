@@ -133,7 +133,7 @@
 
 - 支持 Light / Dark / System 三种主题模式
 - DockView 主题同步切换：`DockviewReact` 传入 `theme`（`dockview-theme-*` + `ros-dockview-theme-*`），外层 `data-dockview-chrome-theme` 便于测试与宿主诊断
-- Tailwind CSS `darkMode: ['class']`，在根容器 `#rosview-root` 上切换 `dark` class
+- Tailwind CSS v4 `@custom-variant dark (&:where(.dark, .dark *))`，在根容器 `#rosview-root` 上切换 `dark` class
 - 嵌入式使用时，宿主可通过 prop 控制主题
 
 ---
@@ -215,7 +215,7 @@
 
 | 库 | 说明 |
 |----|------|
-| Tailwind CSS ^3.4 | 原子化 CSS，`important: '#rosview-root'` 避免嵌入时样式泄漏 |
+| Tailwind CSS ^4.3 | 原子化 CSS（CSS-first 配置、`@tailwindcss/vite`、不引入 Preflight 以免重置宿主页），`important: '#rosview-root'` 避免嵌入时样式泄漏 |
 | Radix UI | 无头 UI 组件（Dialog、DropdownMenu、Tabs、Slider、Tooltip 等） |
 | class-variance-authority | 组件变体管理（shadcn 风格） |
 | tailwind-merge | 合并 Tailwind class |
@@ -912,17 +912,16 @@ rosview/
     "@eslint/js": "^10.0.0",
     "@microsoft/api-extractor": "^7.58.12",
     "@types/node": "^24.12.0",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.171.0",
     "@vitejs/plugin-react": "^6.0.1",
-    "autoprefixer": "^10.4.23",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^3.4.19",
+    "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
     "vite": "^8.0.4",

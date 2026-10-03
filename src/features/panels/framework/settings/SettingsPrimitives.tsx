@@ -126,7 +126,7 @@ export const SettingsText: React.FC<TextInputProps> = ({
     placeholder={placeholder}
     disabled={disabled}
     onChange={(event) => onChange(event.target.value)}
-    className="w-full border border-input rounded-sm bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
+    className="w-full border border-input rounded-sm bg-background px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
   />
 );
 
@@ -293,7 +293,7 @@ export const SettingsNumber: React.FC<NumberInputProps> = ({
       onFocus={handleFocus}
       onKeyDown={handleKeyDown}
       autoComplete="off"
-      className="w-full border border-input rounded-sm bg-background px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
+      className="w-full border border-input rounded-sm bg-background px-2 py-1 text-xs font-mono focus:outline-hidden focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
     />
   );
 };
@@ -313,7 +313,7 @@ export const SettingsTextArea: React.FC<TextInputProps & { rows?: number }> = ({
     placeholder={placeholder}
     disabled={disabled}
     onChange={(event) => onChange(event.target.value)}
-    className="w-full border border-input rounded-sm bg-background px-2 py-1 text-[10px] font-mono leading-tight focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-50 resize-y"
+    className="w-full border border-input rounded-sm bg-background px-2 py-1 text-[10px] font-mono leading-tight focus:outline-hidden focus:ring-2 focus:ring-ring/40 disabled:opacity-50 resize-y"
   />
 );
 
@@ -346,7 +346,7 @@ export function SettingsSelect<T extends string>({
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value as T)}
-      className="w-full border border-input rounded-sm bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
+      className="w-full border border-input rounded-sm bg-background px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
     >
       {options.map((option) => (
         <option key={option.value} value={option.value} disabled={option.disabled}>
@@ -511,7 +511,7 @@ export const UrlInput: React.FC<UrlInputProps> = ({
     placeholder={placeholder}
     disabled={disabled}
     onChange={(event) => onChange(event.target.value)}
-    className="w-full border border-input rounded-sm bg-background px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
+    className="w-full border border-input rounded-sm bg-background px-2 py-1 text-xs font-mono focus:outline-hidden focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
   />
 );
 

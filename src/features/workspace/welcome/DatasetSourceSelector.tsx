@@ -127,8 +127,8 @@ export const DatasetSourceSelector: React.FC<DatasetSourceSelectorProps> = ({
           </TabsTrigger>
         </TabsList>
 
-        <div className="mt-5 min-h-[11rem]">
-          <TabsContent value="file" className="focus-visible:outline-none">
+        <div className="mt-5 min-h-44">
+          <TabsContent value="file" className="focus-visible:outline-hidden">
             <button type="button" onClick={onOpenFile} className={dropCardClass}>
               <div className="rounded-full bg-muted/50 p-3 transition-colors group-hover:bg-muted/70">
                 <FileVideo className="h-6 w-6 text-muted-foreground group-hover:text-primary" />
@@ -140,7 +140,7 @@ export const DatasetSourceSelector: React.FC<DatasetSourceSelectorProps> = ({
             </button>
           </TabsContent>
 
-          <TabsContent value="dir" className="focus-visible:outline-none">
+          <TabsContent value="dir" className="focus-visible:outline-hidden">
             <button type="button" onClick={onOpenDirectory} className={dropCardClass}>
               <div className="rounded-full bg-muted/50 p-3 transition-colors group-hover:bg-muted/70">
                 <FolderOpen className="h-6 w-6 text-muted-foreground group-hover:text-primary" />
@@ -152,11 +152,11 @@ export const DatasetSourceSelector: React.FC<DatasetSourceSelectorProps> = ({
             </button>
           </TabsContent>
 
-          <TabsContent value="remote" className="focus-visible:outline-none">
+          <TabsContent value="remote" className="focus-visible:outline-hidden">
             <RemoteRecordingUrlForm onSubmit={onSubmitRemoteUrl} isLoading={remoteSubmitLoading} />
           </TabsContent>
 
-          <TabsContent value="tar" className="focus-visible:outline-none">
+          <TabsContent value="tar" className="focus-visible:outline-hidden">
             <button type="button" onClick={onOpenTarPicker} className={dropCardClass}>
               <div className="rounded-full bg-muted/50 p-3 transition-colors group-hover:bg-muted/70">
                 <Archive className="h-6 w-6 text-muted-foreground group-hover:text-primary" />

@@ -468,7 +468,7 @@ export const PosePanel: React.FC<PosePanelProps> = ({ player, panelId, config })
   );
 
   return (
-    <div className={`relative h-full w-full overflow-hidden [contain:strict] ${panelClass}`}>
+    <div className={`relative h-full w-full overflow-hidden contain-strict ${panelClass}`}>
       {tfUnavailable && (
         <div
           className={`pointer-events-none absolute left-2 top-2 z-10 rounded border px-2 py-1 text-[10px] ${colors.overlayClassName}`}

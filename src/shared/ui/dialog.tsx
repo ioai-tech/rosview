@@ -16,7 +16,7 @@ const DialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
     ref={ref}
-    className={cn('fixed inset-0 z-[100] bg-black/80', className)}
+    className={cn('fixed inset-0 z-100 bg-black/80', className)}
     {...props}
   />
 ));
@@ -40,14 +40,14 @@ const DialogContent = React.forwardRef<
         className={cn(
           // Must stay position:fixed + translate so content stays in viewport (Radix default).
           // `relative` breaks centering and can render only the overlay visible.
-          'fixed left-1/2 top-1/2 z-[101] flex w-full max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-hidden border bg-background p-6 shadow-lg sm:rounded-lg',
+          'fixed left-1/2 top-1/2 z-101 flex w-full max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-hidden border bg-background p-6 shadow-lg sm:rounded-lg',
           'max-h-[min(90vh,calc(100dvh-2rem))]',
           className,
         )}
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2">
           <X className="h-4 w-4" />
           <DialogCloseSrOnly />
         </DialogPrimitive.Close>

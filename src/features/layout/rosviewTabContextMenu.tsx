@@ -116,7 +116,7 @@ export const RosViewTabContextMenuPortal: React.FC<{
     <div
       data-ros-tab-context-menu="1"
       className={cn(
-        'fixed z-[200] min-w-[11rem] overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-xl',
+        'fixed z-200 min-w-44 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-xl',
       )}
       style={{ left: anchor.x, top: anchor.y }}
       role="menu"
@@ -134,7 +134,7 @@ export const RosViewTabContextMenuPortal: React.FC<{
             role="menuitem"
             disabled={item.disabled}
             className={cn(
-              'flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-left text-sm outline-none',
+              'flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-left text-sm outline-hidden',
               'hover:bg-accent hover:text-accent-foreground',
               'disabled:pointer-events-none disabled:opacity-50',
               item.destructive && 'text-destructive hover:text-destructive',

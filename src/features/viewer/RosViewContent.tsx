@@ -331,7 +331,7 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
               minSize={showSidebar ? `${100 - SIDEBAR_MAX_PANEL_PERCENT}%` : '100%'}
             >
               <main
-                className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background [contain:strict] ${
+                className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background contain-strict ${
                   isTopicDragOver ? 'ring-1 ring-inset ring-primary/40' : ''
                 }`}
                 onDragEnter={isReady ? handleTopicDragEnter : undefined}
@@ -341,7 +341,7 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
               >
                 {isTopicDragOver && (
                   <div className="pointer-events-none absolute inset-4 z-10 flex items-center justify-center rounded-lg border border-dashed border-primary/60 bg-primary/5">
-                    <div className="rounded-md bg-background/90 px-4 py-3 text-center shadow-sm">
+                    <div className="rounded-md bg-background/90 px-4 py-3 text-center shadow-xs">
                       <div className="text-sm font-medium">
                         {formatMessage({ id: 'sidebar.topicDropTitle' })}
                       </div>

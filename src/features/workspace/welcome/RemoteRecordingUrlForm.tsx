@@ -64,7 +64,7 @@ export const RemoteRecordingUrlForm: React.FC<RemoteRecordingUrlFormProps> = ({
     <form onSubmit={handleSubmit} className="w-full space-y-4">
       <div className="relative">
         <Globe2
-          className="pointer-events-none absolute left-3 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          className="pointer-events-none absolute left-3 top-1/2 z-1 h-4 w-4 -translate-y-1/2 text-muted-foreground"
           aria-hidden
         />
         <Input

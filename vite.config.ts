@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 /** Vite copies public/ and dereference symlinks; keep local MCAPs as links. */
 function preserveUserMcapSymlinks(): Plugin {
@@ -49,7 +50,9 @@ export default defineConfig({
       },
     },
   },
-  plugins: [react(), preserveUserMcapSymlinks()],
+  // Tailwind v4 ships a dedicated Vite plugin (replaces the v3 PostCSS plugin;
+  // `postcss.config.js` is gone — v4 handles @import and vendor prefixes itself).
+  plugins: [react(), tailwindcss(), preserveUserMcapSymlinks()],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),

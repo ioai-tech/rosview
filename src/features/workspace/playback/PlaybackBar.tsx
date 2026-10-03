@@ -61,14 +61,14 @@ const MENUBAR_PLAYBACK_LOOP = 'playback-menubar-loop';
 
 /** Compact menubar triggers: Navbar-like chrome, no chevron, width follows label. */
 const PLAYBACK_MENUBAR_TRIGGER_CLASS =
-  'h-7 w-fit min-w-0 shrink-0 justify-center gap-1 rounded-sm border border-transparent px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground shadow-none hover:text-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 data-[highlighted]:border-transparent';
+  'h-7 w-fit min-w-0 shrink-0 justify-center gap-1 rounded-sm border border-transparent px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground shadow-none hover:text-foreground focus-visible:outline-hidden focus-visible:ring-0 focus-visible:ring-offset-0 data-highlighted:border-transparent';
 
 const TRANSPORT_ICON_BTN_CLASS =
   'h-9 w-9 shrink-0 rounded-full transition-all hover:bg-accent active:scale-95 text-foreground';
 
 /** Primary play/pause control: larger filled button vs ghost step buttons. */
 const PLAYBACK_PRIMARY_TRANSPORT_CLASS =
-  'h-10 w-10 shrink-0 rounded-full shadow-md transition-all hover:bg-primary/90 active:scale-[0.97] focus-visible:ring-offset-background [&_svg]:!size-[22px] [&_svg]:shrink-0';
+  'h-10 w-10 shrink-0 rounded-full shadow-md transition-all hover:bg-primary/90 active:scale-[0.97] focus-visible:ring-offset-background [&_svg]:size-[22px]! [&_svg]:shrink-0';
 
 type PlaybackTimeDisplayMode = 'relative' | 'absolute';
 
@@ -479,19 +479,19 @@ export const PlaybackBar: React.FC<PlaybackBarProps> = ({ player, extensionConte
           <div
             ref={fillRef}
             data-testid="playback-progress-fill"
-            className="pointer-events-none absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary/75 to-primary"
+            className="pointer-events-none absolute inset-y-0 left-0 rounded-full bg-linear-to-r from-primary/75 to-primary"
             style={{ width: '0%' }}
           />
           <div
             ref={hoverLineRef}
             data-testid="playback-hover-line"
-            className="ros-playback-center-xy pointer-events-none absolute top-1/2 z-[2] h-6 w-px bg-primary/55 opacity-0"
+            className="ros-playback-center-xy pointer-events-none absolute top-1/2 z-2 h-6 w-px bg-primary/55 opacity-0"
             style={{ left: '0%' }}
           />
           <div
             ref={thumbRef}
             data-testid="playback-thumb"
-            className="ros-playback-center-xy pointer-events-none absolute top-1/2 z-[3] h-3 w-3 rounded-full border border-primary bg-background"
+            className="ros-playback-center-xy pointer-events-none absolute top-1/2 z-3 h-3 w-3 rounded-full border border-primary bg-background"
             style={{ left: '0%' }}
           />
           <div

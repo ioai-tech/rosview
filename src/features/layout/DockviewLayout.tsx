@@ -532,7 +532,7 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({
   return (
     <DockviewApiContext.Provider value={contextApi}>
       <div
-        className="ros-dockview-shell flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [contain:strict]"
+        className="ros-dockview-shell flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden contain-strict"
         data-testid="rosview-dockview"
         data-dockview-chrome-theme={resolvedTheme}
         data-transport-mode={transportMode ?? ''}

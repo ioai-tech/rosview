@@ -124,7 +124,7 @@ export function AudioPanelSettings({
             type="color"
             value={config.waveformColor.startsWith('#') ? config.waveformColor : '#22c55e'}
             onChange={(e) => setConfig({ ...config, waveformColor: e.target.value })}
-            className="h-8 w-full max-w-[6rem] rounded border border-input bg-background"
+            className="h-8 w-full max-w-24 rounded border border-input bg-background"
           />
         </SettingsField>
       </SettingsSection>

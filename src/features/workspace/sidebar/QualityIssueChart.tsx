@@ -407,7 +407,7 @@ export const QualityIssueChart: React.FC<QualityIssueChartProps> = React.memo(fu
         )}
         {tooltip && (
           <div
-            className="pointer-events-none absolute z-10 rounded border border-border/70 bg-popover px-1.5 py-0.5 font-mono text-[10px] text-popover-foreground shadow"
+            className="pointer-events-none absolute z-10 rounded border border-border/70 bg-popover px-1.5 py-0.5 font-mono text-[10px] text-popover-foreground shadow-sm"
             style={{
               left: `${Math.min(88, Math.max(2, (tooltip.x / plotW) * 100))}%`,
               top: `${Math.min(82, Math.max(4, (tooltip.y / VIEW_H) * 100))}%`,

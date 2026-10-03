@@ -21,7 +21,7 @@ export const PlaybackBufferingOverlay: React.FC<PlaybackBufferingOverlayProps> =
         role="alert"
         data-testid="rosview-playback-error"
       >
-        <div className="pointer-events-auto flex max-w-lg items-center gap-3 rounded-md border border-border bg-card px-3 py-2 text-xs shadow-sm">
+        <div className="pointer-events-auto flex max-w-lg items-center gap-3 rounded-md border border-border bg-card px-3 py-2 text-xs shadow-xs">
           <p className="min-w-0 flex-1 text-destructive">{playbackError}</p>
           <Button
             type="button"
