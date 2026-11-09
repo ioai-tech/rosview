@@ -3,7 +3,7 @@ import type { IWritable } from '@mcap/core';
 import { describe, expect, it } from 'vitest';
 import type { MessageEvent } from '@/core/types/ros';
 import { fromNano } from '@/shared/utils/time';
-import { McapUnindexedIterableSource } from './McapUnindexedIterableSource';
+import { McapUnindexedIterableSource, type McapIndexCache, type SerializedMcapIndex } from './McapUnindexedIterableSource';
 
 class MemoryWritable implements IWritable {
   private _chunks: Uint8Array[] = [];
@@ -201,6 +201,56 @@ describe('McapUnindexedIterableSource', () => {
     const all = await collect(source.messageIterator({ startTime: init.start, topics: ['/a', '/b'] }));
     expect(all.length).toBeGreaterThan(0);
     expect(all.length).toBeLessThan(SAMPLE.length);
+  });
+
+  it('reuses a cached index and rescans when the file changes', async () => {
+    const store = new Map<string, SerializedMcapIndex>();
+    const cache: McapIndexCache = {
+      get: (key) => Promise.resolve(store.has(key) ? structuredClone(store.get(key)) : undefined),
+      set: (key, index) => {
+        store.set(key, structuredClone(index));
+        return Promise.resolve();
+      },
+    };
+    const countingReadable = (bytes: Uint8Array) => {
+      const inner = readableFor(bytes);
+      const counter = { bytesRead: 0 };
+      return {
+        counter,
+        readable: {
+          size: inner.size,
+          read: (offset: bigint, length: bigint) => {
+            counter.bytesRead += Number(length);
+            return inner.read(offset, length);
+          },
+        },
+      };
+    };
+    const big = 'x'.repeat(64 * 1024);
+    const messages = [...SAMPLE, { topic: '/b', logTimeNs: 4_000n, payload: { big } }];
+    const bytes = await writeUnindexedMcap(messages, false);
+
+    const first = countingReadable(bytes);
+    await new McapUnindexedIterableSource(first.readable, { indexCache: { cache, key: 'k' } }).initialize();
+    expect(store.has('k')).toBe(true);
+    expect(first.counter.bytesRead).toBeGreaterThanOrEqual(bytes.byteLength);
+
+    const second = countingReadable(bytes);
+    const cached = new McapUnindexedIterableSource(second.readable, { indexCache: { cache, key: 'k' } });
+    const init = await cached.initialize();
+    // Only the head/tail fingerprint is read.
+    expect(second.counter.bytesRead).toBeLessThanOrEqual(8192);
+    expect(init.topicStats['/a'].messageCount).toBe(3);
+    const all = await collect(cached.messageIterator({ startTime: init.start, topics: ['/a', '/b'] }));
+    expect(all.map((e) => (e.message as { v?: number }).v)).toEqual([1, 2, 3, 4, undefined]);
+
+    // Same key, different content: the fingerprint misses and the file is rescanned.
+    const changed = await writeUnindexedMcap(SAMPLE.slice(0, 2), false);
+    const third = countingReadable(changed);
+    const rescanned = await new McapUnindexedIterableSource(third.readable, {
+      indexCache: { cache, key: 'k' },
+    }).initialize();
+    expect(rescanned.topicStats['/a'].messageCount).toBe(1);
   });
 
   it('rejects non-MCAP data', async () => {

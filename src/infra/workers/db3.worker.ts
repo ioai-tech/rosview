@@ -11,6 +11,8 @@ import type {
   SourceInitProgressCallback,
 } from "./types";
 import { RosDb3IterableSource } from '@/infra/sources/RosDb3IterableSource';
+import type { IIterableSource } from '@/infra/sources/IIterableSource';
+import { withBuiltinTopicAdapters } from '@/infra/sources/adapters';
 import { MessageCursor } from "./MessageCursor";
 import type { LoadProgress } from "./types";
 import type { TransportDiagnostics, WorkerTransportConfig } from "./transport";
@@ -20,7 +22,7 @@ import { resolveWorkerHttpUrl } from '@/shared/utils/resolveWorkerHttpUrl';
 import { trackInitProgress } from './throttledInitProgress';
 
 class Db3Worker implements IWorkerSerializedSourceWorker {
-  private _source?: RosDb3IterableSource;
+  private _source?: IIterableSource;
   private _initialization?: Initialization;
   private _totalBytes = 0;
   private _downloadedBytes = 0;
@@ -48,7 +50,7 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
 
     if (files.length > 0) {
       // Local file(s): SQLite needs the whole database, so we read directly.
-      this._source = new RosDb3IterableSource({ type: "files", files }, { sqlWasmBinary });
+      this._source = withBuiltinTopicAdapters(new RosDb3IterableSource({ type: "files", files }, { sqlWasmBinary }));
       this._totalBytes = files.reduce((sum, f) => sum + f.size, 0);
       this._downloadedBytes = this._totalBytes;
       report({
@@ -66,7 +68,7 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
           : 0;
       report({ phase: "connecting", loadedBytes: 0, totalBytes: knownTotal });
       const data = await this._downloadToBytes(resolveWorkerHttpUrl(args.url), knownTotal, report);
-      this._source = new RosDb3IterableSource({ type: "data", datas: [data] }, { sqlWasmBinary });
+      this._source = withBuiltinTopicAdapters(new RosDb3IterableSource({ type: "data", datas: [data] }, { sqlWasmBinary }));
       this._totalBytes = data.byteLength;
       this._downloadedBytes = data.byteLength;
     } else {

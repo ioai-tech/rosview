@@ -26,7 +26,8 @@ export interface Readable {
 export type PlayerPresence = 'preinit' | 'initializing' | 'ready' | 'closed';
 
 /** Worker-reported phase while a remote (or large local) source is opening. */
-export type SourceInitPhase = 'connecting' | 'downloading' | 'opening';
+/** `indexing`: building a message index by scanning the file (e.g. an MCAP without a summary). */
+export type SourceInitPhase = 'connecting' | 'downloading' | 'opening' | 'indexing';
 
 export interface PlayerState {
   presence: PlayerPresence;

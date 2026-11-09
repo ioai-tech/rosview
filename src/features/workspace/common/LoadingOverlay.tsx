@@ -18,6 +18,7 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({ sourceName, onCa
   const { formatMessage } = useIntl();
   const loadedBytes = useMessagePipeline((state) => state.playerState.progress.loadedBytes);
   const totalBytes = useMessagePipeline((state) => state.playerState.progress.totalBytes);
+  const initPhase = useMessagePipeline((state) => state.playerState.progress.initPhase);
   const bytesPerSecond = useTransferRate(loadedBytes);
   const displayName = sourceDisplayName(sourceName);
   const hasTotal = typeof totalBytes === 'number' && totalBytes > 0;
@@ -63,7 +64,7 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({ sourceName, onCa
         <CardHeader className="gap-2 pb-4 text-center">
           <Spinner className="mx-auto size-8 text-primary" aria-hidden />
           <CardTitle className="text-base font-semibold tracking-tight">
-            {formatMessage({ id: 'welcome.loadingTitle' })}
+            {formatMessage({ id: initPhase === 'indexing' ? 'welcome.indexingTitle' : 'welcome.loadingTitle' })}
           </CardTitle>
           {displayName ? (
             <p className="truncate text-xs text-muted-foreground" title={sourceName}>

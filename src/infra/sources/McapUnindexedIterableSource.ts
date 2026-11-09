@@ -75,9 +75,52 @@ export interface McapScanProgress {
   totalBytes: number;
 }
 
+/** Scan result in a structured-clone friendly shape, for persisting across sessions. */
+export interface SerializedMcapIndex {
+  version: typeof SERIALIZED_INDEX_VERSION;
+  fingerprint: string;
+  schemas: ScannedSchema[];
+  channels: Array<Omit<ScannedChannel, 'metadata'> & { metadata: Array<[string, string]> }>;
+  chunks: ScannedChunk[];
+  problems: PlayerProblem[];
+  messages: {
+    channelId: Uint16Array;
+    logTime: BigUint64Array;
+    publishTime: BigUint64Array;
+    offset: Float64Array;
+    length: Uint32Array;
+    chunk: Int32Array;
+  };
+}
+
+export interface McapIndexCache {
+  get(key: string): Promise<SerializedMcapIndex | undefined>;
+  set(key: string, index: SerializedMcapIndex): Promise<void>;
+}
+
 export interface McapUnindexedScanOptions {
   decompressHandlers?: McapTypes.DecompressHandlers;
   onProgress?: (progress: McapScanProgress) => void;
+  /** Reuses a previous scan of the same file (validated by a head/tail fingerprint). */
+  indexCache?: { cache: McapIndexCache; key: string };
+}
+
+const SERIALIZED_INDEX_VERSION = 1;
+const FINGERPRINT_BYTES = 4096;
+
+/** FNV-1a over the first and last 4 KiB plus the size: cheap to recompute, catches rewritten files. */
+async function fingerprintReadable(readable: IReadable, size: number): Promise<string> {
+  const head = await readable.read(0n, BigInt(Math.min(size, FINGERPRINT_BYTES)));
+  const tailStart = Math.max(0, size - FINGERPRINT_BYTES);
+  const tail = await readable.read(BigInt(tailStart), BigInt(size - tailStart));
+  let hash = 0x811c9dc5;
+  for (const bytes of [head, tail]) {
+    for (const byte of bytes) {
+      hash ^= byte;
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+  }
+  return `${size}:${hash.toString(16)}`;
 }
 
 class BinaryCursor {
@@ -191,7 +234,20 @@ export class McapUnindexedIterableSource implements IIterableSource {
   }
 
   async initialize(): Promise<Initialization> {
-    await this._scan();
+    const indexCache = this._options.indexCache;
+    const size = Number(await this._readable.size());
+    const fingerprint = indexCache ? await fingerprintReadable(this._readable, size) : '';
+    const cached = indexCache ? await indexCache.cache.get(indexCache.key).catch(() => undefined) : undefined;
+    if (cached?.version === SERIALIZED_INDEX_VERSION && cached.fingerprint === fingerprint) {
+      this._restore(cached);
+    } else {
+      await this._scan();
+      if (indexCache) {
+        await indexCache.cache.set(indexCache.key, this._serialize(fingerprint)).catch((err: unknown) => {
+          console.warn("McapUnindexedIterableSource: failed to cache index", err);
+        });
+      }
+    }
 
     this._messages.sort(compareLogTime);
     for (const message of this._messages) {
@@ -309,6 +365,53 @@ export class McapUnindexedIterableSource implements IIterableSource {
       }
     }
     return best ? ((await this._toEvent(best)) ?? null) : null;
+  }
+
+  private _serialize(fingerprint: string): SerializedMcapIndex {
+    const n = this._messages.length;
+    const messages = {
+      channelId: new Uint16Array(n),
+      logTime: new BigUint64Array(n),
+      publishTime: new BigUint64Array(n),
+      offset: new Float64Array(n),
+      length: new Uint32Array(n),
+      chunk: new Int32Array(n),
+    };
+    this._messages.forEach((message, i) => {
+      messages.channelId[i] = message.channelId;
+      messages.logTime[i] = message.logTime;
+      messages.publishTime[i] = message.publishTime;
+      messages.offset[i] = message.offset;
+      messages.length[i] = message.length;
+      messages.chunk[i] = message.chunk;
+    });
+    return {
+      version: SERIALIZED_INDEX_VERSION,
+      fingerprint,
+      schemas: [...this._schemas.values()],
+      channels: [...this._channels.values()].map((channel) => ({ ...channel, metadata: [...channel.metadata] })),
+      chunks: this._chunks,
+      problems: this._problems,
+      messages,
+    };
+  }
+
+  private _restore(index: SerializedMcapIndex): void {
+    for (const schema of index.schemas) this._schemas.set(schema.id, schema);
+    for (const channel of index.channels) {
+      this._channels.set(channel.id, { ...channel, metadata: new Map(channel.metadata) });
+    }
+    this._chunks = index.chunks;
+    this._problems = [...index.problems];
+    const { messages } = index;
+    this._messages = Array.from(messages.channelId, (channelId, i) => ({
+      channelId,
+      logTime: messages.logTime[i],
+      publishTime: messages.publishTime[i],
+      offset: messages.offset[i],
+      length: messages.length[i],
+      chunk: messages.chunk[i],
+    }));
   }
 
   private async _toEvent(message: IndexedMessage): Promise<MessageEvent | undefined> {

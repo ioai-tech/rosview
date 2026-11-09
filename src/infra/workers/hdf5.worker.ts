@@ -16,12 +16,14 @@ import type { TransportDiagnostics, WorkerTransportConfig } from './transport';
 import { SharedPayloadRing } from './sharedPayloadRing';
 import { MessageCursor } from './MessageCursor';
 import { Hdf5IterableSource } from '@/infra/sources/hdf5/Hdf5IterableSource';
+import type { IIterableSource } from '@/infra/sources/IIterableSource';
+import { withBuiltinTopicAdapters } from '@/infra/sources/adapters';
 import { mountBlobAsFile, mountUrlAsLazyFile, type MountedFile } from '@/infra/sources/hdf5/H5FileSystem';
 import { resolveWorkerHttpUrl } from '@/shared/utils/resolveWorkerHttpUrl';
 import { DataQualityScanController } from './dataQualityScanController';
 
 class Hdf5WorkerImpl implements IWorkerSerializedSourceWorker {
-  private _source?: Hdf5IterableSource;
+  private _source?: IIterableSource;
   private _initialization?: Initialization;
   private _mounted?: MountedFile;
   private _h5file?: { close(): unknown };
@@ -64,9 +66,9 @@ class Hdf5WorkerImpl implements IWorkerSerializedSourceWorker {
     }
 
     onProgress?.({ phase: 'opening', loadedBytes: 0, totalBytes: 0 });
-    this._source = new Hdf5IterableSource(this._h5file as never, {
+    this._source = withBuiltinTopicAdapters(new Hdf5IterableSource(this._h5file as never, {
       fileName: this._mounted.path,
-    });
+    }));
     const init = await this._source.initialize();
     this._initialization = init;
     this._qualityScan.initialize(this._source, init, args.autoDataQualityScan === true);

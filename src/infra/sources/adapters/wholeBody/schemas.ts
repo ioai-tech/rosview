@@ -7,9 +7,18 @@
 
 import type { MessageDefinition } from '@foxglove/message-definition';
 import type { RosDatatypes } from '@/core/types/ros';
-import { buildHdf5DatatypesMap } from '../hdf5/schemas';
+import { buildHdf5DatatypesMap } from '../../hdf5/schemas';
 
 export const WHOLE_BODY_FRAME_SCHEMA = 'whole_body.frame';
+export const WHOLE_BODY_META_SCHEMA = 'whole_body.meta';
+export const DEX3_FRAME_SCHEMA = 'unitree.dex3.frame';
+
+/** Dex3 hand joints, left hand then right hand, as published by the recorder. */
+export const DEX3_JOINT_NAMES: readonly string[] = ['left', 'right'].flatMap((side) =>
+  ['thumb_0', 'thumb_1', 'thumb_2', 'middle_0', 'middle_1', 'index_0', 'index_1'].map(
+    (joint) => `${side}_hand_${joint}_joint`,
+  ),
+);
 
 /**
  * `states.robot_q_current` is a MuJoCo-style qpos: floating base
@@ -17,37 +26,7 @@ export const WHOLE_BODY_FRAME_SCHEMA = 'whole_body.frame';
  * motor order. Names match the official G1 29-DoF URDF.
  */
 export const FLOATING_BASE_DOF = 7;
-export const G1_29DOF_JOINT_NAMES: readonly string[] = [
-  'left_hip_pitch_joint',
-  'left_hip_roll_joint',
-  'left_hip_yaw_joint',
-  'left_knee_joint',
-  'left_ankle_pitch_joint',
-  'left_ankle_roll_joint',
-  'right_hip_pitch_joint',
-  'right_hip_roll_joint',
-  'right_hip_yaw_joint',
-  'right_knee_joint',
-  'right_ankle_pitch_joint',
-  'right_ankle_roll_joint',
-  'waist_yaw_joint',
-  'waist_roll_joint',
-  'waist_pitch_joint',
-  'left_shoulder_pitch_joint',
-  'left_shoulder_roll_joint',
-  'left_shoulder_yaw_joint',
-  'left_elbow_joint',
-  'left_wrist_roll_joint',
-  'left_wrist_pitch_joint',
-  'left_wrist_yaw_joint',
-  'right_shoulder_pitch_joint',
-  'right_shoulder_roll_joint',
-  'right_shoulder_yaw_joint',
-  'right_elbow_joint',
-  'right_wrist_roll_joint',
-  'right_wrist_pitch_joint',
-  'right_wrist_yaw_joint',
-];
+export { G1_29DOF_JOINT_NAMES } from '@/shared/robots/unitreeG1';
 
 const COMPRESSED_IMAGE_DEF: MessageDefinition = {
   name: 'sensor_msgs/msg/CompressedImage',

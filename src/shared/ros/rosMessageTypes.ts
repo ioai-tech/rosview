@@ -33,6 +33,24 @@ export function isJointStateSchema(type: string): boolean {
   return matchesRosSchema(type, ROS_MSG_JOINT_STATE);
 }
 
+/**
+ * Preference when several topics of the same kind compete for a default
+ * (lower is better): measured `.../joint_states` first, commanded or target
+ * streams last, so e.g. `/whole_body/joint_states` beats `/dex3/command`.
+ */
+export function measuredTopicRank(topicName: string): number {
+  if (/(^|\/)joint_states$/u.test(topicName)) return 0;
+  if (/(command|cmd|target|desired|action|goal)/iu.test(topicName)) return 2;
+  return 1;
+}
+
+/** Default JointState topic for panels that drive a robot model. */
+export function pickPrimaryJointStateTopic(topics: ReadonlyArray<{ name: string; type: string }>): string | undefined {
+  return topics
+    .filter((topic) => isJointStateSchema(topic.type))
+    .sort((a, b) => measuredTopicRank(a.name) - measuredTopicRank(b.name))[0]?.name;
+}
+
 export function isRosImageSchema(type: string): boolean {
   if (
     matchesRosSchema(type, ROS_MSG_SENSOR_IMAGE) ||

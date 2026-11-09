@@ -65,6 +65,16 @@ describe('LoadingOverlay', () => {
     );
   });
 
+  it('names the indexing phase while an unindexed file is scanned', () => {
+    useMessagePipelineStore.getState().setPlayerState({
+      presence: 'initializing',
+      progress: { loadedBytes: 512, totalBytes: 1024, initPhase: 'indexing' },
+    });
+    renderOverlay('episode_0003.mcap');
+    expect(container.textContent).toContain('Indexing recording');
+    expect(container.querySelector('[data-testid="rosview-loading-progress-bar"]')?.getAttribute('aria-valuenow')).toBe('50');
+  });
+
   it('uses an indeterminate bar before byte totals are known', () => {
     renderOverlay();
     expect(container.querySelector('[data-testid="rosview-loading-progress-indeterminate"]')).not.toBeNull();

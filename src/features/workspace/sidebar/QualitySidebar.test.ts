@@ -138,3 +138,35 @@ describe('QualitySidebar', () => {
     expect(html).toContain('Quality scan is idle');
   });
 });
+
+describe('QualitySidebar source problems', () => {
+  const render = (report: DataQualityReport | undefined) =>
+    renderToStaticMarkup(
+      React.createElement(
+        IntlProvider,
+        { locale: 'en', messages: enMessages },
+        React.createElement(QualitySidebar, {
+          report,
+          sourceProblems: [
+            { severity: 'warn', message: 'Dex3 hand data is recorded in the sidecar file "x.dex3.mcap".' },
+            { severity: 'error', message: 'Channel 3 (/foo): Unsupported encoding' },
+          ],
+          filter: undefined,
+          timelineStart: { sec: 0, nsec: 0 },
+          autoDataQualityScan: false,
+          onAutoDataQualityScanChange: vi.fn(),
+          onRequestScan: vi.fn(),
+          onFilterChange: vi.fn(),
+          onSeek: vi.fn(),
+        }),
+      ),
+    );
+
+  it('lists source warnings with or without a scan report', () => {
+    for (const html of [render(undefined), render(mockReport)]) {
+      expect(html).toContain('Source warnings (2)');
+      expect(html).toContain('x.dex3.mcap');
+      expect(html).toContain('Unsupported encoding');
+    }
+  });
+});
