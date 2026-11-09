@@ -13,7 +13,10 @@ import type {
   PreparePlaybackBufferArgs,
   SourceInitProgressCallback,
 } from "./types";
+import type { IIterableSource } from '@/infra/sources/IIterableSource';
 import { McapIndexedIterableSource } from '@/infra/sources/McapIndexedIterableSource';
+import { McapUnindexedIterableSource } from '@/infra/sources/McapUnindexedIterableSource';
+import { WholeBodyFrameIterableSource } from '@/infra/sources/wholeBody/WholeBodyFrameIterableSource';
 import { loadDecompressHandlers } from '@/infra/sources/decompressHandlers';
 import { MessageCursor } from "./MessageCursor";
 import { HttpFileReader } from '@/infra/services/HttpFileReader';
@@ -47,7 +50,7 @@ const DEFAULT_PREFETCH_AHEAD_MS = 5_000;
 const PLAYBACK_CURSOR_BUFFER_AHEAD_MS = 1_500;
 
 class McapWorkerImpl implements IWorkerSerializedSourceWorker {
-  private _source?: McapIndexedIterableSource;
+  private _source?: IIterableSource;
   private _cachedReadable?: CachedFilelike;
   private _initialization?: Initialization;
   private _chunkCoverage: IndexedChunkCoverage[] = [];
@@ -139,22 +142,37 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
         }
       };
 
-      const reader = await workerPerf.timeAsync(
-        "initialize.McapIndexedReader",
-        () => McapIndexedReader.Initialize({
-          readable: mcapReadable,
+      let reader: McapIndexedReader | undefined;
+      let baseSource: IIterableSource;
+      try {
+        reader = await workerPerf.timeAsync(
+          "initialize.McapIndexedReader",
+          () => McapIndexedReader.Initialize({
+            readable: mcapReadable,
+            decompressHandlers,
+          }),
+        );
+        baseSource = new McapIndexedIterableSource(reader);
+      } catch (indexedErr) {
+        // No summary / chunk index (streamed or truncated recording): index the data section ourselves.
+        console.info("McapWorker: indexed read failed, scanning unindexed MCAP", indexedErr);
+        baseSource = new McapUnindexedIterableSource(mcapReadable, {
           decompressHandlers,
-        }),
-      );
+          onProgress: ({ scannedBytes, totalBytes }) =>
+            report({ phase: "opening", loadedBytes: scannedBytes, totalBytes }),
+        });
+      }
       report({ phase: "opening" });
-      this._source = new McapIndexedIterableSource(reader);
+      const source = new WholeBodyFrameIterableSource(baseSource);
+      this._source = source;
       const init = await workerPerf.timeAsync(
         "initialize.source",
-        () => this._source!.initialize(),
+        () => source.initialize(),
       );
       this._initialization = init;
       this._qualityScan.initialize(this._source, init, args.autoDataQualityScan === true);
       this._chunkCoverage = workerPerf.time("initialize.chunkCoverage", () => {
+        if (!reader) return [];
         const chunksByOffset = [...reader.chunkIndexes].sort((a, b) =>
           a.chunkStartOffset < b.chunkStartOffset ? -1 : a.chunkStartOffset > b.chunkStartOffset ? 1 : 0,
         );
