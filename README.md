@@ -38,6 +38,8 @@ Supports **MCAP**, **ROS 1 bag**, **ROS 2 db3**, **HDF5**, and **BVH** files. Av
 ## Features
 
 - **Multi-format** — MCAP · ROS 1 `.bag` · ROS 2 `.db3` · HDF5 `.h5/.hdf5` · BVH skeletal animation
+  - Unindexed MCAP (no summary, e.g. streamed or truncated recordings) is indexed on load
+  - Whole-body teleop MCAP (`whole_body.frame`, e.g. Unitree G1 + Dex3) is split into camera, joint-state and base-pose topics
 - **Zero-copy parsing** — dedicated Web Workers + Comlink; main thread is never blocked
 - **HTTP Range streaming** — load remote files without downloading them in full
 - **Multi-panel layout** — draggable, dockable panels powered by DockView

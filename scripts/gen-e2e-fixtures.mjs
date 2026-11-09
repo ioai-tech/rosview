@@ -30,6 +30,7 @@ runNode('gen-test-mcap-pose.mjs');
 runNode('gen-test-mcap-3cam.mjs');
 runNode('gen-test-mcap-h264.mjs');
 runNode('gen-test-mcap-compressed-depth.mjs');
+runNode('gen-test-mcap-whole-body.mjs');
 runPython('gen-test-hdf5.py');
 runNode('gen-test-bvh.mjs');
 

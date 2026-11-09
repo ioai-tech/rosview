@@ -36,6 +36,8 @@
 ## 功能特性
 
 - **多格式** — MCAP · ROS 1 `.bag` · ROS 2 `.db3` · HDF5 `.h5/.hdf5` · BVH 骨骼动画
+  - 无索引 MCAP（无 summary，如流式写入或被截断的录制）会在加载时自动建立索引
+  - 全身遥操作 MCAP（`whole_body.frame`，如 Unitree G1 + Dex3）会被拆分为相机、关节状态和基座位姿话题
 - **Worker 解析** — 专用 Web Worker + Comlink；主线程尽量不被阻塞
 - **HTTP Range 流式加载** — 无需整文件下载即可开始回放
 - **多面板布局** — 基于 DockView 的可拖拽、可停靠面板
