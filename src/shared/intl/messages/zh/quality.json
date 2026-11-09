@@ -1,5 +1,6 @@
 {
   "quality.title": "质量",
+  "quality.sourceProblems.title": "数据源警告（{count}）",
   "quality.empty": "暂无报告",
   "quality.header.scanWithPct": "已扫 {scanned} / {total}（{pct}%）{suffix}",
   "quality.header.scanNoPct": "已扫 {scanned} / {total}{suffix}",

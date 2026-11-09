@@ -50,9 +50,11 @@ function aggregateInitProgress(parts: Array<SourceInitProgress | undefined>): So
   const transferredBytes = defined.reduce((sum, part) => sum + (part.transferredBytes ?? 0), 0);
   const phase = defined.some((part) => part.phase === 'downloading')
     ? 'downloading'
-    : defined.some((part) => part.phase === 'opening')
-      ? 'opening'
-      : 'connecting';
+    : defined.some((part) => part.phase === 'indexing')
+      ? 'indexing'
+      : defined.some((part) => part.phase === 'opening')
+        ? 'opening'
+        : 'connecting';
   return { phase, loadedBytes, totalBytes, transferredBytes };
 }
 

@@ -7,6 +7,7 @@ import type {
   DataQualityIssueRange,
   DataQualityIssueType,
   DataQualityReport,
+  PlayerProblem,
   Time,
 } from '@/core/types/ros';
 import { CheckCircle2 } from 'lucide-react';
@@ -25,6 +26,8 @@ import { buildQualityChartPoints, QualityIssueChart } from './QualityIssueChart'
 
 interface QualitySidebarProps {
   report?: DataQualityReport;
+  /** Warnings the source reported while opening the recording (decode failures, truncation, hints). */
+  sourceProblems?: readonly PlayerProblem[];
   filter?: QualityFilter;
   timelineStart?: Time;
   autoDataQualityScan: boolean;
@@ -101,8 +104,35 @@ function sortQualityRanges(a: DataQualityIssueRange, b: DataQualityIssueRange): 
   return a.start.nsec - b.start.nsec;
 }
 
+function SourceProblems({ problems }: { problems: readonly PlayerProblem[] }) {
+  const { formatMessage } = useIntl();
+  if (problems.length === 0) return null;
+  return (
+    <div className="space-y-1 border-b border-border/60 p-2" data-testid="quality-source-problems">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {formatMessage({ id: 'quality.sourceProblems.title' }, { count: problems.length })}
+      </div>
+      <ul className="space-y-1">
+        {problems.map((problem, index) => (
+          <li
+            key={`${index}:${problem.message}`}
+            className={
+              problem.severity === 'error'
+                ? 'rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] leading-snug text-foreground'
+                : 'rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] leading-snug text-foreground'
+            }
+          >
+            {problem.message}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export const QualitySidebar: React.FC<QualitySidebarProps> = ({
   report,
+  sourceProblems = [],
   filter,
   timelineStart,
   autoDataQualityScan,
@@ -160,9 +190,12 @@ export const QualitySidebar: React.FC<QualitySidebarProps> = ({
 
   if (!report) {
     return (
-      <div className="p-3 text-xs text-muted-foreground">
-        {formatMessage({ id: 'quality.empty' })}
-      </div>
+      <>
+        <SourceProblems problems={sourceProblems} />
+        <div className="p-3 text-xs text-muted-foreground">
+          {formatMessage({ id: 'quality.empty' })}
+        </div>
+      </>
     );
   }
 
@@ -200,6 +233,7 @@ export const QualitySidebar: React.FC<QualitySidebarProps> = ({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <SourceProblems problems={sourceProblems} />
       <div className="border-b border-border/60 p-2">
         <div className="flex items-baseline justify-between gap-2 text-[10px] text-muted-foreground">
           <span className="min-w-0 truncate font-mono tabular-nums">{scanLeft}</span>

@@ -1,5 +1,6 @@
 {
   "quality.title": "Quality",
+  "quality.sourceProblems.title": "Source warnings ({count})",
   "quality.empty": "No report.",
   "quality.header.scanWithPct": "Scanned {scanned} / {total} ({pct}%){suffix}",
   "quality.header.scanNoPct": "Scanned {scanned} / {total}{suffix}",

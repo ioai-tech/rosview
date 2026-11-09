@@ -16,7 +16,8 @@ import type {
 import type { IIterableSource } from '@/infra/sources/IIterableSource';
 import { McapIndexedIterableSource } from '@/infra/sources/McapIndexedIterableSource';
 import { McapUnindexedIterableSource } from '@/infra/sources/McapUnindexedIterableSource';
-import { WholeBodyFrameIterableSource } from '@/infra/sources/wholeBody/WholeBodyFrameIterableSource';
+import { createIndexedDbMcapIndexCache } from '@/infra/sources/mcapIndexCache';
+import { withBuiltinTopicAdapters } from '@/infra/sources/adapters';
 import { loadDecompressHandlers } from '@/infra/sources/decompressHandlers';
 import { MessageCursor } from "./MessageCursor";
 import { HttpFileReader } from '@/infra/services/HttpFileReader';
@@ -78,6 +79,7 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
       const url = typeof args.url === 'string' ? args.url : undefined;
       const file = args.file instanceof Blob ? args.file : undefined;
       report({ phase: "connecting", loadedBytes: 0, totalBytes: 0 });
+      let indexing = false;
       if (url) {
         const knownRaw = args.knownTotalBytes;
         const knownTotalBytes =
@@ -96,6 +98,8 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
           cacheSizeInBytes: this._remoteCacheBytes,
           preferCacheViews: true,
           onDownloadProgress: (info) => {
+            // While indexing an unindexed file the scan reports its own (whole-file) progress.
+            if (indexing) return;
             report({
               phase: "downloading",
               loadedBytes: info.loadedBytes,
@@ -156,19 +160,24 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
       } catch (indexedErr) {
         // No summary / chunk index (streamed or truncated recording): index the data section ourselves.
         console.info("McapWorker: indexed read failed, scanning unindexed MCAP", indexedErr);
+        indexing = true;
+        const indexCache = createIndexedDbMcapIndexCache();
+        const cacheKey = url ?? (file instanceof File ? `file:${file.name}:${file.size}:${file.lastModified}` : undefined);
         baseSource = new McapUnindexedIterableSource(mcapReadable, {
           decompressHandlers,
+          indexCache: indexCache && cacheKey ? { cache: indexCache, key: cacheKey } : undefined,
           onProgress: ({ scannedBytes, totalBytes }) =>
-            report({ phase: "opening", loadedBytes: scannedBytes, totalBytes }),
+            report({ phase: "indexing", loadedBytes: scannedBytes, totalBytes }),
         });
       }
       report({ phase: "opening" });
-      const source = new WholeBodyFrameIterableSource(baseSource);
+      const source = withBuiltinTopicAdapters(baseSource);
       this._source = source;
       const init = await workerPerf.timeAsync(
         "initialize.source",
         () => source.initialize(),
       );
+      indexing = false;
       this._initialization = init;
       this._qualityScan.initialize(this._source, init, args.autoDataQualityScan === true);
       this._chunkCoverage = workerPerf.time("initialize.chunkCoverage", () => {

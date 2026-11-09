@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Initialization, MessageEvent, Time } from '@/core/types/ros';
-import type { IIterableSource } from '../IIterableSource';
+import type { IIterableSource } from '../../IIterableSource';
 import type { MessageIteratorArgs } from '@/infra/workers/types';
 import { fromNano } from '@/shared/utils/time';
 import { G1_29DOF_JOINT_NAMES } from './schemas';
-import { WholeBodyFrameIterableSource } from './WholeBodyFrameIterableSource';
+import { withBuiltinTopicAdapters } from '..';
 
 const JPEG_BYTES = [0xff, 0xd8, 0xff, 0xdb, 0x00, 0x01];
 const JPEG_BASE64 = btoa(String.fromCharCode(...JPEG_BYTES));
@@ -78,9 +78,9 @@ async function collect(iter: AsyncIterableIterator<MessageEvent>): Promise<Messa
   return out;
 }
 
-describe('WholeBodyFrameIterableSource', () => {
+describe('whole-body topic adapters', () => {
   it('derives image, joint state and base pose topics', async () => {
-    const source = new WholeBodyFrameIterableSource(innerSource());
+    const source = withBuiltinTopicAdapters(innerSource());
     const init = await source.initialize();
     expect(init.topics).toEqual(
       expect.arrayContaining([
@@ -95,7 +95,7 @@ describe('WholeBodyFrameIterableSource', () => {
 
   it('expands only the requested topics and reads the frame once', async () => {
     const inner = innerSource();
-    const source = new WholeBodyFrameIterableSource(inner);
+    const source = withBuiltinTopicAdapters(inner);
     const init = await source.initialize();
     const events = await collect(
       source.messageIterator({
@@ -126,7 +126,7 @@ describe('WholeBodyFrameIterableSource', () => {
   });
 
   it('strips base64 payloads from the original frame topic', async () => {
-    const source = new WholeBodyFrameIterableSource(innerSource());
+    const source = withBuiltinTopicAdapters(innerSource());
     const init = await source.initialize();
     const [first] = await collect(source.messageIterator({ startTime: init.start, topics: ['/whole_body/frame'] }));
     const message = first.message as ReturnType<typeof frame>;
@@ -135,7 +135,7 @@ describe('WholeBodyFrameIterableSource', () => {
   });
 
   it('maps derived topics for backfill', async () => {
-    const source = new WholeBodyFrameIterableSource(innerSource());
+    const source = withBuiltinTopicAdapters(innerSource());
     await source.initialize();
     const events = await source.getBackfillMessages({
       time: fromNano(250n),
@@ -155,7 +155,7 @@ describe('WholeBodyFrameIterableSource', () => {
       calls.push(args.topics);
       return Promise.resolve(eventAt('/whole_body/frame', 200n, frame(1), 'whole_body.frame'));
     };
-    const source = new WholeBodyFrameIterableSource(inner);
+    const source = withBuiltinTopicAdapters(inner);
     await source.initialize();
     const next = await source.getAdjacentMessage({
       time: fromNano(100n),
@@ -186,7 +186,7 @@ describe('WholeBodyFrameIterableSource', () => {
       yield* events;
     };
 
-    const source = new WholeBodyFrameIterableSource(inner);
+    const source = withBuiltinTopicAdapters(inner);
     const init = await source.initialize();
     expect(init.topics.map((t) => [t.name, t.type])).toEqual([
       ['/robot/frame', 'whole_body.frame'],
@@ -205,16 +205,73 @@ describe('WholeBodyFrameIterableSource', () => {
     });
   });
 
-  it('passes through sources without whole-body frames', async () => {
+  it('splits dex3 hand frames into state and command joint states', async () => {
+    const inner = innerSource();
+    const side = (sign: number) => ({
+      state: { position: [1, 2, 3, 4, 5, 6, 7].map((v) => v * sign), velocity: [0, 0, 0, 0, 0, 0, 0] },
+      command: { position: [0, 0, 0, 0, 0, 0, 0], velocity: [0, 0, 0, 0, 0, 0, 0], tau: [9, 9, 9, 9, 9, 9, 9] },
+    });
+    const events = [eventAt('/dex3/frame', 100n, { left: side(1), right: side(-1) }, 'unitree.dex3.frame')];
+    inner.getBackfillMessages = () => Promise.resolve(events);
+    inner.messageIterator = async function* () {
+      yield* events;
+    };
+    inner.initialize = async () => ({
+      ...(await innerSource().initialize()),
+      topics: [{ name: '/dex3/frame', type: 'unitree.dex3.frame' }],
+    });
+    const source = withBuiltinTopicAdapters(inner);
+    const init = await source.initialize();
+    expect(init.topics.map((t) => t.name)).toEqual(['/dex3/frame', '/dex3/state', '/dex3/command']);
+
+    const [state, command] = await collect(
+      source.messageIterator({ startTime: init.start, topics: ['/dex3/state', '/dex3/command'] }),
+    );
+    expect(state.message).toMatchObject({
+      name: expect.arrayContaining(['left_hand_thumb_0_joint', 'right_hand_index_1_joint']) as unknown,
+      position: [1, 2, 3, 4, 5, 6, 7, -1, -2, -3, -4, -5, -6, -7],
+    });
+    expect((state.message as { name: string[] }).name).toHaveLength(14);
+    expect((command.message as { effort: number[] }).effort).toEqual(new Array(14).fill(9));
+  });
+
+  it('hints at a dex3 sidecar file only when hand data is missing', async () => {
+    const meta = { info: { dex3: { sidecar: 'episode_0003.dex3.mcap' } }, text: {} };
+    const sourceWith = (topics: Array<{ name: string; type: string }>) => {
+      const inner = innerSource();
+      inner.initialize = async () => ({ ...(await innerSource().initialize()), topics });
+      inner.getBackfillMessages = () => Promise.resolve([eventAt('/episode/meta', 100n, meta, 'whole_body.meta')]);
+      return withBuiltinTopicAdapters(inner);
+    };
+    const missing = await sourceWith([{ name: '/episode/meta', type: 'whole_body.meta' }]).initialize();
+    expect(missing.problems).toEqual([expect.objectContaining({ message: expect.stringContaining('episode_0003.dex3.mcap') as unknown })]);
+
+    const present = await sourceWith([
+      { name: '/episode/meta', type: 'whole_body.meta' },
+      { name: '/dex3/frame', type: 'unitree.dex3.frame' },
+    ]).initialize();
+    expect(present.problems).toEqual([]);
+  });
+
+  it('warns about nanosecond timestamps that lost JSON precision', async () => {
+    const inner = innerSource();
+    inner.getBackfillMessages = () =>
+      Promise.resolve([eventAt('/whole_body/frame', 100n, { ...frame(0), sample_time_ns: 1794223925884797000 }, 'whole_body.frame')]);
+    const init = await withBuiltinTopicAdapters(inner).initialize();
+    expect(init.problems).toEqual([expect.objectContaining({ message: expect.stringContaining('sample_time_ns') as unknown })]);
+  });
+
+  it('passes through sources without adapted topics', async () => {
     const plain: IIterableSource = {
       ...innerSource(),
       initialize: async () => ({
         ...(await innerSource().initialize()),
-        topics: [{ name: '/dex3/frame', type: 'unitree.dex3.frame' }],
+        topics: [{ name: '/chatter', type: 'std_msgs/msg/String' }],
       }),
     };
-    const source = new WholeBodyFrameIterableSource(plain);
+    const source = withBuiltinTopicAdapters(plain);
     const init = await source.initialize();
-    expect(init.topics).toEqual([{ name: '/dex3/frame', type: 'unitree.dex3.frame' }]);
+    expect(init.topics).toEqual([{ name: '/chatter', type: 'std_msgs/msg/String' }]);
+    expect(init.problems).toEqual([]);
   });
 });

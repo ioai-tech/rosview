@@ -91,6 +91,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     (state: MessagePipelineState) => state.playerState.progress.dataQualityReport,
   );
   const qualityTimelineStart = useMessagePipeline((state: MessagePipelineState) => state.playerState.activeData?.startTime);
+  const sourceProblems = useMessagePipeline((state: MessagePipelineState) => state.playerState.activeData?.problems);
   const extensionTabs = useMemo<SidebarTabContribution[]>(
     () =>
       extensions
@@ -360,6 +361,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <QualitySidebar
             report={dataQualityReport}
+            sourceProblems={sourceProblems}
             filter={qualityFilter}
             timelineStart={qualityTimelineStart}
             onFilterChange={setQualityFilter}

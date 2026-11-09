@@ -15,6 +15,8 @@ import type {
   PointCloudParseResponse,
 } from './core/pointCloudWorkerProtocol';
 import { transformBvhPointToScene } from '@/shared/bvh/coordinates';
+import { pickPrimaryJointStateTopic } from '@/shared/ros/rosMessageTypes';
+import { matchBuiltinRobotModel, type BuiltinRobotModel } from './core/builtinRobots';
 import { xrobotHumanFrameToSkeleton } from './core/humanSkeleton';
 import { isByteArraySchema } from '@/infra/sources/msgpackPayload';
 import { getScenePanelThemeColors, type ScenePanelThemeColors } from '@/features/panels/common/scenePanelTheme';
@@ -1526,10 +1528,7 @@ const Scene = ({
     }
   }, [urdfLoadError]);
 
-  const jointsTopic = useMemo(
-    () => topics.find((t: { type: string }) => t.type === 'sensor_msgs/msg/JointState')?.name,
-    [topics],
-  );
+  const jointsTopic = useMemo(() => pickPrimaryJointStateTopic(topics), [topics]);
   const bvhTopic = useMemo(
     () => topics.find((t: TopicInfo) => t.type.includes('BvhSkeletonFrame'))?.name,
     [topics],
@@ -1553,13 +1552,45 @@ const Scene = ({
     }
   }, [skeletonFitTopic]);
 
+  // No URDF configured or published: fall back to a bundled model whose joints
+  // the recording's joint states cover (e.g. Unitree G1).
+  const [autoRobot, setAutoRobot] = useState<BuiltinRobotModel | null>(null);
+  const autoRobotEligible = urdf.sourceType === 'topic' && !urdfTopic;
+  useEffect(() => {
+    if (!autoRobotEligible) setAutoRobot(null);
+  }, [autoRobotEligible]);
+  useEffect(() => {
+    if (!autoRobotEligible || autoRobot || !jointState) return;
+    const match = matchBuiltinRobotModel(jointState.name);
+    if (match) setAutoRobot(match);
+  }, [autoRobotEligible, autoRobot, jointState]);
+  useEffect(() => {
+    if (!autoRobot) return;
+    let cancelled = false;
+    autoRobot
+      .loadUrdf()
+      .then((text) => {
+        if (cancelled || text === urdfTextRef.current) return;
+        console.info(`ROS View 3D: no robot_description; using bundled ${autoRobot.label} model.`);
+        urdfTextRef.current = text;
+        setUrdfText(text);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setUrdfLoadError(`Failed to load bundled ${autoRobot.label} URDF: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [autoRobot]);
+
   useEffect(() => {
     // `topic` flows through the message pipeline below; other sources feed
     // the Robot component directly.
     if (urdf.sourceType === 'topic') {
       // Reset any fetched text when switching back to topic mode so that
       // stale URL/file URDFs don't linger.
-      if (urdfTextRef.current && !urdfTopic) {
+      if (urdfTextRef.current && !urdfTopic && !autoRobot) {
         urdfTextRef.current = null;
         setUrdfText(null);
       }
@@ -1609,7 +1640,7 @@ const Scene = ({
       })();
       return () => controller.abort();
     }
-  }, [urdf.sourceType, urdf.topic, urdf.url, urdf.fileContent, urdfTopic]);
+  }, [urdf.sourceType, urdf.topic, urdf.url, urdf.fileContent, urdfTopic, autoRobot]);
 
   const tfTopics = useMemo(
     () =>

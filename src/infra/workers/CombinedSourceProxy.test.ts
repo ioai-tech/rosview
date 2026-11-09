@@ -3,7 +3,7 @@ import type { Initialization, MessageEvent } from '@/core/types/ros';
 import type { WorkerSerializedSource } from './WorkerSerializedSource';
 import { CombinedSourceProxy, type CombinedSourceMember } from './CombinedSourceProxy';
 import { CombinedMessageCursor } from './CombinedMessageCursor';
-import type { IMessageCursor, SourceInitProgressCallback } from './types';
+import type { IMessageCursor, SourceInitProgress, SourceInitProgressCallback } from './types';
 
 function makeInit(overrides: Partial<Initialization> = {}): Initialization {
   return {
@@ -94,6 +94,23 @@ describe('CombinedSourceProxy', () => {
       updates.push({ loadedBytes: progress.loadedBytes, totalBytes: progress.totalBytes });
     });
     expect(updates.some((update) => update.loadedBytes === 30 && update.totalBytes === 100)).toBe(true);
+  });
+
+  it('reports indexing while any member indexes and none downloads', async () => {
+    const withPhase = (phase: SourceInitProgress['phase']) =>
+      makeMockWorkerSource({
+        initialize: vi.fn(async (_args: Record<string, unknown>, onProgress?: SourceInitProgressCallback) => {
+          onProgress?.({ phase, loadedBytes: 1, totalBytes: 2 });
+          return makeInit({ topics: [{ name: `/${phase}`, type: 'std_msgs/String' }] });
+        }),
+      });
+    const phases: string[] = [];
+    const proxy = new CombinedSourceProxy([
+      makeMember('a.mcap', withPhase('opening')),
+      makeMember('b.mcap', withPhase('indexing')),
+    ]);
+    await proxy.initialize({}, (progress) => phases.push(progress.phase));
+    expect(phases[phases.length - 1]).toBe('indexing');
   });
 
   it('excludes a member that fails to initialize, terminates its worker, and records a problem', async () => {

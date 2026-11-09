@@ -11,6 +11,8 @@ import type {
   SourceInitProgressCallback,
 } from "./types";
 import { BagIterableSource } from '@/infra/sources/BagIterableSource';
+import type { IIterableSource } from '@/infra/sources/IIterableSource';
+import { withBuiltinTopicAdapters } from '@/infra/sources/adapters';
 import { MessageCursor } from "./MessageCursor";
 import { HttpFileReader } from '@/infra/services/HttpFileReader';
 import CachedFilelike from '@/infra/services/CachedFilelike';
@@ -24,7 +26,7 @@ import { trackInitProgress } from './throttledInitProgress';
 import { buildRemoteBagReadable, type SyncSizeBagReadable } from './remoteBagReadable';
 
 class BagWorker implements IWorkerSerializedSourceWorker {
-  private _source?: BagIterableSource;
+  private _source?: IIterableSource;
   private _cachedReadable?: CachedFilelike;
   private _initialization?: Initialization;
   private _totalBytes = 0;
@@ -88,7 +90,7 @@ class BagWorker implements IWorkerSerializedSourceWorker {
     }
 
     report({ phase: "opening" });
-    this._source = new BagIterableSource(sourceArgs, { wasmBinary: zstdWasmBinary });
+    this._source = withBuiltinTopicAdapters(new BagIterableSource(sourceArgs, { wasmBinary: zstdWasmBinary }));
     const init = await this._source.initialize();
     this._initialization = init;
     this._qualityScan.initialize(this._source, init, args.autoDataQualityScan === true);

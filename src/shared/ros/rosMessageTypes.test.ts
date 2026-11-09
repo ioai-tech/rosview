@@ -7,6 +7,7 @@ import {
   isRosImageSchema,
   matchesRosSchema,
   normalizeRosSchemaName,
+  pickPrimaryJointStateTopic,
   ROS_MSG_FOXGLOVE_COMPRESSED_VIDEO,
   ROS_MSG_FOXGLOVE_RAW_AUDIO,
   ROS_MSG_POSE_STAMPED,
@@ -75,5 +76,26 @@ describe('rosMessageTypes', () => {
     expect(isAudioPanelMainTopicSchema('audio_common_msgs/msg/AudioData [ros2msg]')).toBe(true);
     expect(isAudioPanelMainTopicSchema('audio_common_msgs/msg/AudioDataStamped')).toBe(true);
     expect(isAudioPanelMainTopicSchema('sensor_msgs/msg/Image')).toBe(false);
+  });
+});
+
+describe('pickPrimaryJointStateTopic', () => {
+  const js = (name: string, type = 'sensor_msgs/msg/JointState') => ({ name, type });
+
+  it('prefers measured joint_states over command and other joint state topics', () => {
+    expect(
+      pickPrimaryJointStateTopic([
+        js('/dex3/command'),
+        js('/dex3/state'),
+        js('/whole_body/joint_states'),
+        js('/camera', 'sensor_msgs/msg/Image'),
+      ]),
+    ).toBe('/whole_body/joint_states');
+    expect(pickPrimaryJointStateTopic([js('/dex3/command'), js('/dex3/state')])).toBe('/dex3/state');
+  });
+
+  it('accepts ROS 1 schema names and returns undefined without joint states', () => {
+    expect(pickPrimaryJointStateTopic([js('/joint_states', 'sensor_msgs/JointState')])).toBe('/joint_states');
+    expect(pickPrimaryJointStateTopic([js('/camera', 'sensor_msgs/msg/Image')])).toBeUndefined();
   });
 });

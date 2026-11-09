@@ -13,6 +13,8 @@ const DERIVED_TOPICS = [
   '/whole_body/colors/color_1',
   '/whole_body/joint_states',
   '/whole_body/base_pose',
+  '/dex3/state',
+  '/dex3/command',
 ];
 
 async function expectWholeBodyLoaded(page: Page, diagnostics: BrowserDiagnostics): Promise<void> {

@@ -1,5 +1,6 @@
 {
   "quality.title": "品質",
+  "quality.sourceProblems.title": "ソースの警告（{count}）",
   "quality.empty": "なし",
   "quality.header.scanWithPct": "走査 {scanned} / {total}（{pct}%）{suffix}",
   "quality.header.scanNoPct": "走査 {scanned} / {total}{suffix}",

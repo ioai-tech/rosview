@@ -50,6 +50,7 @@
   "welcome.openDirectory": "Choose folder",
   "welcome.fileTypes": "mcap · bag · db3 · hdf5 · bvh",
   "welcome.directoryHint": "All matching files in folder",
+  "welcome.indexingTitle": "Indexing recording",
   "welcome.loadingTitle": "Loading",
   "welcome.loadingPhase.preparing": "Preparing…",
   "welcome.loadingSpeed": "{speed}/s",
