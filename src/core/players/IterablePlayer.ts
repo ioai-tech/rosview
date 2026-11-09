@@ -173,6 +173,12 @@ export class IterablePlayer implements Player {
   private _prefetchPromise?: Promise<void>;
   private _prefetchStartedAtMs: number | undefined;
   private _prefetchRequestId = 0;
+  /**
+   * Play was requested before initialization finished (the transport is
+   * clickable under the loading overlay). Starting the clock then would anchor
+   * it at time zero instead of the recording start, so playback is deferred.
+   */
+  private _playWhenReady = false;
   private _timeSubscribers = new Set<(time: Time) => void>();
   private _rafId: number | undefined;
   private _lastPipelineEmitMs = 0;
@@ -489,7 +495,12 @@ export class IterablePlayer implements Player {
       this._emitState();
       this._startLoadProgressPolling();
       void this._refreshLoadProgress();
+      if (this._playWhenReady) {
+        this._playWhenReady = false;
+        this.play();
+      }
     } catch (err) {
+      this._playWhenReady = false;
       // Matched by name: core must not import the worker implementation.
       if (err instanceof Error && err.name === "WorkerSourceCancelledError") {
         console.debug("IterablePlayer: initialization cancelled");
@@ -506,6 +517,10 @@ export class IterablePlayer implements Player {
 
   play(): void {
     if (this._isPlaying) return;
+    if (this._state.presence !== "ready") {
+      this._playWhenReady = true;
+      return;
+    }
     this._advancePlaybackEpoch();
     this._isPlaying = true;
     const now = performance.now();
@@ -527,6 +542,7 @@ export class IterablePlayer implements Player {
   }
 
   pause(): void {
+    this._playWhenReady = false;
     this._advancePlaybackEpoch();
     const now = performance.now();
     this._clock.pause(now);
@@ -688,6 +704,7 @@ export class IterablePlayer implements Player {
   }
 
   close(): void {
+    this._playWhenReady = false;
     this._advancePlaybackEpoch();
     this._clock.pause(performance.now());
     this._isPlaying = false;

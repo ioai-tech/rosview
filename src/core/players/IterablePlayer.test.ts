@@ -1254,6 +1254,78 @@ describe('IterablePlayer initialize progress', () => {
   });
 });
 
+describe('IterablePlayer play before ready', () => {
+  it('defers play requested during initialization and starts from the recording start', async () => {
+    let now = 0;
+    let nextRafId = 1;
+    const oldPerformanceNow = performance.now;
+    const oldRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const oldCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    const rafCallbacks = new Map<number, FrameRequestCallback>();
+    Object.defineProperty(performance, 'now', { configurable: true, value: () => now });
+    globalThis.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
+      const id = nextRafId++;
+      rafCallbacks.set(id, cb);
+      return id;
+    });
+    globalThis.cancelAnimationFrame = vi.fn((id: number) => {
+      rafCallbacks.delete(id);
+    });
+
+    const gate = deferred<Initialization>();
+    const source = makeSource([]);
+    source.initialize = vi.fn(async () => await gate.promise);
+    const player = new IterablePlayer(source);
+    let latestState: PlayerState | undefined;
+    player.setListener((state) => {
+      latestState = state;
+    });
+
+    try {
+      const pending = player.initialize({});
+      await flushAsyncWork();
+      player.play();
+      expect(latestState?.activeData).toBeUndefined();
+
+      now = 5_000;
+      gate.resolve({ ...makeInitialization(), start: { sec: 100, nsec: 0 }, end: { sec: 110, nsec: 0 } });
+      await pending;
+      expect(latestState?.activeData?.isPlaying).toBe(true);
+      expect(player.getCurrentTime()).toEqual({ sec: 100, nsec: 0 });
+
+      now = 6_000;
+      rafCallbacks.get(Math.max(...rafCallbacks.keys()))?.(now);
+      await flushAsyncWork();
+      expect(player.getCurrentTime()).toEqual({ sec: 101, nsec: 0 });
+    } finally {
+      player.close();
+      Object.defineProperty(performance, 'now', { configurable: true, value: oldPerformanceNow });
+      globalThis.requestAnimationFrame = oldRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = oldCancelAnimationFrame;
+    }
+  });
+
+  it('drops a deferred play when paused before initialization finishes', async () => {
+    const gate = deferred<Initialization>();
+    const source = makeSource([]);
+    source.initialize = vi.fn(async () => await gate.promise);
+    const player = new IterablePlayer(source);
+    let latestState: PlayerState | undefined;
+    player.setListener((state) => {
+      latestState = state;
+    });
+
+    const pending = player.initialize({});
+    await flushAsyncWork();
+    player.play();
+    player.pause();
+    gate.resolve(makeInitialization());
+    await pending;
+    expect(latestState?.activeData?.isPlaying).toBe(false);
+    player.close();
+  });
+});
+
 describe('IterablePlayer playback watchdogs', () => {
   function installFakePlaybackClock() {
     let now = 0;
