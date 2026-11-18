@@ -180,7 +180,7 @@ clearCache();
 - A 3D panel only when there are TF or pose topics (or a BVH skeleton) **and** the browser has WebGL; a Pose panel for pose topics.
 - Raw Messages as a thin strip at the bottom (the only panel when nothing else applies).
 
-Plots draw while messages arrive. The embedded root renders a labelled `region`, not a `<main>` landmark.
+Plots draw while messages arrive. For remote range-backed recordings a Plot reads only a window of +/- 30 s around the playhead and recentres it as the playhead moves (its x axis follows the window); it never preloads the whole file. Local files keep reading the full range. The embedded root renders a labelled `region`, not a `<main>` landmark.
 
 `messages` replaces viewer copy by message id (ICU strings, applied over en / zh / ja; `RosViewMessageKey` lists the ids):
 

@@ -82,12 +82,14 @@ export function mergeInitializations(sources: MergeableSource[]): MergedInitiali
   let end: Time | undefined;
   let preferredSamplingFps: number | undefined;
   let randomAccessByTopic = true;
+  let remoteRangeBacked = false;
 
   sources.forEach((source, memberIndex) => {
     const init = source.initialization;
     problems.push(...init.problems);
     start = start ? minTime(start, init.start) : init.start;
     end = end ? maxTime(end, init.end) : init.end;
+    if (init.remoteRangeBacked === true) remoteRangeBacked = true;
     if (init.randomAccessByTopic !== true) {
       randomAccessByTopic = false;
     }
@@ -150,6 +152,7 @@ export function mergeInitializations(sources: MergeableSource[]): MergedInitiali
       problems,
       preferredSamplingFps,
       randomAccessByTopic,
+      remoteRangeBacked,
     },
     memberIndicesByTopic,
   };

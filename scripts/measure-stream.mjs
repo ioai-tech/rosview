@@ -18,6 +18,9 @@ const timeoutMs = Number(opt('timeout', 180)) * 1000;
 const seeks = Number(opt('seeks', 10));
 const playSeconds = Number(opt('play-seconds', 0));
 const suffix = opt('url-suffix', '');
+const hostProps = opt('host-props', '');
+const settleMs = Number(opt('settle', 0));
+const idleSeconds = Number(opt('idle', 0));
 const target = `${app}/?url=${encodeURIComponent(fileUrl)}${suffix}`;
 
 const profileDir = `${process.env.TMPDIR || '.'}/rv-measure-${process.pid}`;
@@ -60,6 +63,7 @@ async function browserRssMiB() {
 }
 
 const out = {};
+if (hostProps) await page.addInitScript((p) => { window.__rosviewHostProps = JSON.parse(p); }, hostProps);
 await fetch(logUrl, { method: 'DELETE' });
 let t0 = Date.now();
 await page.goto(target);
@@ -68,13 +72,24 @@ const log = await (await fetch(logUrl)).json();
 out.requests = log.length;
 out.requestedMiB = +(log.reduce((s, e) => s + (e.end - e.start + 1), 0) / 2 ** 20).toFixed(1);
 
+if (idleSeconds > 0) {
+  // Let default-layout panels (plots) load for a while, then count what crossed the link.
+  await page.waitForTimeout(Math.max(0, idleSeconds * 1000 - (Date.now() - t0)));
+  const l = await (await fetch(logUrl)).json();
+  out.bytesFirstWindowMiB = +(l.filter((e) => e.t0 <= t0 + idleSeconds * 1000).reduce((n, e) => n + (e.end - e.start + 1), 0) / 2 ** 20).toFixed(1);
+  out.windowSeconds = idleSeconds;
+  out.plotPanels = await page.locator('.uplot').count();
+}
+
 // Seeks: pause, click the track at spread positions.
 await page.getByRole('button', { name: 'Pause playback' }).click({ timeout: 2000 }).catch(() => {});
 const track = page.getByTestId('playback-track');
 const box = await track.boundingBox();
 const seekMs = [];
+const frameMs = [];
 for (let i = 0; i < seeks; i++) {
   const frac = [0.5, 0.2, 0.8, 0.35, 0.65, 0.1, 0.9, 0.45, 0.75, 0.3][i % 10];
+  if (settleMs > 0) await page.waitForTimeout(settleMs); // nothing from the previous seek in flight
   const before = await page.evaluate(() => performance.getEntriesByName('rosview:seek').length);
   await track.click({ position: { x: Math.max(1, box.width * frac), y: box.height / 2 } });
   const started = Date.now();
@@ -86,12 +101,20 @@ for (let i = 0; i < seeks; i++) {
   }
   const entries = await page.evaluate(() => performance.getEntriesByName('rosview:seek').map((e) => e.duration));
   seekMs.push(Math.round(entries[entries.length - 1]));
+  const frames = await page.evaluate(() => performance.getEntriesByName('rosview:seek:frames').map((e) => e.duration));
+  if (frames.length > frameMs.length) frameMs.push(Math.round(frames[frames.length - 1]));
 }
 if (seekMs.length) {
   const sorted = [...seekMs].sort((a, b) => a - b);
   out.seekMs = seekMs;
   out.seekP50 = sorted[Math.floor(sorted.length * 0.5)];
   out.seekP90 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9))];
+}
+if (frameMs.length) {
+  const f = [...frameMs].sort((a, b) => a - b);
+  out.framesMs = frameMs;
+  out.framesP50 = f[Math.floor(f.length * 0.5)];
+  out.framesP90 = f[Math.min(f.length - 1, Math.floor(f.length * 0.9))];
 }
 
 if (playSeconds > 0) {

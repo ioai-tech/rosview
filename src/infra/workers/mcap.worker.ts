@@ -206,7 +206,7 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
         this._scheduleTimePrefixPrefetch();
       }
       workerPerf.flushMaybe(true);
-      return init;
+      return this._cachedReadable ? { ...init, remoteRangeBacked: true } : init;
     } catch (err) {
       console.error("McapWorker: initialize failed", err);
       throw err;

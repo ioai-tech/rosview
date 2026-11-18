@@ -85,11 +85,12 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const [viewportState, setViewportState] = useState<PlotViewportState>({ x: false, y: false });
 
-  const { startTime, endTime, randomAccessByTopic, topics } = useMessagePipeline(
+  const { startTime, endTime, randomAccessByTopic, topics, remoteRangeBacked } = useMessagePipeline(
     useShallow((state: MessagePipelineState) => ({
       startTime: state.playerState.activeData?.startTime,
       endTime: state.playerState.activeData?.endTime,
       randomAccessByTopic: state.playerState.activeData?.randomAccessByTopic,
+      remoteRangeBacked: state.playerState.activeData?.remoteRangeBacked,
       topics: state.playerState.activeData?.topics ?? [],
     })),
   );
@@ -109,11 +110,6 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
   const primary = selectPrimarySeries(config);
   const showJointStateFields = isPrimaryJointState(config, topicByName);
 
-  const xRange = useMemo(() => {
-    if (!startTime || !endTime || config.xAxisMode !== 'timestamp') return undefined;
-    return { min: timeToSec(startTime), max: timeToSec(endTime) };
-  }, [config.xAxisMode, endTime, startTime]);
-
   const { detectingTopic, applyTopicDetection } = usePlotTopicDetection({
     player,
     config,
@@ -123,7 +119,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     endTime,
   });
 
-  const { dataset: rawDataset, loading, progress, error } = usePlotPanelData({
+  const { dataset: rawDataset, loading, progress, error, window: dataWindow } = usePlotPanelData({
     player,
     config,
     activeTopics,
@@ -131,7 +127,15 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     startTime,
     endTime,
     randomAccessByTopic,
+    windowed: remoteRangeBacked === true,
   });
+
+  const xRange = useMemo(() => {
+    if (!startTime || !endTime || config.xAxisMode !== 'timestamp') return undefined;
+    // Remote recordings load a window around the playhead; the axis follows it.
+    if (dataWindow) return { min: timeToSec(dataWindow.start), max: timeToSec(dataWindow.end) };
+    return { min: timeToSec(startTime), max: timeToSec(endTime) };
+  }, [config.xAxisMode, dataWindow, endTime, startTime]);
 
   const dataset = useMemo(
     () => annotatePlotUnits(rawDataset, config.series, topicByName),

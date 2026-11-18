@@ -21,18 +21,19 @@ function readSpaUrlFromQuery(): string | undefined {
   return v || undefined;
 }
 
-/** Optional `?sourceKey=` names the recording for the in-tab byte cache (used by performance tests). */
+/** Test seam (e2e builds only): `?sourceKey=` names the recording for the in-tab byte cache. */
 function readSourceKeyFromQuery(): string | undefined {
-  if (typeof window === 'undefined') return undefined;
+  if (import.meta.env.MODE !== 'e2e' || typeof window === 'undefined') return undefined;
   return new URLSearchParams(window.location.search).get('sourceKey')?.trim() || undefined;
 }
 
 /**
- * Test seam: Playwright sets `window.__rosviewHostProps` before load to drive embedding props
- * (refreshUrls, sourceKey, messages) through the standalone shell, as a host app would.
+ * Test seam, compiled in only for `vite build --mode e2e` (Playwright and local measurement
+ * builds; production builds drop it): `window.__rosviewHostProps` supplies embedding props
+ * (refreshUrls, sourceKey, messages, preferAutoLayout) to the standalone shell, as a host app would.
  */
 function readHostPropsOverride(): Partial<RosViewerProps> {
-  if (typeof window === 'undefined') return {};
+  if (import.meta.env.MODE !== 'e2e' || typeof window === 'undefined') return {};
   return (window as unknown as { __rosviewHostProps?: Partial<RosViewerProps> }).__rosviewHostProps ?? {};
 }
 

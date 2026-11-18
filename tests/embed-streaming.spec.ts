@@ -190,4 +190,30 @@ test.describe('embedding: streaming and URL renewal', () => {
     // The standalone shell owns the page's only <main>; RosView itself renders none.
     expect(await page.locator('main').count()).toBe(1);
   });
+
+  test('default auto layout plots read a window around the playhead, not the whole remote file', async ({ page }) => {
+    // 150 s recording, small frames: joint topics are interleaved with the cameras in every chunk.
+    const long = path.join(dir, 'long.mcap');
+    execFileSync('node', [path.join(here, '../scripts/gen-test-mcap-stream-3cam.mjs'), long, '150', '6'], { stdio: 'ignore' });
+    const file = readFileSync(long);
+    const log: RangeLog = [];
+    await serveRanged(page, '/stream/long.mcap', file, log);
+    await page.addInitScript(() => {
+      (window as unknown as { __rosviewHostProps: unknown }).__rosviewHostProps = {
+        preferAutoLayout: true,
+        preferencePersistence: 'off',
+        layoutPersistence: 'off',
+      };
+    });
+    await page.goto(`/?url=${encodeURIComponent('/stream/long.mcap')}`);
+    await waitForRosviewReady(page);
+    await firstImage(page);
+    // A Plot panel exists (JointState topics) and has had time to load its window.
+    await expect(page.locator('.uplot').first()).toBeVisible({ timeout: 30_000 });
+    await page.waitForTimeout(6_000);
+    const requested = log.reduce((n, r) => n + (r.end - r.start + 1), 0);
+    expect(file.length).toBeGreaterThan(20 * 1024 * 1024);
+    // +/-30 s of 150 s is about 20 %; a whole-file preload would be ~100 %.
+    expect(requested).toBeLessThan(file.length * 0.5);
+  });
 });

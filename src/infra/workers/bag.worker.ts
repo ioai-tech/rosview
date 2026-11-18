@@ -83,7 +83,7 @@ class BagWorker implements IWorkerSerializedSourceWorker {
     if (this._cachedReadable) {
       this._totalBytes = await this._cachedReadable.size();
     }
-    return init;
+    return this._cachedReadable ? { ...init, remoteRangeBacked: true } : init;
   }
 
   getMessageCursor(args: MessageIteratorArgs): Promise<IMessageCursor<unknown>> {
