@@ -52,7 +52,8 @@ High/critical issues are fixed by upgrading the affected package when the parent
 
 A waiver is the advisory id plus the reason, kept in the table below. `npm run check:audit` reads this section as its allowlist, so an id deleted from here starts failing CI again. Keep the table short, keep it toolchain-only, and delete entries as soon as a fix exists — a stale waiver is a silent hole.
 
-There are currently **no waivers**: the Tailwind 3 → 4 migration removed the last one — the `braces` stack-exhaustion advisory reached through `tailwindcss@3` → `chokidar`/`fast-glob`/`micromatch` — because v4 pulls none of that toolchain. `npm run check:audit` reports zero advisories.
+One waiver is open. The picomatch ReDoS advisory affects every published picomatch (`<=4.0.7`; 4.0.7 is the latest release, GitHub lists no patched version), so no upgrade or override can fix it. It is reached only through the build / test toolchain: `vite` (and `@vitejs/plugin-react`), `vitest` (and `@vitest/coverage-v8`), `tinyglobby`, `fdir` and `typescript-eslint`, which glob our own config paths. picomatch is not part of the published `dist-lib` bundle or its dependencies.
 
 | Advisory | Chain | Why there is no fix yet | Review |
 |---|---|---|---|
+| GHSA-fc5q-39xc-vjpf | `picomatch` (ReDoS, single-branch repeated extglobs) via `vite`, `vitest`, `@vitejs/plugin-react`, `@vitest/coverage-v8`, `tinyglobby`, `fdir`, `typescript-eslint` | Toolchain only; no patched picomatch release exists. | Delete this row and bump as soon as picomatch publishes a fix |

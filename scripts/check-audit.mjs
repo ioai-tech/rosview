@@ -18,6 +18,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { advisoryId, resolveWaived } from './audit-waivers.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECURITY_POLICY = path.join(ROOT, 'SECURITY.md');
@@ -36,12 +37,6 @@ function readWaivers() {
   const end = md.indexOf('\n## ', start + WAIVER_SECTION.length);
   const section = md.slice(start, end === -1 ? undefined : end);
   return new Set((section.match(/GHSA-[0-9a-z-]+/gi) ?? []).map((id) => id.toUpperCase()));
-}
-
-/** Advisory key of a `via` entry: the GHSA id, or null when there is none. */
-function advisoryId(viaEntry) {
-  const url = typeof viaEntry === 'object' ? viaEntry.url ?? '' : '';
-  return url.match(/GHSA-[0-9a-z-]+/i)?.[0].toUpperCase() ?? null;
 }
 
 function runAudit() {
@@ -63,25 +58,7 @@ const audit = runAudit();
 const vulnerabilities = audit.vulnerabilities ?? {};
 const names = Object.keys(vulnerabilities);
 
-// A node is waived when every advisory it carries is waived and every `via`
-// chain it depends on is itself waived. Fixed point: resolve nodes whose fate
-// is already known, repeat until nothing changes.
-const waived = new Map(names.map((n) => [n, false]));
-const blocked = new Set(names);
-for (let pass = 0; pass <= names.length && blocked.size > 0; pass++) {
-  for (const name of [...blocked]) {
-    const via = vulnerabilities[name].via ?? [];
-    const resolved = via.length > 0 && via.every((entry) => {
-      if (typeof entry === 'string') return waived.get(entry) === true;
-      const id = advisoryId(entry);
-      return id !== null && waivers.has(id);
-    });
-    if (resolved) {
-      waived.set(name, true);
-      blocked.delete(name);
-    }
-  }
-}
+const waived = resolveWaived(vulnerabilities, waivers);
 
 const reportable = names.filter((n) => BLOCKING.has(vulnerabilities[n].severity));
 const failing = reportable.filter((n) => !waived.get(n));
