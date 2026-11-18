@@ -18,6 +18,7 @@ import type { LoadProgress } from "./types";
 import type { TransportDiagnostics, WorkerTransportConfig } from "./transport";
 import { SharedPayloadRing } from "./sharedPayloadRing";
 import { DataQualityScanController } from './dataQualityScanController';
+import { RemoteRangeFile, isMessagePort } from '@/infra/range/rangeHandle';
 import { resolveWorkerHttpUrl } from '@/shared/utils/resolveWorkerHttpUrl';
 import { trackInitProgress } from './throttledInitProgress';
 
@@ -67,7 +68,13 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
           ? Math.floor(args.knownTotalBytes)
           : 0;
       report({ phase: "connecting", loadedBytes: 0, totalBytes: knownTotal });
-      const data = await this._downloadToBytes(resolveWorkerHttpUrl(args.url), knownTotal, report);
+      const handle = isMessagePort(args.rangePort) ? new RemoteRangeFile(args.rangePort) : undefined;
+      const data = await this._downloadToBytes(
+        resolveWorkerHttpUrl(handle ? await handle.remote.getUrl() : args.url),
+        knownTotal,
+        report,
+        handle,
+      );
       this._source = withBuiltinTopicAdapters(new RosDb3IterableSource({ type: "data", datas: [data] }, { sqlWasmBinary }));
       this._totalBytes = data.byteLength;
       this._downloadedBytes = data.byteLength;
@@ -92,8 +99,14 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
     url: string,
     knownTotal: number,
     report: (update: { phase: "downloading"; loadedBytes: number; totalBytes: number; transferredBytes: number }) => void,
+    handle?: RemoteRangeFile,
   ): Promise<Uint8Array> {
-    const resp = await fetch(url);
+    let resp = await fetch(url);
+    if ((resp.status === 401 || resp.status === 403) && handle) {
+      // Expired presigned URL: ask the host for a fresh one once, then retry.
+      const fresh = await handle.remote.renewUrl(url);
+      if (fresh) resp = await fetch(resolveWorkerHttpUrl(fresh));
+    }
     if (!resp.ok) {
       throw new Error(`Db3Worker: failed to download db3 (${resp.status} ${resp.statusText})`);
     }

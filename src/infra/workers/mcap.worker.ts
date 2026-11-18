@@ -20,9 +20,7 @@ import { createIndexedDbMcapIndexCache } from '@/infra/sources/mcapIndexCache';
 import { withBuiltinTopicAdapters } from '@/infra/sources/adapters';
 import { loadDecompressHandlers } from '@/infra/sources/decompressHandlers';
 import { MessageCursor } from "./MessageCursor";
-import { HttpFileReader } from '@/infra/services/HttpFileReader';
-import CachedFilelike from '@/infra/services/CachedFilelike';
-import { resolveWorkerHttpUrl } from '@/shared/utils/resolveWorkerHttpUrl';
+import { RemoteRangeFile, isMessagePort } from '@/infra/range/rangeHandle';
 import type { LoadProgress } from "./types";
 import type { TransportDiagnostics, WorkerTransportConfig } from "./transport";
 import { SharedPayloadRing } from "./sharedPayloadRing";
@@ -52,7 +50,7 @@ const PLAYBACK_CURSOR_BUFFER_AHEAD_MS = 1_500;
 
 class McapWorkerImpl implements IWorkerSerializedSourceWorker {
   private _source?: IIterableSource;
-  private _cachedReadable?: CachedFilelike;
+  private _cachedReadable?: RemoteRangeFile;
   private _initialization?: Initialization;
   private _chunkCoverage: IndexedChunkCoverage[] = [];
   private _totalBytes = 0;
@@ -72,7 +70,7 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
       enabled: args.workerPerf === true,
       label: "mcap",
     });
-    console.debug("McapWorker: initialize starting", args);
+    console.debug("McapWorker: initialize starting", Object.keys(args));
     const report = trackInitProgress(onProgress);
     try {
       let rawReadable: IReadable;
@@ -80,40 +78,28 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
       const file = args.file instanceof Blob ? args.file : undefined;
       report({ phase: "connecting", loadedBytes: 0, totalBytes: 0 });
       let indexing = false;
-      if (url) {
-        const knownRaw = args.knownTotalBytes;
-        const knownTotalBytes =
-          typeof knownRaw === 'number' &&
-          Number.isFinite(knownRaw) &&
-          knownRaw > 0
-            ? Math.floor(knownRaw)
-            : undefined;
-        const fileReader = new HttpFileReader(
-          resolveWorkerHttpUrl(url),
-          knownTotalBytes != null ? { knownTotalBytes } : undefined,
-        );
-        this._remoteCacheBytes = resolveRemoteCacheBytes();
-        const cachedReadable = new CachedFilelike({
-          fileReader,
-          cacheSizeInBytes: this._remoteCacheBytes,
-          preferCacheViews: true,
-          onDownloadProgress: (info) => {
-            // While indexing an unindexed file the scan reports its own (whole-file) progress.
-            if (indexing) return;
-            report({
-              phase: "downloading",
-              loadedBytes: info.loadedBytes,
-              totalBytes: info.totalBytes,
-              transferredBytes: info.transferredBytes,
-            });
-          },
+      const rangePort = args.rangePort;
+      if (isMessagePort(rangePort)) {
+        const remoteFile = new RemoteRangeFile(rangePort);
+        this._remoteCacheBytes = typeof args.rangeCacheBytes === 'number' ? args.rangeCacheBytes : resolveRemoteCacheBytes();
+        await remoteFile.setProgressListener((info) => {
+          // While indexing an unindexed file the scan reports its own (whole-file) progress.
+          if (indexing) return;
+          report({
+            phase: "downloading",
+            loadedBytes: info.loadedBytes,
+            totalBytes: info.totalBytes,
+            transferredBytes: info.transferredBytes,
+          });
         });
-        this._cachedReadable = cachedReadable;
+        this._cachedReadable = remoteFile;
         rawReadable = {
-          size: async () => BigInt(await cachedReadable.size()),
+          size: async () => BigInt(await remoteFile.size()),
           read: async (offset: bigint, length: bigint) =>
-            await cachedReadable.read(Number(offset), Number(length)),
+            await remoteFile.read(Number(offset), Number(length)),
         };
+      } else if (url) {
+        throw new Error("McapWorker: a remote recording needs a range handle (rangePort)");
       } else if (file) {
         rawReadable = new BlobReadable(file);
         this._cachedReadable = undefined;
@@ -161,8 +147,18 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
         // No summary / chunk index (streamed or truncated recording): index the data section ourselves.
         console.info("McapWorker: indexed read failed, scanning unindexed MCAP", indexedErr);
         indexing = true;
-        const indexCache = createIndexedDbMcapIndexCache();
-        const cacheKey = url ?? (file instanceof File ? `file:${file.name}:${file.size}:${file.lastModified}` : undefined);
+        // A remote recording's scan result lives in main-thread memory only (page lifetime);
+        // IndexedDB persistence is kept for local files in the standalone app.
+        const indexCache = this._cachedReadable
+          ? this._cachedReadable.indexCache()
+          : args.persistIndex === false
+            ? undefined
+            : createIndexedDbMcapIndexCache();
+        const cacheKey = this._cachedReadable
+          ? `${await this._cachedReadable.size()}`
+          : file instanceof File
+            ? `file:${file.name}:${file.size}:${file.lastModified}`
+            : undefined;
         baseSource = new McapUnindexedIterableSource(mcapReadable, {
           decompressHandlers,
           indexCache: indexCache && cacheKey ? { cache: indexCache, key: cacheKey } : undefined,
@@ -210,7 +206,7 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
         this._scheduleTimePrefixPrefetch();
       }
       workerPerf.flushMaybe(true);
-      return init;
+      return this._cachedReadable ? { ...init, remoteRangeBacked: true } : init;
     } catch (err) {
       console.error("McapWorker: initialize failed", err);
       throw err;
@@ -247,17 +243,19 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
     return (await this._source.getAdjacentMessage?.(args)) ?? null;
   }
 
-  preparePlaybackBuffer(args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus> {
+  async preparePlaybackBuffer(args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus> {
     if (!this._cachedReadable) {
-      return Promise.resolve({ ready: true });
+      return { ready: true };
     }
 
     this._prefetchAnchor = args.time;
-    return Promise.resolve(this._scheduleTimePrefixPrefetch(args.time, args.minAheadMs));
+    await this._cachedReadable.refreshRanges(true);
+    return this._scheduleTimePrefixPrefetch(args.time, args.minAheadMs);
   }
 
   async getLoadProgress(): Promise<LoadProgress> {
     if (this._cachedReadable) {
+      await this._cachedReadable.refreshRanges(true);
       const bufferStatus = this._playbackBufferStatus(this._prefetchAnchor, DEFAULT_PREFETCH_AHEAD_MS);
       const downloadedByteRanges = this._cachedReadable.getDownloadedRanges();
       const loadedBytes = downloadedByteRanges.reduce((sum, range) => sum + (range.end - range.start), 0);

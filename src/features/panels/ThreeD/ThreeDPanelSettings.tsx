@@ -78,15 +78,25 @@ export function ThreeDPanelSettings({
           />
         </SettingsField>
         <SettingsField
-          label={formatMessage({ id: 'panels.threeD.settings.field.pointSize' }, { n: config.pointSize.toFixed(2) })}
+          label={formatMessage({ id: 'panels.threeD.settings.field.pointSize' }, { n: config.pointSize.toFixed(3) })}
           help={formatMessage({ id: 'panels.threeD.settings.field.pointSize.help' })}
         >
           <SettingsNumber
             value={config.pointSize}
-            min={0.01}
+            min={0.002}
             max={0.2}
-            step={0.01}
+            step={0.002}
             onChange={(pointSize) => setConfig({ ...config, pointSize })}
+          />
+        </SettingsField>
+        <SettingsField
+          label={formatMessage({ id: 'panels.threeD.settings.field.followFrame' })}
+          help={formatMessage({ id: 'panels.threeD.settings.field.followFrame.help' })}
+        >
+          <SettingsText
+            value={config.followFrame}
+            placeholder="head_left"
+            onChange={(followFrame) => setConfig({ ...config, followFrame: followFrame.trim() })}
           />
         </SettingsField>
       </SettingsSection>

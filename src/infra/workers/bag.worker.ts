@@ -14,20 +14,17 @@ import { BagIterableSource } from '@/infra/sources/BagIterableSource';
 import type { IIterableSource } from '@/infra/sources/IIterableSource';
 import { withBuiltinTopicAdapters } from '@/infra/sources/adapters';
 import { MessageCursor } from "./MessageCursor";
-import { HttpFileReader } from '@/infra/services/HttpFileReader';
-import CachedFilelike from '@/infra/services/CachedFilelike';
-import { resolveWorkerHttpUrl } from '@/shared/utils/resolveWorkerHttpUrl';
+import { RemoteRangeFile, isMessagePort } from '@/infra/range/rangeHandle';
 import type { LoadProgress } from "./types";
 import type { TransportDiagnostics, WorkerTransportConfig } from "./transport";
 import { SharedPayloadRing } from "./sharedPayloadRing";
-import { resolveRemoteCacheBytes } from './remoteCacheConfig';
 import { DataQualityScanController } from './dataQualityScanController';
 import { trackInitProgress } from './throttledInitProgress';
 import { buildRemoteBagReadable, type SyncSizeBagReadable } from './remoteBagReadable';
 
 class BagWorker implements IWorkerSerializedSourceWorker {
   private _source?: IIterableSource;
-  private _cachedReadable?: CachedFilelike;
+  private _cachedReadable?: RemoteRangeFile;
   private _initialization?: Initialization;
   private _totalBytes = 0;
   private _transportConfig: WorkerTransportConfig = {
@@ -47,33 +44,22 @@ class BagWorker implements IWorkerSerializedSourceWorker {
     let sourceArgs:
       | { type: 'remote'; readable: SyncSizeBagReadable }
       | { type: 'file'; file: Blob };
-    if (url) {
-      const knownRaw = args.knownTotalBytes;
-      const knownTotalBytes =
-        typeof knownRaw === 'number' &&
-        Number.isFinite(knownRaw) &&
-        knownRaw > 0
-          ? Math.floor(knownRaw)
-          : undefined;
-      const fileReader = new HttpFileReader(
-        resolveWorkerHttpUrl(url),
-        knownTotalBytes != null ? { knownTotalBytes } : undefined,
-      );
-      const readable = new CachedFilelike({
-        fileReader,
-        cacheSizeInBytes: resolveRemoteCacheBytes(),
-        onDownloadProgress: (info) => {
-          report({
-            phase: "downloading",
-            loadedBytes: info.loadedBytes,
-            totalBytes: info.totalBytes,
-            transferredBytes: info.transferredBytes,
-          });
-        },
+    const rangePort = args.rangePort;
+    if (isMessagePort(rangePort)) {
+      const readable = new RemoteRangeFile(rangePort);
+      await readable.setProgressListener((info) => {
+        report({
+          phase: "downloading",
+          loadedBytes: info.loadedBytes,
+          totalBytes: info.totalBytes,
+          transferredBytes: info.transferredBytes,
+        });
       });
       this._cachedReadable = readable;
       const bagReadable = await buildRemoteBagReadable(readable);
       sourceArgs = { type: "remote", readable: bagReadable };
+    } else if (url) {
+      throw new Error("BagWorker: a remote recording needs a range handle (rangePort)");
     } else if (file) {
       this._cachedReadable = undefined;
       this._totalBytes = file.size;
@@ -97,7 +83,7 @@ class BagWorker implements IWorkerSerializedSourceWorker {
     if (this._cachedReadable) {
       this._totalBytes = await this._cachedReadable.size();
     }
-    return init;
+    return this._cachedReadable ? { ...init, remoteRangeBacked: true } : init;
   }
 
   getMessageCursor(args: MessageIteratorArgs): Promise<IMessageCursor<unknown>> {
@@ -126,6 +112,7 @@ class BagWorker implements IWorkerSerializedSourceWorker {
 
   async getLoadProgress(): Promise<LoadProgress> {
     if (this._cachedReadable) {
+      await this._cachedReadable.refreshRanges(true);
       const downloadedByteRanges = this._cachedReadable.getDownloadedRanges();
       const loadedBytes = downloadedByteRanges.reduce((sum, range) => sum + (range.end - range.start), 0);
       const totalBytes = this._totalBytes || (await this._cachedReadable.size());

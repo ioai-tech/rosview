@@ -467,6 +467,7 @@ export class IterablePlayer implements Player {
         speed: this._speed,
         problems: this._initialization.problems,
         randomAccessByTopic: this._initialization.randomAccessByTopic,
+        remoteRangeBacked: this._initialization.remoteRangeBacked,
       };
 
       messageBus.reset();
@@ -591,15 +592,26 @@ export class IterablePlayer implements Player {
       }
       const topics = this._currentTopics();
       if (topics.length > 0) {
-        const messages = await this._withSourceTimeout(
-          this._source.getBackfillMessages({ time: seekTime, topics }),
-          "playback backfill timed out",
-        );
-        if (!this._isPlaybackEpochCurrent(epoch)) {
-          return;
+        // Video / image consumers first: their frames are what the user is waiting for, and the
+        // other panels' backfill (often a lookback into earlier chunks for sparse topics) must not
+        // hold them back on a slow link. Both phases are delivered as soon as they arrive.
+        const frameTopics = topics.filter((topic) => this._highFrequencyConsumersByTopic.has(topic));
+        const otherTopics = topics.filter((topic) => !this._highFrequencyConsumersByTopic.has(topic));
+        const phases = frameTopics.length > 0 && otherTopics.length > 0 ? [frameTopics, otherTopics] : [topics];
+        for (const [phaseIndex, phaseTopics] of phases.entries()) {
+          const messages = await this._withSourceTimeout(
+            this._source.getBackfillMessages({ time: seekTime, topics: phaseTopics }),
+            "playback backfill timed out",
+          );
+          if (!this._isPlaybackEpochCurrent(epoch)) {
+            return;
+          }
+          this._noteSourceSuccess();
+          this._distributeMessages(messages, seekTime);
+          // User-timing entries (click to frames delivered, click to everything delivered) for budgets and tests.
+          if (phases.length > 1 && phaseIndex === 0) performance.measure("rosview:seek:frames", { start: now });
         }
-        this._noteSourceSuccess();
-        this._distributeMessages(messages, seekTime);
+        performance.measure("rosview:seek", { start: now });
       }
     } catch (err) {
       if (this._isPlaybackEpochCurrent(epoch)) {

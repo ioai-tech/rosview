@@ -83,7 +83,11 @@ All source props may be combined. Duplicates are deduplicated automatically. Fil
 | `onFatalError` | `(error: Error) => void` | Called when a file fails to load and no fallback succeeds. |
 | `onThemeChange` | `(theme: 'light' \| 'dark' \| 'system') => void` | Called when the user changes the theme via the navbar. |
 | `onLanguageChange` | `(language: 'en' \| 'zh' \| 'ja') => void` | Called when the user changes the language via the navbar. |
-| `onPlayerReady` | `({ player, hasSource }) => void` | Fired once when player `presence` becomes `ready`. |
+| `onPlayerReady` | `({ player, hasSource, resetLayout }) => void` | Fired once when player `presence` becomes `ready`; `resetLayout()` restores the host / auto layout. |
+| `sourceKey` | `string` | Host-stable recording id for the in-tab memory cache (see EMBEDDING). |
+| `refreshUrls` | `(expired: string[]) => Promise<string[]>` | Presigned-URL renewal, at most one call per batch. |
+| `urlExpiresAt` | `string` | ISO 8601 expiry of the URLs; renewal starts 60 s before. |
+| `messages` | `Partial<Record<RosViewMessageKey, string>>` | Replace viewer copy by id (ICU strings). |
 | `onLayoutReady` | `({ panelCount }) => void` | Fired after Dockview layout hydration. |
 | `onSourceLoadingChange` | `(loading: boolean) => void` | Notifies host while a source is initializing. |
 | `extensions` | `RosViewExtension[]` | Optional host contributions: sidebar tabs plus timeline/playback overlays. |

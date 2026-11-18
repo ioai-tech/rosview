@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { IntlProvider } from 'react-intl';
-import { getRosViewMessages, type RosViewLocale } from '@/shared/intl/loadRosViewMessages';
+import { getRosViewMessages, type RosViewLocale, type RosViewMessageOverrides } from '@/shared/intl/loadRosViewMessages';
 import { Toaster } from '@/shared/ui/sonner';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
 import type { MessagePipelineState } from '@/core/pipeline/store';
@@ -8,6 +8,8 @@ import type { MessagePipelineState } from '@/core/pipeline/store';
 export interface RosViewProviderProps {
   theme?: 'light' | 'dark' | 'system';
   language?: RosViewLocale;
+  /** Replaces catalog copy by message id (ICU message strings). */
+  messages?: RosViewMessageOverrides;
   children: React.ReactNode;
 }
 
@@ -46,6 +48,7 @@ function intlLocaleFor(lang: RosViewLocale): string {
 export const RosViewProvider: React.FC<RosViewProviderProps> = ({
   theme = 'system',
   language = 'en',
+  messages: messageOverrides,
   children,
 }) => {
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(theme));
@@ -74,7 +77,9 @@ export const RosViewProvider: React.FC<RosViewProviderProps> = ({
     [theme, resolvedTheme],
   );
 
-  const messages = useMemo(() => getRosViewMessages(language), [language]);
+  const overridesKey = messageOverrides ? JSON.stringify(messageOverrides) : '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by content so an inline object does not rebuild the catalog
+  const messages = useMemo(() => getRosViewMessages(language, messageOverrides), [language, overridesKey]);
   const playerPresence = useMessagePipeline(
     (state: MessagePipelineState) => state.playerState.presence,
   );

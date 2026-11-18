@@ -10,11 +10,14 @@ import type { PreferencePersistence } from '@/core/preferences/types';
 import { groupDatasets, type DatasetItem } from '@/shared/utils/datasetSources';
 import { pushSpaUrlParam, serializeSourceLocator } from '@/shared/utils/sourceLocator';
 import { fallbackIndexOrder, prepareSourceMember } from './sourceLoading';
+import { UrlRenewal } from '@/infra/range/urlRenewal';
 import { datasetItemToSourceLocator } from './rosViewerUtils';
 import type { RosViewerProps } from './RosViewer.types';
 import type { createRosViewIntl } from '@/shared/intl/createRosViewIntl';
 
 export interface UsePlayerLifecycleArgs {
+  /** This viewer's layout reset (registered by its dock layout). */
+  resetLayoutRef: React.RefObject<(() => boolean) | null>;
   requireSource: boolean;
   hasSource: boolean;
   /** Player-loading UI is suppressed once a prior attempt already reported an error. */
@@ -50,6 +53,7 @@ export interface UsePlayerLifecycleArgs {
  */
 export function usePlayerLifecycle(props: RosViewerProps, args: UsePlayerLifecycleArgs) {
   const {
+    resetLayoutRef,
     requireSource,
     hasSource,
     lastLoadError,
@@ -68,6 +72,16 @@ export function usePlayerLifecycle(props: RosViewerProps, args: UsePlayerLifecyc
 
   const [player, setPlayer] = useState<Player | null>(null);
   const sourceLoading = hasSource && player == null && lastLoadError == null;
+
+  // Presigned-URL renewal is configured per viewer and read live, so a later `urlExpiresAt` applies.
+  const [renewal] = useState(() => new UrlRenewal());
+  useEffect(() => {
+    renewal.update({ refreshUrls: props.refreshUrls, urlExpiresAt: props.urlExpiresAt });
+  }, [renewal, props.refreshUrls, props.urlExpiresAt]);
+  const sourceKeyRef = useRef(props.sourceKey);
+  useEffect(() => {
+    sourceKeyRef.current = props.sourceKey;
+  }, [props.sourceKey]);
 
   const onFatalErrorRef = useRef(props.onFatalError);
   useEffect(() => {
@@ -90,11 +104,11 @@ export function usePlayerLifecycle(props: RosViewerProps, args: UsePlayerLifecyc
       if (playerReadyFiredRef.current) return;
       if (useMessagePipelineStore.getState().playerState.presence !== 'ready') return;
       playerReadyFiredRef.current = true;
-      onPlayerReadyRef.current?.({ player, hasSource });
+      onPlayerReadyRef.current?.({ player, hasSource, resetLayout: () => resetLayoutRef.current?.() ?? false });
     };
     fireIfReady();
     return useMessagePipelineStore.subscribe(fireIfReady);
-  }, [player, hasSource]);
+  }, [player, hasSource, resetLayoutRef]);
 
   const onSourceLoadingChangeRef = useRef(props.onSourceLoadingChange);
   useEffect(() => {
@@ -148,7 +162,17 @@ export function usePlayerLifecycle(props: RosViewerProps, args: UsePlayerLifecyc
         let preparedMembers: CombinedSourceMember[];
         try {
           const prepared = await Promise.all(
-            group.members.map((ds) => prepareSourceMember(ds, autoDataQualityScan)),
+            group.members.map((ds) =>
+              prepareSourceMember(ds, autoDataQualityScan, {
+                renewal,
+                persist: persistence !== 'off',
+                // A source key names one recording: with several remote sources it would be ambiguous.
+                sourceKey:
+                  datasetsRef.current.filter((d) => d.kind === 'url').length === 1
+                    ? sourceKeyRef.current
+                    : undefined,
+              }),
+            ),
           );
           preparedMembers = prepared.map((p) => p.member);
         } catch (err) {
@@ -228,7 +252,7 @@ export function usePlayerLifecycle(props: RosViewerProps, args: UsePlayerLifecyc
       createdPlayer?.close();
       setPlayer(null);
     };
-    // `activeGroupMembersKey` is not read directly but forces a rebuild when
+    // `renewal` is stable for the viewer's lifetime. `activeGroupMembersKey` is not read directly but forces a rebuild when
     // files are added to (or removed from) the currently active group.
   }, [
     activeId,
@@ -238,6 +262,7 @@ export function usePlayerLifecycle(props: RosViewerProps, args: UsePlayerLifecyc
     hasSource,
     offlineIntl,
     persistence,
+    renewal,
     requireSource,
     setLastLoadError,
     setLoadedGroupId,

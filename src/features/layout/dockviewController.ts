@@ -48,3 +48,4 @@ export function importDockviewLayout(
 export function reapplyAutoDockviewLayout(): boolean {
   return controller?.reapplyAutoLayout() ?? false;
 }
+

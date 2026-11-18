@@ -31,5 +31,6 @@
   "layout.welcomePanel.desc.Timeline": "查看各话题消息密度与丢帧",
   "layout.welcomePanel.desc.TopicGraph": "探索话题发布/订阅连接关系",
   "layout.welcomePanel.desc.Align": "诊断多传感器时间戳同步",
-  "layout.panelSuspense.loading": "正在加载面板…"
+  "layout.panelSuspense.loading": "正在加载面板…",
+  "layout.viewerRegion": "数据查看器"
 }

@@ -69,4 +69,18 @@ describe('layoutStorage', () => {
     clearSavedDockviewLayout();
     expect(readSavedDockviewLayout()).toBeNull();
   });
+
+  it('isolates layouts by host storage key', () => {
+    const other: FoxgloveLayoutData = { ...validLayout, layout: 'Plot!xyz', configById: { 'Plot!xyz': {} } };
+    saveDockviewLayoutToStorage(validLayout, 'host-a.layout');
+    saveDockviewLayoutToStorage(other, 'host-b.layout');
+    expect(readSavedDockviewLayout('host-a.layout')?.layout).toBe('3D!abc');
+    expect(readSavedDockviewLayout('host-b.layout')?.layout).toBe('Plot!xyz');
+    // The default key is untouched, and clearing one key leaves the others.
+    expect(readSavedDockviewLayout()).toBeNull();
+    clearSavedDockviewLayout('host-a.layout');
+    expect(readSavedDockviewLayout('host-a.layout')).toBeNull();
+    expect(readSavedDockviewLayout('host-b.layout')?.layout).toBe('Plot!xyz');
+    expect([...storage.keys()].every((k) => k.startsWith('host-'))).toBe(true);
+  });
 });

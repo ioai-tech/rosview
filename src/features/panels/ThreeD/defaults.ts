@@ -22,6 +22,8 @@ export interface ThreeDConfig {
   showAxes: boolean;
   showPlaceholder: boolean;
   pointSize: number;
+  /** TF frame the orbit camera follows during playback (empty: a fixed camera). */
+  followFrame: string;
   skeleton: ThreeDSkeletonConfig;
   urdf: UrdfSource;
   topicSettings: ThreeDTopicSetting[];
@@ -68,6 +70,7 @@ export const defaultThreeDConfig = (): ThreeDConfig => ({
   showAxes: false,
   showPlaceholder: true,
   pointSize: 0.05,
+  followFrame: '',
   skeleton: {
     enabled: true,
     renderMode: 'stick',

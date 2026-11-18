@@ -18,7 +18,9 @@ export function useThemeLanguagePreferences(props: RosViewerProps, persistence: 
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => initialUiFromProps(props).theme);
   const [currentLanguage, setCurrentLanguage] = useState<Language>(() => initialUiFromProps(props).language);
 
-  const offlineIntl = useMemo(() => createRosViewIntl(currentLanguage), [currentLanguage]);
+  const overridesKey = props.messages ? JSON.stringify(props.messages) : '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by content so an inline object does not rebuild the intl
+  const offlineIntl = useMemo(() => createRosViewIntl(currentLanguage, props.messages), [currentLanguage, overridesKey]);
 
   const onThemeChangeProp = props.onThemeChange;
   const onLanguageChangeProp = props.onLanguageChange;

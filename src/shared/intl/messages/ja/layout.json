@@ -31,5 +31,6 @@
   "layout.welcomePanel.desc.Timeline": "トピックごとのメッセージ密度とフレームドロップを表示",
   "layout.welcomePanel.desc.TopicGraph": "トピックの pub/sub 接続を探索",
   "layout.welcomePanel.desc.Align": "マルチセンサのタイムスタンプ同期を診断",
-  "layout.panelSuspense.loading": "パネルを読み込み中…"
+  "layout.panelSuspense.loading": "パネルを読み込み中…",
+  "layout.viewerRegion": "データビューア"
 }

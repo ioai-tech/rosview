@@ -33,9 +33,8 @@ import {
 import {
   exportDockviewLayout,
   importDockviewLayout,
-  reapplyAutoDockviewLayout,
 } from '../../layout/dockviewController';
-import { clearSavedDockviewLayout, saveDockviewLayoutToStorage } from '@/core/preferences/layoutStorage';
+import { saveDockviewLayoutToStorage } from '@/core/preferences/layoutStorage';
 import { useRosViewerLayoutContext } from '@/features/viewer/RosViewerLayoutContext';
 import type { DatasetHistoryListItem } from '@/shared/utils/datasetHistory';
 
@@ -120,7 +119,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onReplayHistory,
 }) => {
   const { formatMessage } = useIntl();
-  const { layoutPersistence, layoutStorageKey } = useRosViewerLayoutContext();
+  const { layoutPersistence, layoutStorageKey, resetLayoutRef } = useRosViewerLayoutContext();
   const leftMenubarRef = useRef<HTMLDivElement>(null);
   const rightMenubarRef = useRef<HTMLDivElement>(null);
   const [leftMenubarValue, setLeftMenubarValue] = useState('');
@@ -159,13 +158,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   }, [layoutPersistence, layoutStorageKey]);
 
   const handleResetLayout = useCallback(() => {
-    if (layoutPersistence === 'off') return;
-    clearSavedDockviewLayout(layoutStorageKey);
-  }, [layoutPersistence, layoutStorageKey]);
-
-  const handleReapplyAutoLayout = useCallback(() => {
-    reapplyAutoDockviewLayout();
-  }, []);
+    resetLayoutRef.current?.();
+  }, [resetLayoutRef]);
 
   const hasOpenMenu =
     onOpenFilePick || onOpenDirectory || onOpenTarPick || onOpenRemotePrompt || onOpenSampleDialog;
@@ -324,10 +318,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <MenubarItem className="text-xs" onSelect={() => handleResetLayout()}>
                     <RotateCcw className="mr-2 h-4 w-4 shrink-0" />
                     {formatMessage({ id: 'navbar.resetLayout' })}
-                  </MenubarItem>
-                  <MenubarItem className="text-xs" onSelect={() => handleReapplyAutoLayout()}>
-                    <RotateCcw className="mr-2 h-4 w-4 shrink-0" />
-                    {formatMessage({ id: 'navbar.reapplyAutoLayout' })}
                   </MenubarItem>
                 </MenubarGroup>
               </MenubarContent>

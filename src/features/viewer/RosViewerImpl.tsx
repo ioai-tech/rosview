@@ -49,7 +49,7 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
   const { currentTheme, currentLanguage, offlineIntl, handleThemeChange, handleLanguageChange } =
     useThemeLanguagePreferences(props, persistence);
 
-  const { historyItems, recordHistoryEntry } = useDatasetHistory();
+  const { historyItems, recordHistoryEntry } = useDatasetHistory(persistence !== 'off');
 
   const requireSource = props.requireSource ?? props.mode !== 'tool';
   const embedChrome = useMemo(
@@ -67,7 +67,9 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
   const layoutStorageKey = props.layoutStorageKey ?? ROS_VIEW_LAYOUT_STORAGE_KEY;
   const suppressWelcomePanel = props.suppressWelcomePanel ?? props.mode === 'tool';
 
+  const resetLayoutRef = useRef<(() => boolean) | null>(null);
   const { player, sourceLoading } = usePlayerLifecycle(props, {
+    resetLayoutRef,
     requireSource,
     hasSource,
     lastLoadError,
@@ -118,6 +120,7 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
 
   const layoutProvider = (children: React.ReactNode) => (
     <RosViewerLayoutProvider
+      resetLayoutRef={resetLayoutRef}
       layoutPersistence={resolvedLayoutPersistence}
       layoutStorageKey={layoutStorageKey}
     >
@@ -178,7 +181,7 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
 
   if (!hasSource && !requireSource && player) {
     return layoutProvider(
-      <RosViewProvider theme={currentTheme} language={currentLanguage}>
+      <RosViewProvider theme={currentTheme} language={currentLanguage} messages={props.messages}>
         {appShellElement}
       </RosViewProvider>,
     );
@@ -186,7 +189,7 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
 
   if (!hasSource) {
     return layoutProvider(
-      <RosViewProvider theme={currentTheme} language={currentLanguage}>
+      <RosViewProvider theme={currentTheme} language={currentLanguage} messages={props.messages}>
         <RosViewerLandingScreen
           className={props.className}
           style={props.style}
@@ -226,7 +229,7 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
   }
 
   return layoutProvider(
-    <RosViewProvider theme={currentTheme} language={currentLanguage}>
+    <RosViewProvider theme={currentTheme} language={currentLanguage} messages={props.messages}>
       <>
         {/*
           Rendered unconditionally (not just while the landing screen below

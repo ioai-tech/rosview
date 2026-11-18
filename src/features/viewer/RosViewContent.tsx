@@ -297,7 +297,9 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
   );
 
   const mainElement = (
-    <main
+    <div
+      role="region"
+      aria-label={formatMessage({ id: 'layout.viewerRegion' })}
       className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background contain-strict ${
         isTopicDragOver ? 'ring-1 ring-inset ring-primary/40' : ''
       }`}
@@ -344,7 +346,7 @@ export const RosViewContent: React.FC<RosViewContentProps> = ({
       ) : (
         <PlaybackBufferingOverlay player={player} />
       )}
-    </main>
+    </div>
   );
 
   return (

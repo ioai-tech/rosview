@@ -16,10 +16,9 @@ type FoxgloveMosaicSplit = {
 };
 import { getPanelTypeFromId } from '@/features/panels/framework';
 import { buildDefaultRosFoxgloveLayoutData } from '@/features/layout/autoLayout/applyDefaultRosDockLayout';
-import { classifyCameraSide } from '@/features/layout/autoLayout/planRosImageGrid';
 
 describe('buildDefaultRosFoxgloveLayoutData', () => {
-  it('emits Foxglove column: color row, depth row, then Pose+3D row; decodes to eight panels', () => {
+  it('lays out six cameras as 3x2, then Pose + 3D + a Plot per JointState topic, then a thin Raw Messages strip', () => {
     const topics: TopicInfo[] = [
       { name: '/camera/left/color/a/compressed', type: 'sensor_msgs/msg/CompressedImage' },
       { name: '/camera/left/depth/z/compressed', type: 'sensor_msgs/msg/CompressedImage' },
@@ -32,72 +31,86 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
       { name: '/joint_states', type: 'sensor_msgs/msg/JointState' },
     ];
 
-    const data = buildDefaultRosFoxgloveLayoutData(topics);
-    expect(data.layout).toBeDefined();
-    const layoutRoot = data.layout as FoxgloveMosaicNode;
-    const ids = collectMosaicPanelIds(layoutRoot);
-    expect(ids).toHaveLength(8);
+    const data = buildDefaultRosFoxgloveLayoutData(topics, { webgl: true });
+    const root = data.layout as FoxgloveMosaicSplit;
+    // Raw Messages is a thin strip under everything else.
+    expect(root.direction).toBe('column');
+    expect(root.splitPercentage).toBeGreaterThan(80);
+    expect(getPanelTypeFromId(root.second as string)).toBe('RawMessages');
 
     const imported = importFoxgloveLayout(data, { unavailableComponent: 'Unavailable' });
-    expect(imported.restored).toBe(8);
-    expect(imported.dockviewState?.panels).toBeDefined();
-    expect(Object.keys(imported.panelStates)).toHaveLength(8);
-
-    const imageSnapshots = Object.values(imported.panelStates).filter((s) => s.type === 'Image');
-    expect(imageSnapshots).toHaveLength(6);
-    const poseSnapshots = Object.values(imported.panelStates).filter((s) => s.type === 'Pose');
-    expect(poseSnapshots).toHaveLength(1);
-    const threeDSnapshots = Object.values(imported.panelStates).filter((s) => s.type === '3D');
-    expect(threeDSnapshots).toHaveLength(1);
-    const poseConfig = poseSnapshots[0]?.config as { topics?: Array<{ topic: string }> };
+    const byType = (type: string) => Object.values(imported.panelStates).filter((snap) => snap.type === type);
+    expect(byType('Image')).toHaveLength(6);
+    expect(byType('Pose')).toHaveLength(1);
+    expect(byType('3D')).toHaveLength(1);
+    expect(byType('Plot')).toHaveLength(1);
+    expect(byType('RawMessages')).toHaveLength(1);
+    const poseConfig = byType('Pose')[0]?.config as { topics?: Array<{ topic: string }> };
     expect(poseConfig.topics?.map((entry) => entry.topic)).toEqual(['/io/pose/left', '/io/pose/right']);
-    for (const s of imageSnapshots) {
-      const topic = (s.config as { topic: string }).topic;
-      expect(classifyCameraSide(topic)).not.toBe('other');
-    }
 
-    const root = data.layout;
-    expect(typeof root).toBe('object');
-    if (typeof root === 'object' && root !== null && 'direction' in root) {
-      expect(root.direction).toBe('column');
-      expect(root.splitPercentage).toBeCloseTo(100 / 3, 5);
-      const colorRow = root.first;
-      expect(typeof colorRow).toBe('object');
-      if (typeof colorRow === 'object' && colorRow !== null && 'direction' in colorRow) {
-        expect(colorRow.direction).toBe('row');
-        expect(colorRow.splitPercentage).toBeCloseTo(100 / 3, 5);
-      }
-    }
+    // 3 x 2 camera grid: two rows of three, colour streams before depth.
+    const main = root.first as FoxgloveMosaicSplit;
+    const firstRow = main.first;
+    const secondRow = (main.second as FoxgloveMosaicSplit).first;
+    const rowTypes = (node: FoxgloveMosaicNode) => collectMosaicPanelIds(node).map((id) => getPanelTypeFromId(id));
+    expect(rowTypes(firstRow)).toEqual(['Image', 'Image', 'Image']);
+    expect(rowTypes(secondRow)).toEqual(['Image', 'Image', 'Image']);
+    const imageTopics = (node: FoxgloveMosaicNode) =>
+      collectMosaicPanelIds(node).map((id) => (data.configById[id] as { topic: string }).topic);
+    expect(imageTopics(firstRow).every((topic) => topic.includes('/color/'))).toBe(true);
+    expect(imageTopics(secondRow).every((topic) => topic.includes('/depth/'))).toBe(true);
+  });
 
-    const findPose3DRow = (node: FoxgloveMosaicNode): FoxgloveMosaicSplit | null => {
-      if (typeof node === 'string') {
-        return null;
-      }
-      if (
-        node.direction === 'row' &&
-        typeof node.first === 'string' &&
-        typeof node.second === 'string'
-      ) {
-        const a = getPanelTypeFromId(node.first);
-        const b = getPanelTypeFromId(node.second);
-        if ((a === 'Pose' && b === '3D') || (a === '3D' && b === 'Pose')) {
-          return node;
-        }
-      }
-      const left = findPose3DRow(node.first);
-      if (left) {
-        return left;
-      }
-      return findPose3DRow(node.second);
-    };
-    const pose3d = findPose3DRow(layoutRoot);
-    expect(pose3d).not.toBeNull();
-    const pose3dRow = pose3d!;
-    expect(pose3dRow.direction).toBe('row');
-    expect(typeof pose3dRow.first).toBe('string');
-    expect(typeof pose3dRow.second).toBe('string');
-    expect(getPanelTypeFromId(pose3dRow.first as string)).toBe('Pose');
-    expect(getPanelTypeFromId(pose3dRow.second as string)).toBe('3D');
+  it('dual-arm teleop rig with generic names: cameras, joint and IMU plots, 3D only with TF and WebGL', () => {
+    const topics: TopicInfo[] = [
+      { name: '/camera/head/image_raw/compressed', type: 'sensor_msgs/msg/CompressedImage' },
+      { name: '/camera/left_wrist/image_raw/compressed', type: 'sensor_msgs/msg/CompressedImage' },
+      { name: '/camera/right_wrist/image_raw/compressed', type: 'sensor_msgs/msg/CompressedImage' },
+      { name: '/joint_states', type: 'sensor_msgs/msg/JointState' },
+      { name: '/joint_cmd', type: 'sensor_msgs/msg/JointState' },
+      { name: '/gripper/joint_states', type: 'sensor_msgs/msg/JointState' },
+      { name: '/imu/data', type: 'sensor_msgs/msg/Imu' },
+      { name: '/tf', type: 'tf2_msgs/msg/TFMessage' },
+    ];
+    const types = (data: ReturnType<typeof buildDefaultRosFoxgloveLayoutData>) =>
+      collectMosaicPanelIds(data.layout).map((id) => getPanelTypeFromId(id));
+
+    const withGl = buildDefaultRosFoxgloveLayoutData(topics, { webgl: true });
+    expect(types(withGl).filter((t) => t === 'Image')).toHaveLength(3);
+    expect(types(withGl).filter((t) => t === '3D')).toHaveLength(1);
+    // joint_states, gripper/joint_states, joint_cmd + one IMU plot.
+    expect(types(withGl).filter((t) => t === 'Plot')).toHaveLength(4);
+
+    const plotConfigs = Object.entries(withGl.configById)
+      .filter(([id]) => getPanelTypeFromId(id) === 'Plot')
+      .map(([, config]) => config as { series: Array<{ topic: string; path: string }> });
+    const joint = plotConfigs.find((c) => c.series[0].topic === '/joint_states');
+    expect(joint?.series.map((entry) => entry.path)).toEqual(['position[:]']);
+    const imu = plotConfigs.find((c) => c.series[0].topic === '/imu/data');
+    expect(imu?.series.map((entry) => entry.path)).toEqual([
+      'angular_velocity.x',
+      'angular_velocity.y',
+      'angular_velocity.z',
+      'linear_acceleration.x',
+      'linear_acceleration.y',
+      'linear_acceleration.z',
+    ]);
+
+    const withoutGl = buildDefaultRosFoxgloveLayoutData(topics, { webgl: false });
+    expect(types(withoutGl)).not.toContain('3D');
+  });
+
+  it('no 3D grid for joint states alone, even with WebGL', () => {
+    const data = buildDefaultRosFoxgloveLayoutData(
+      [
+        { name: '/camera/front/image_raw/compressed', type: 'sensor_msgs/msg/CompressedImage' },
+        { name: '/joint_states', type: 'sensor_msgs/msg/JointState' },
+      ],
+      { webgl: true },
+    );
+    const types = collectMosaicPanelIds(data.layout).map((id) => getPanelTypeFromId(id));
+    expect(types).not.toContain('3D');
+    expect(types).toContain('Plot');
   });
 
   it('omits 3D when only image topics are present', () => {
@@ -113,9 +126,10 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
     expect(panelTypes.filter((type) => type === 'Pose')).toHaveLength(0);
     expect(panelTypes.filter((type) => type === '3D')).toHaveLength(0);
     expect(panelTypes.filter((type) => type === 'Image')).toHaveLength(3);
+    expect(panelTypes.filter((type) => type === 'RawMessages')).toHaveLength(1);
   });
 
-  it('builds two image rows for six CompressedVideo streams without 3D', () => {
+  it('builds a 3x2 grid for six CompressedVideo streams without 3D', () => {
     const topics: TopicInfo[] = [
       { name: '/head/color/image', type: 'foxglove_msgs/msg/CompressedVideo [ros2msg]' },
       { name: '/head/depth/image', type: 'foxglove_msgs/msg/CompressedVideo [ros2msg]' },
@@ -129,11 +143,11 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
     const panelTypes = ids.map((id) => getPanelTypeFromId(id));
     expect(panelTypes.filter((type) => type === 'Image')).toHaveLength(6);
     expect(panelTypes.filter((type) => type === '3D')).toHaveLength(0);
-    expect(panelTypes.filter((type) => type === 'RawMessages')).toHaveLength(0);
+    expect(panelTypes.filter((type) => type === 'RawMessages')).toHaveLength(1);
 
-    const imageTopics = Object.values(data.configById)
-      .map((config) => (config as { topic?: string }).topic)
-      .filter((topic): topic is string => Boolean(topic))
+    const imageTopics = Object.entries(data.configById)
+      .filter(([id]) => getPanelTypeFromId(id) === 'Image')
+      .map(([, config]) => (config as { topic: string }).topic)
       .sort();
     expect(imageTopics).toEqual([
       '/head/color/image',
@@ -149,7 +163,7 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
     const topics: TopicInfo[] = [
       { name: '/bvh/skeleton', type: 'embodiflow_msgs/msg/BvhSkeletonFrame' },
     ];
-    const data = buildDefaultRosFoxgloveLayoutData(topics);
+    const data = buildDefaultRosFoxgloveLayoutData(topics, { webgl: true });
     const root = data.layout as FoxgloveMosaicNode;
     const ids = collectMosaicPanelIds(root);
     expect(ids).toHaveLength(1);
@@ -203,7 +217,7 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
     expect((rawSnapshots[0]?.config as { topic?: string }).topic).toBe('/observations/joint_states');
   });
 
-  it('lays out six NuScenes protobuf CompressedImage streams without RawMessages fallback', () => {
+  it('lays out six NuScenes protobuf CompressedImage streams as a 3x2 grid', () => {
     const topics: TopicInfo[] = [
       { name: '/CAM_FRONT/image_rect_compressed', type: 'foxglove.CompressedImage' },
       { name: '/CAM_FRONT_LEFT/image_rect_compressed', type: 'foxglove.CompressedImage' },
@@ -218,11 +232,10 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
     const ids = collectMosaicPanelIds(data.layout);
     const panelTypes = ids.map((id) => getPanelTypeFromId(id));
     expect(panelTypes.filter((type) => type === 'Image')).toHaveLength(6);
-    expect(panelTypes.filter((type) => type === 'RawMessages')).toHaveLength(0);
 
-    const imageTopics = Object.values(data.configById)
-      .map((config) => (config as { topic?: string }).topic)
-      .filter((topic): topic is string => Boolean(topic))
+    const imageTopics = Object.entries(data.configById)
+      .filter(([id]) => getPanelTypeFromId(id) === 'Image')
+      .map(([, config]) => (config as { topic: string }).topic)
       .sort();
     expect(imageTopics).toEqual([
       '/CAM_BACK/image_rect_compressed',
@@ -234,7 +247,7 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
     ]);
   });
 
-  it('teleop RGB-D recording: one camera row, then 3D beside a LowState Plot', () => {
+  it('teleop RGB-D recording: one camera row, then Plots for LowState and the hand, no 3D without TF or pose', () => {
     const topics: TopicInfo[] = [
       { name: '/record/camera/head/rgb', type: 'sensor_msgs/msg/Image' },
       { name: '/record/camera/head/depth', type: 'sensor_msgs/msg/Image' },
@@ -244,13 +257,15 @@ describe('buildDefaultRosFoxgloveLayoutData', () => {
       { name: '/record/robot/state', type: 'booster_interface/msg/LowState' },
       { name: '/record/robot/command', type: 'booster_interface/msg/LowCmd' },
     ];
-    const root = buildDefaultRosFoxgloveLayoutData(topics).layout as FoxgloveMosaicSplit;
+    const root = buildDefaultRosFoxgloveLayoutData(topics, { webgl: true }).layout as FoxgloveMosaicSplit;
     expect(root.direction).toBe('column');
 
     const rowTypes = (node: FoxgloveMosaicNode) =>
       collectMosaicPanelIds(node).map((id) => getPanelTypeFromId(id));
-    expect((root.first as FoxgloveMosaicSplit).direction).toBe('row');
-    expect(rowTypes(root.first)).toEqual(['Image', 'Image']);
-    expect(rowTypes(root.second)).toEqual(['3D', 'Plot']);
+    const main = root.first as FoxgloveMosaicSplit;
+    expect(main.direction).toBe('column');
+    expect(rowTypes(main.first)).toEqual(['Image', 'Image']);
+    expect(rowTypes(main.second)).toEqual(['Plot', 'Plot']);
+    expect(rowTypes(root.second)).toEqual(['RawMessages']);
   });
 });

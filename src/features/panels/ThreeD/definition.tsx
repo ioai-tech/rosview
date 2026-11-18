@@ -27,6 +27,7 @@ export const threeDPanelDefinition: PanelDefinition<ThreeDConfig> = {
         showAxes={config.showAxes}
         showPlaceholder={config.showPlaceholder}
         pointSize={config.pointSize}
+        followFrame={config.followFrame}
         skeleton={config.skeleton}
         urdf={config.urdf}
         topicSettings={config.topicSettings}

@@ -94,6 +94,8 @@ export interface PlayerState {
     problems: PlayerProblem[];
     /** Whether the source supports efficient per-topic random access reads. */
     randomAccessByTopic?: boolean;
+    /** Remote range-backed source: avoid whole-recording reads. */
+    remoteRangeBacked?: boolean;
   };
 }
 

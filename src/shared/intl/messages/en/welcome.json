@@ -14,7 +14,7 @@
   "welcome.historyCollapse": "Show less",
   "welcome.historyEmpty": "No recent items yet.",
   "welcome.historyPermissionDenied": "Could not read the saved file or folder — grant permission or pick the item again.",
-  "welcome.historyFileCount": "{count} files",
+  "welcome.historyFileCount": "{count, plural, one {# file} other {# files}}",
   "welcome.historyFolderPicker": "Folder",
   "welcome.historyDroppedFiles": "Dropped files",
   "welcome.historyFromFilePicker": "Local file picker",

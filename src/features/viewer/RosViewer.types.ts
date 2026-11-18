@@ -6,6 +6,7 @@ import type { OpenPanelInput } from '@/features/layout/dockviewController';
 import type { RosViewExtension } from '@/core/extensions/types';
 import type { FileListItem } from '@/shared/utils/datasetSources';
 import type { RosViewerChrome, RosViewerMode } from './embedChrome';
+import type { RosViewMessageOverrides } from '@/shared/intl/loadRosViewMessages';
 
 export interface RosViewerProps {
   url?: string;
@@ -21,6 +22,11 @@ export interface RosViewerProps {
   mergeSources?: boolean;
   theme?: 'light' | 'dark' | 'system';
   language?: 'en' | 'zh' | 'ja';
+  /**
+   * Replaces viewer copy by message id (ICU message strings, so plurals work), applied on top of
+   * the built-in en / zh / ja catalogs. Unknown ids are ignored.
+   */
+  messages?: RosViewMessageOverrides;
   /** CSS class applied to the outermost container element. */
   className?: string;
   /** Inline styles applied to the outermost container element. */
@@ -94,8 +100,30 @@ export interface RosViewerProps {
   /** When true (default for mode='tool'), skip Dockview Welcome placeholder. */
   suppressWelcomePanel?: boolean;
   onLayoutReady?: (info: { panelCount: number }) => void;
-  onPlayerReady?: (ctx: { player: Player; hasSource: boolean }) => void;
+  /**
+   * Fired once the player is ready. `resetLayout()` forgets the saved layout under
+   * `layoutStorageKey` and restores the `initialLayout` / `defaultPanel`, or the auto layout; it
+   * returns false while no layout exists yet.
+   */
+  onPlayerReady?: (ctx: { player: Player; hasSource: boolean; resetLayout: () => boolean }) => void;
   onSourceLoadingChange?: (loading: boolean) => void;
+  /**
+   * Host-stable identity of the recording being shown (for example the recording id), used to
+   * reuse already-downloaded bytes when the same recording is opened again in this tab and to
+   * keep that cache across a URL refresh. Never put a signed URL here. Honoured only while the
+   * viewer has exactly one remote source. Recording bytes are held in memory for the lifetime of
+   * the page only (never IndexedDB / Cache Storage / OPFS); call `clearCache()` on logout.
+   */
+  sourceKey?: string;
+  /**
+   * Presigned-URL renewal. Called at most once per batch, with the current URL of every open
+   * remote source, when a request fails with 401 / 403 or starts within 60 s of `urlExpiresAt`.
+   * Resolve to the new URLs in the same order. Position, layout and panels are kept and the
+   * failed request is retried once; if it fails again the ordinary source error is shown.
+   */
+  refreshUrls?: (expired: string[]) => Promise<string[]>;
+  /** ISO 8601 time at which the current presigned URLs expire; enables renewal 60 s before. */
+  urlExpiresAt?: string;
   /** Sidebar tab id to select on first mount (e.g. extension `sidebarTabs[].id`). */
   initialSidebarTab?: string;
 }

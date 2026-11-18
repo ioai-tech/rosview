@@ -26,7 +26,8 @@ import {
   hasPanelDefinition,
 } from '../panels/registry';
 import { PanelTabHeader } from './PanelTabHeader';
-import { readSavedDockviewLayout } from '@/core/preferences/layoutStorage';
+import { useRosViewerLayoutContext } from '@/features/viewer/RosViewerLayoutContext';
+import { clearSavedDockviewLayout, readSavedDockviewLayout } from '@/core/preferences/layoutStorage';
 import { createSinglePanelLayout } from '@/core/preferences/createSinglePanelLayout';
 import type { PreferencePersistence } from '@/core/preferences/types';
 import { useSidebarStore } from '@/shared/hooks/useSidebarStore';
@@ -340,6 +341,40 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({
     hasAutoInitializedRef.current = true;
     return { restored: result.restored, degraded: result.degraded, skipped: result.skipped };
   }, []);
+
+  /**
+   * Back to the layout the host declared (`initialLayout` / `defaultPanel`), else the topic-driven
+   * auto layout; the saved layout under this viewer's storage key is forgotten first.
+   */
+  const resetLayout = useCallback((): boolean => {
+    const api = apiRef.current;
+    if (!api) return false;
+    if (layoutPersistenceRef.current === 'localStorage') {
+      clearSavedDockviewLayout(layoutStorageKeyRef.current);
+    }
+    const declarative =
+      initialLayoutRef.current ??
+      (defaultPanelRef.current ? createSinglePanelLayout(defaultPanelRef.current) : null);
+    if (declarative && !layoutHasUnknownTopicReferences(declarative, topicsRef.current)) {
+      suppressWelcomeRestoreRef.current = true;
+      try {
+        api.panels.forEach((panel) => panel.api.close());
+        importLayoutState(declarative);
+      } finally {
+        suppressWelcomeRestoreRef.current = false;
+      }
+      return api.panels.length > 0;
+    }
+    return reapplyAutoLayout();
+  }, [reapplyAutoLayout, importLayoutState]);
+
+  const { resetLayoutRef } = useRosViewerLayoutContext();
+  useEffect(() => {
+    resetLayoutRef.current = resetLayout;
+    return () => {
+      if (resetLayoutRef.current === resetLayout) resetLayoutRef.current = null;
+    };
+  }, [resetLayout, resetLayoutRef]);
 
   const components = useMemo(() => {
     const mapped: Record<string, (props: IDockviewPanelProps) => React.ReactElement> = {};

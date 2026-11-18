@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Player } from '@/core/types/player';
 import type { Time } from '@/core/types/ros';
+import { useMessagePipelineStore } from '@/core/pipeline/store';
+import { fromNano, toNano } from '@/shared/utils/time';
 import type { PlotDataset } from './datasets';
 import type { PlotConfig } from './defaults';
 import { PlotDatasetAccumulator } from './plotDatasetAccumulator';
@@ -14,6 +16,22 @@ import { readPlotRangeIncremental, type PlotRangeReadProgress } from './rangeRea
 import type { PlotDatasetWarning } from './plotWarnings';
 
 const MIN_DATASET_FLUSH_MS = 150;
+
+/** Remote range-backed sources: how much recording around the playhead a Plot reads. */
+export const REMOTE_PLOT_WINDOW_SEC = 30;
+/** The window recentres when the playhead gets this close to its edge (seconds). */
+const REMOTE_PLOT_EDGE_SEC = 5;
+
+function clampWindow(centerNs: bigint, start: Time, end: Time): { start: Time; end: Time } {
+  const half = BigInt(REMOTE_PLOT_WINDOW_SEC) * 1_000_000_000n;
+  const s = toNano(start);
+  const e = toNano(end);
+  let from = centerNs - half;
+  let to = centerNs + half;
+  if (from < s) from = s;
+  if (to > e) to = e;
+  return { start: fromNano(from), end: fromNano(to) };
+}
 
 const EMPTY_DATASET: PlotDataset = {
   xLabel: 'time',
@@ -36,6 +54,11 @@ export interface UsePlotPanelDataArgs {
   startTime?: Time;
   endTime?: Time;
   randomAccessByTopic?: boolean;
+  /**
+   * Remote range-backed recording: read only a window (+/- {@link REMOTE_PLOT_WINDOW_SEC}) around
+   * the playhead and recentre it as the playhead moves, instead of every chunk of the file.
+   */
+  windowed?: boolean;
 }
 
 export interface UsePlotPanelDataResult {
@@ -43,6 +66,8 @@ export interface UsePlotPanelDataResult {
   loading: boolean;
   progress: PlotRangeReadProgress | null;
   error: string | null;
+  /** The loaded window when `windowed` (the x axis follows it), else null. */
+  window: { start: Time; end: Time } | null;
 }
 
 export function usePlotPanelData({
@@ -53,11 +78,38 @@ export function usePlotPanelData({
   startTime,
   endTime,
   randomAccessByTopic,
+  windowed = false,
 }: UsePlotPanelDataArgs): UsePlotPanelDataResult {
   const [dataset, setDataset] = useState<PlotDataset>(EMPTY_DATASET);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<PlotRangeReadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Window of the recording that is loaded when `windowed`; recentred when the playhead nears its edge.
+  const [windowRange, setWindowRange] = useState<{ start: Time; end: Time } | null>(null);
+  useEffect(() => {
+    if (!windowed || !startTime || !endTime) {
+      setWindowRange(null);
+      return;
+    }
+    const recentre = (): void => {
+      const current = useMessagePipelineStore.getState().playerState.activeData?.currentTime ?? startTime;
+      const center = toNano(current);
+      setWindowRange((prev) => {
+        if (prev) {
+          const edge = BigInt(REMOTE_PLOT_EDGE_SEC) * 1_000_000_000n;
+          const atStart = toNano(prev.start) <= toNano(startTime);
+          const atEnd = toNano(prev.end) >= toNano(endTime);
+          const lowOk = atStart || center - toNano(prev.start) > edge;
+          const highOk = atEnd || toNano(prev.end) - center > edge;
+          if (center >= toNano(prev.start) && center <= toNano(prev.end) && lowOk && highOk) return prev;
+        }
+        return clampWindow(center, startTime, endTime);
+      });
+    };
+    recentre();
+    return useMessagePipelineStore.subscribe(recentre);
+  }, [windowed, startTime, endTime]);
 
   const dataConfigKey = useMemo(() => plotDataConfigKey(config), [config]);
   const enabledSeriesKey = useMemo(() => plotEnabledSeriesKey(config), [config]);
@@ -109,7 +161,7 @@ export function usePlotPanelData({
   }, []);
 
   useEffect(() => {
-    if (!startTime || !endTime || activeTopics.length === 0 || !hasPlotPaths) {
+    if (!startTime || !endTime || activeTopics.length === 0 || !hasPlotPaths || (windowed && !windowRange)) {
       setDataset(EMPTY_DATASET);
       setLoading(false);
       setProgress(null);
@@ -157,8 +209,8 @@ export function usePlotPanelData({
 
     void readPlotRangeIncremental({
       player,
-      start: startTime,
-      end: endTime,
+      start: windowed && windowRange ? windowRange.start : startTime,
+      end: windowed && windowRange ? windowRange.end : endTime,
       topics: activeTopics,
       signal: controller.signal,
       onProgress,
@@ -210,6 +262,8 @@ export function usePlotPanelData({
     player,
     randomAccessByTopic,
     startTime,
+    windowed,
+    windowRange,
   ]);
 
   // Toggling series visibility (`series.enabled`) re-renders the dataset with
@@ -230,5 +284,5 @@ export function usePlotPanelData({
     setDataset(accumulator.buildDataset(enabledSeriesIdsRef.current, configRef.current));
   }, [seriesVisualKey]);
 
-  return { dataset, loading, progress, error };
+  return { dataset, loading, progress, error, window: windowed ? windowRange : null };
 }

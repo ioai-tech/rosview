@@ -31,7 +31,7 @@ import { displaySeriesLabels } from './plotSeriesDisplay';
 import { annotatePlotUnits } from './plotUnits';
 import { formatPlotDatasetWarning } from './plotWarnings';
 import { hasManualPlotViewport, usePlotChart, type PlotViewportState } from './usePlotChart';
-import { usePlotPanelData } from './usePlotPanelData';
+import { REMOTE_PLOT_WINDOW_SEC, usePlotPanelData } from './usePlotPanelData';
 import { usePlotTopicDetection } from './usePlotTopicDetection';
 import { timeToSec } from '@/core/analysis/timeSeries';
 
@@ -85,11 +85,12 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const [viewportState, setViewportState] = useState<PlotViewportState>({ x: false, y: false });
 
-  const { startTime, endTime, randomAccessByTopic, topics } = useMessagePipeline(
+  const { startTime, endTime, randomAccessByTopic, topics, remoteRangeBacked } = useMessagePipeline(
     useShallow((state: MessagePipelineState) => ({
       startTime: state.playerState.activeData?.startTime,
       endTime: state.playerState.activeData?.endTime,
       randomAccessByTopic: state.playerState.activeData?.randomAccessByTopic,
+      remoteRangeBacked: state.playerState.activeData?.remoteRangeBacked,
       topics: state.playerState.activeData?.topics ?? [],
     })),
   );
@@ -109,11 +110,6 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
   const primary = selectPrimarySeries(config);
   const showJointStateFields = isPrimaryJointState(config, topicByName);
 
-  const xRange = useMemo(() => {
-    if (!startTime || !endTime || config.xAxisMode !== 'timestamp') return undefined;
-    return { min: timeToSec(startTime), max: timeToSec(endTime) };
-  }, [config.xAxisMode, endTime, startTime]);
-
   const { detectingTopic, applyTopicDetection } = usePlotTopicDetection({
     player,
     config,
@@ -123,7 +119,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     endTime,
   });
 
-  const { dataset: rawDataset, loading, progress, error } = usePlotPanelData({
+  const { dataset: rawDataset, loading, progress, error, window: dataWindow } = usePlotPanelData({
     player,
     config,
     activeTopics,
@@ -131,7 +127,15 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     startTime,
     endTime,
     randomAccessByTopic,
+    windowed: remoteRangeBacked === true,
   });
+
+  const xRange = useMemo(() => {
+    if (!startTime || !endTime || config.xAxisMode !== 'timestamp') return undefined;
+    // Remote recordings load a window around the playhead; the axis follows it.
+    if (dataWindow) return { min: timeToSec(dataWindow.start), max: timeToSec(dataWindow.end) };
+    return { min: timeToSec(startTime), max: timeToSec(endTime) };
+  }, [config.xAxisMode, dataWindow, endTime, startTime]);
 
   const dataset = useMemo(
     () => annotatePlotUnits(rawDataset, config.series, topicByName),
@@ -225,7 +229,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
       ? progress
         ? formatMessage(
             { id: 'panels.plot.status.loadingProgress' },
-            { count: progress.messages.toLocaleString() },
+            { count: progress.messages },
           )
         : formatMessage({ id: 'panels.plot.status.loading' })
       : error
@@ -281,8 +285,17 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
             onChange={handleJointStateFieldsChange}
           />
         )}
+        {dataWindow && (
+          <span
+            className="ml-auto shrink-0 text-[10px] text-muted-foreground"
+            data-testid="plot-window-hint"
+            title={formatMessage({ id: 'panels.plot.status.windowed' }, { seconds: REMOTE_PLOT_WINDOW_SEC })}
+          >
+            {formatMessage({ id: 'panels.plot.status.windowed' }, { seconds: REMOTE_PLOT_WINDOW_SEC })}
+          </span>
+        )}
         {status && (
-          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{status}</span>
+          <span className={`${dataWindow ? '' : 'ml-auto '}shrink-0 text-[10px] text-muted-foreground`}>{status}</span>
         )}
       </div>
       <div className="relative min-h-0 flex-1 flex flex-col">
@@ -334,7 +347,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
             {progress
               ? formatMessage(
                   { id: 'panels.plot.status.loadingProgress' },
-                  { count: progress.messages.toLocaleString() },
+                  { count: progress.messages },
                 )
               : formatMessage({ id: 'panels.plot.status.loading' })}
           </div>

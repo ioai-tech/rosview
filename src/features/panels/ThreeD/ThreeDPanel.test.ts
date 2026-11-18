@@ -31,7 +31,7 @@ function frameMessage(frameIndex: number, offset: number) {
 function isMeshPrimitive(
   primitive: MarkerPrimitive,
 ): primitive is Extract<MarkerPrimitive, { kind: 'sphere' | 'cube' | 'orientedBox' }> {
-  return primitive.kind !== 'line';
+  return primitive.kind === 'sphere' || primitive.kind === 'cube' || primitive.kind === 'orientedBox';
 }
 
 describe('extractBvhSkeletonPrimitives', () => {

@@ -15,9 +15,15 @@ export { RosViewer } from '../features/viewer/RosViewer';
 export type { RosViewerProps } from '../features/viewer/RosViewer';
 
 // ---------------------------------------------------------------------------
+// Recording-byte cache control
+// ---------------------------------------------------------------------------
+export { clearCache } from '../infra/range/rangeCache';
+
+// ---------------------------------------------------------------------------
 // Provider + theme hook
 // (wrap your own UI within the ROSView theme/intl context)
 // ---------------------------------------------------------------------------
+export type { RosViewMessageKey, RosViewMessageOverrides } from '../shared/intl/loadRosViewMessages';
 export { RosViewProvider, useRosViewTheme } from '../features/viewer/RosViewProvider';
 export type { RosViewProviderProps } from '../features/viewer/RosViewProvider';
 

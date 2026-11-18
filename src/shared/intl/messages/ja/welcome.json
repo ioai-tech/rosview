@@ -14,7 +14,7 @@
   "welcome.historyCollapse": "折りたたむ",
   "welcome.historyEmpty": "まだ履歴がありません。",
   "welcome.historyPermissionDenied": "保存されたファイル/フォルダを読み取れません。権限を付与するか、再度選択してください。",
-  "welcome.historyFileCount": "{count} ファイル",
+  "welcome.historyFileCount": "{count, plural, other {# ファイル}}",
   "welcome.historyFolderPicker": "フォルダ",
   "welcome.historyDroppedFiles": "ドロップしたファイル",
   "welcome.historyFromFilePicker": "ファイル選択",

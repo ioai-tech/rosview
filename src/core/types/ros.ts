@@ -79,6 +79,11 @@ export interface Initialization {
    * topics without scanning the full recording.
    */
   randomAccessByTopic?: boolean;
+  /**
+   * True when the bytes come from a remote server through range reads. Panels that would
+   * otherwise scan the whole recording (Plot) read a window around the playhead instead.
+   */
+  remoteRangeBacked?: boolean;
 }
 
 export interface MessageEvent<T = unknown> {

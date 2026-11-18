@@ -31,5 +31,6 @@
   "layout.welcomePanel.desc.Timeline": "View per-topic message density and frame drops",
   "layout.welcomePanel.desc.TopicGraph": "Explore topic publisher/subscriber connectivity",
   "layout.welcomePanel.desc.Align": "Diagnose multi-sensor timestamp synchronization",
-  "layout.panelSuspense.loading": "Loading panel…"
+  "layout.panelSuspense.loading": "Loading panel…",
+  "layout.viewerRegion": "Recording viewer"
 }
