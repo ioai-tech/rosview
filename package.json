@@ -58,12 +58,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:lib": "tsc -b && vite build --config vite.lib.config.ts && npm run build:lib:types && node scripts/check-lib-externals.mjs",
+    "build:lib": "node scripts/gen-message-keys.mjs && tsc -b && vite build --config vite.lib.config.ts && npm run build:lib:types && node scripts/check-lib-externals.mjs && node scripts/check-lib-consumer.mjs",
     "build:lib:types": "tsc -p tsconfig.lib.json --emitDeclarationOnly && api-extractor run -c api-extractor.rosview.json --local && api-extractor run -c api-extractor.urdf-preview.json --local",
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run lint && npm test && npm run build:lib",
     "lint": "eslint \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\"",
-    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:i18n": "node scripts/gen-message-keys.mjs --check && node scripts/check-i18n.mjs",
     "check:audit": "node scripts/check-audit.mjs",
     "test": "vitest run",
     "preview": "npm run build && vite preview",
@@ -72,7 +72,8 @@
     "pretest:e2e": "npm run gen:e2e:fixtures",
     "test:e2e": "playwright test",
     "test:e2e:perf": "playwright test tests/playback-perf.spec.ts",
-    "perf:compare": "node scripts/compare-playback-perf.mjs"
+    "perf:compare": "node scripts/compare-playback-perf.mjs",
+    "gen:message-keys": "node scripts/gen-message-keys.mjs"
   },
   "peerDependencies": {
     "react": ">=19.2.0 <20",

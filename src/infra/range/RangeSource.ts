@@ -447,13 +447,15 @@ export class RangeSource implements RenewableUrl {
           if (run.controller.signal.aborted) throw abortError();
           if (err instanceof RangeMismatchError) throw err; // wrong bytes are never retried
           if (err instanceof WholeFileInFlight) {
-            await this.#wholeFile?.promise;
+            await this.#wholeFile?.promise.catch(() => undefined);
             while (next <= run.last && this.#store.has(next)) next++;
             if (next > run.last) {
               for (const [i, d] of run.deferreds) if (this.#store.has(i)) d.resolve();
               break;
             }
-            throw new RangeMismatchError('The whole-file response did not contain the requested bytes.');
+            // That download ended without our bytes (cleared, evicted or failed): ask again.
+            if (++attempt >= MAX_ATTEMPTS) throw new RangeMismatchError('The whole-file response did not contain the requested bytes.');
+            continue;
           }
           const status = err instanceof RangeHttpError ? err.status : 0;
           if (status !== 0 && !RETRYABLE.has(status)) throw err;
@@ -584,7 +586,11 @@ export class RangeSource implements RenewableUrl {
         this.#wholeFile?.reject(err);
         throw err;
       } finally {
-        this.#wholeFile?.resolve();
+        // Done (blocks are stored) or failed: later reads may start a new whole-file download,
+        // for example after clearCache() or eviction.
+        const done = this.#wholeFile;
+        done?.resolve();
+        if (this.#wholeFile === done) this.#wholeFile = undefined;
       }
     }
     return await this.#consumeBody(res, run, firstBlock, whole);

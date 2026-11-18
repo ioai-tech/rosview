@@ -5,6 +5,9 @@ import { clearMemoryIndexes } from './rangeHandle';
 import { RangeBlockCache, RANGE_BLOCK_BYTES as B } from './rangeCache';
 import { UrlRenewal } from './urlRenewal';
 
+/** URL of a fetch input without stringifying objects. */
+const urlOf = (input: RequestInfo | URL): string => (typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+
 /** Byte equality that stays fast for multi-MiB arrays. */
 const same = (a: Uint8Array, b: Uint8Array): boolean => Buffer.from(a).equals(Buffer.from(b));
 
@@ -15,7 +18,7 @@ function fakeServer(size: number, options: { etag?: string; honourRange?: boolea
   const validUrls = new Set<string>();
   const requests: Array<{ url: string; start: number; end: number }> = [];
   const fetchImpl: typeof fetch = (input, init) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const url = urlOf(input);
     const range = /bytes=(\d+)-(\d+)/.exec(new Headers(init?.headers).get('Range') ?? '');
     const start = range ? Number(range[1]) : 0;
     const end = range ? Math.min(size - 1, Number(range[2])) : size - 1;
@@ -363,7 +366,7 @@ describe('host URLs and CORS-less expiry', () => {
       knownTotalBytes: 8 * B,
       renewal,
       cache: new RangeBlockCache(),
-      fetchImpl: (u, i) => server.fetchImpl(String(u), i),
+      fetchImpl: (u, i) => server.fetchImpl(urlOf(u), i),
     });
     server.validUrls.add('http://host/rec.mcap?t=new');
     await source.read(0, 10);
@@ -377,7 +380,7 @@ describe('host URLs and CORS-less expiry', () => {
     const renewal = new UrlRenewal();
     const refreshUrls = vi.fn(async (expired: string[]) => expired.map(() => 'https://x/new'));
     renewal.update({ refreshUrls, urlExpiresAt: new Date(Date.now() - 1000).toISOString() });
-    const f: typeof fetch = (u, i) => (String(u).includes('/old') ? Promise.reject(new TypeError('Failed to fetch')) : server.fetchImpl(u, i));
+    const f: typeof fetch = (u, i) => (urlOf(u).includes('/old') ? Promise.reject(new TypeError('Failed to fetch')) : server.fetchImpl(u, i));
     const source = new RangeSource({ url: 'https://x/old', knownTotalBytes: 8 * B, renewal, cache: new RangeBlockCache(), fetchImpl: f });
     // expiringSoon() renews first; reset so the network-error path is the one exercised
     expect(same(await source.read(0, 10), server.data.slice(0, 10))).toBe(true);
@@ -385,3 +388,58 @@ describe('host URLs and CORS-less expiry', () => {
     source.dispose();
   });
 });
+
+describe('whole-file mode on a server without Range ends with the download', () => {
+  const noRange = (size: number) => {
+    const server = fakeServer(size, { honourRange: false });
+    server.validUrls.add('https://x/a');
+    return server;
+  };
+
+  it('works again after clearCache()', async () => {
+    const server = noRange(6 * B);
+    const cache = new RangeBlockCache();
+    const source = new RangeSource({ url: 'https://x/a', knownTotalBytes: 6 * B, sourceKey: 'k', cache, fetchImpl: server.fetchImpl });
+    expect(same(await source.read(0, 10), server.data.slice(0, 10))).toBe(true);
+    cache.clear();
+    expect(same(await source.read(5 * B, 10), server.data.slice(5 * B, 5 * B + 10))).toBe(true);
+    expect(server.requests.length).toBe(2);
+    source.dispose();
+  });
+
+  it('works again after eviction', async () => {
+    const server = noRange(6 * B);
+    const cache = new RangeBlockCache(8 * B);
+    const source = new RangeSource({ url: 'https://x/a', knownTotalBytes: 6 * B, sourceKey: 'k', cache, fetchImpl: server.fetchImpl });
+    await source.read(0, 10);
+    // Another source fills the cache until this one's blocks are evicted.
+    const other = cache.store('other', 64 * B);
+    for (let i = 0; i < 12; i++) other.set(i, new Uint8Array(B));
+    expect(source.downloadedRanges().length).toBe(0);
+    expect(same(await source.read(3 * B, 10), server.data.slice(3 * B, 3 * B + 10))).toBe(true);
+    source.dispose();
+  });
+
+  it('retries after a failed whole-file download', { timeout: 15_000 }, async () => {
+    const server = noRange(6 * B);
+    let failures = 4; // every attempt of the first read fails
+    const f: typeof fetch = (u, i) => {
+      if (failures > 0) {
+        failures--;
+        const body = new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new Uint8Array(100));
+            c.error(new TypeError('connection reset'));
+          },
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { 'Content-Length': String(6 * B) } }));
+      }
+      return server.fetchImpl(u, i);
+    };
+    const source = new RangeSource({ url: 'https://x/a', knownTotalBytes: 6 * B, cache: new RangeBlockCache(), fetchImpl: f });
+    await expect(source.read(0, 10)).rejects.toBeTruthy();
+    expect(same(await source.read(0, 10), server.data.slice(0, 10))).toBe(true);
+    source.dispose();
+  });
+});
+
