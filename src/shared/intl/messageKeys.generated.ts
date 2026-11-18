@@ -57,7 +57,6 @@ export type RosViewMessageKey =
   | "navbar.openLocalTar"
   | "navbar.openMenu"
   | "navbar.openRemoteUrl"
-  | "navbar.reapplyAutoLayout"
   | "navbar.recentOpens"
   | "navbar.recentOpensEmpty"
   | "navbar.resetLayout"

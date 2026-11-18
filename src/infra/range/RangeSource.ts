@@ -427,6 +427,7 @@ export class RangeSource implements RenewableUrl {
 
   #abortAll(): void {
     this.#probe?.abort();
+    if (!this.#rangeSupported) this.#gate = undefined; // after clearCache the next request goes alone again
     for (const run of [...this.#active]) this.#abortRun(run);
     for (const run of this.#queue) this.#dropRun(run, abortError());
     this.#queue = [];
@@ -590,7 +591,10 @@ export class RangeSource implements RenewableUrl {
         // for example after clearCache() or eviction.
         const done = this.#wholeFile;
         done?.resolve();
-        if (this.#wholeFile === done) this.#wholeFile = undefined;
+        if (this.#wholeFile === done) {
+          this.#wholeFile = undefined;
+          this.#gate = undefined; // the next request after this download probes alone again
+        }
       }
     }
     return await this.#consumeBody(res, run, firstBlock, whole);

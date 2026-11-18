@@ -441,5 +441,18 @@ describe('whole-file mode on a server without Range ends with the download', () 
     expect(same(await source.read(0, 10), server.data.slice(0, 10))).toBe(true);
     source.dispose();
   });
-});
 
+  it('after clearCache, parallel reads download once (the first request goes alone again)', async () => {
+    const server = noRange(24 * B);
+    const cache = new RangeBlockCache();
+    const source = new RangeSource({ url: 'https://x/a', knownTotalBytes: 24 * B, sourceKey: 'k', cache, fetchImpl: server.fetchImpl });
+    await source.read(0, 10);
+    // Wait for the first whole-file download to finish, then clear.
+    await vi.waitFor(() => expect(source.downloadedRanges().at(-1)?.end).toBe(24 * B));
+    cache.clear();
+    const before = server.requests.length;
+    await Promise.all([0, 4, 8, 12, 16, 20].map((i) => source.read(i * B, B)));
+    expect(server.requests.length - before).toBe(1);
+    source.dispose();
+  });
+});
