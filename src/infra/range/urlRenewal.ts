@@ -49,6 +49,11 @@ export class UrlRenewal {
     return () => this.#sources.delete(source);
   }
 
+  /** True when the host declared an expiry and it has passed (a CORS-less 403 then looks like a network error). */
+  pastExpiry(): boolean {
+    return this.#refresh != undefined && this.#expiresAtMs != undefined && Date.now() >= this.#expiresAtMs;
+  }
+
   /** True when the host declared an expiry and it is less than a minute away. */
   expiringSoon(): boolean {
     return this.#refresh != undefined && this.#expiresAtMs != undefined && Date.now() >= this.#expiresAtMs - EXPIRY_MARGIN_MS;

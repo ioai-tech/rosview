@@ -26,6 +26,7 @@ import {
   hasPanelDefinition,
 } from '../panels/registry';
 import { PanelTabHeader } from './PanelTabHeader';
+import { useRosViewerLayoutContext } from '@/features/viewer/RosViewerLayoutContext';
 import { clearSavedDockviewLayout, readSavedDockviewLayout } from '@/core/preferences/layoutStorage';
 import { createSinglePanelLayout } from '@/core/preferences/createSinglePanelLayout';
 import type { PreferencePersistence } from '@/core/preferences/types';
@@ -367,6 +368,14 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({
     return reapplyAutoLayout();
   }, [reapplyAutoLayout, importLayoutState]);
 
+  const { resetLayoutRef } = useRosViewerLayoutContext();
+  useEffect(() => {
+    resetLayoutRef.current = resetLayout;
+    return () => {
+      if (resetLayoutRef.current === resetLayout) resetLayoutRef.current = null;
+    };
+  }, [resetLayout, resetLayoutRef]);
+
   const components = useMemo(() => {
     const mapped: Record<string, (props: IDockviewPanelProps) => React.ReactElement> = {};
     for (const definition of getPanelDefinitions()) {
@@ -452,7 +461,6 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({
       exportLayout: exportLayoutState,
       importLayout: importLayoutState,
       reapplyAutoLayout,
-      resetLayout,
     });
 
     for (const d of dockviewEventDisposablesRef.current) {
@@ -554,7 +562,7 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({
       });
     }
     onLayoutReadyRef.current?.({ panelCount: event.api.panels.length });
-  }, [openPanel, duplicatePanel, exportLayoutState, importLayoutState, reapplyAutoLayout, resetLayout]);
+  }, [openPanel, duplicatePanel, exportLayoutState, importLayoutState, reapplyAutoLayout]);
 
   return (
     <DockviewApiContext.Provider value={contextApi}>

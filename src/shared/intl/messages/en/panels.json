@@ -431,5 +431,6 @@
   "urdfDebug.rule.linear": "Linear",
   "urdfDebug.rule.constant": "Constant",
   "urdfDebug.rule.ignore": "Ignore",
-  "urdfDebug.help.body": "Upload a URDF and tune joint mapping until the preview matches your recording. Toggle Rotate mesh visuals when mesh orientation looks wrong (common for CAD exports). Use Symmetric pair for left/right gripper joints and Mimic fill to apply URDF mimic tags. Export recipe.json or a processing script to rewrite MCAP with /robot_description and /tf."
+  "urdfDebug.help.body": "Upload a URDF and tune joint mapping until the preview matches your recording. Toggle Rotate mesh visuals when mesh orientation looks wrong (common for CAD exports). Use Symmetric pair for left/right gripper joints and Mimic fill to apply URDF mimic tags. Export recipe.json or a processing script to rewrite MCAP with /robot_description and /tf.",
+  "panels.plot.status.windowed": "Showing ±{seconds, number} s around the playhead"
 }

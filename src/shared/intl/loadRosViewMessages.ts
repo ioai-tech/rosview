@@ -91,7 +91,15 @@ const MERGED = {
 export type RosViewLocale = keyof typeof MERGED;
 
 /** Every message id the viewer uses (the English catalog is the source of truth). */
-export type RosViewMessageKey = keyof typeof MERGED.en;
+export type RosViewMessageKey =
+  | keyof typeof enCommon
+  | keyof typeof enLayout
+  | keyof typeof enNavbar
+  | keyof typeof enPanels
+  | keyof typeof enPlayback
+  | keyof typeof enQuality
+  | keyof typeof enSidebar
+  | keyof typeof enWelcome;
 
 /** Host-supplied copy that replaces catalog entries; values are ICU message strings. */
 export type RosViewMessageOverrides = Partial<Record<RosViewMessageKey, string>>;

@@ -168,6 +168,8 @@ clearCache();
 
 - `sourceKey` lets the same recording reopen in the same tab (for example Data, then Raw, then Data) from memory, and keeps the cache across a URL refresh. It must change when the content changes (include a version or ETag); a differing server `ETag` also purges the entry. It is honoured only while the viewer has exactly one remote source.
 - `refreshUrls(expired)` is called at most once per batch, with the current URL of every open remote source, when a request gets 401 or 403 or starts within 60 s of `urlExpiresAt`. Resolve to the new URLs in the same order. The failed request is retried once; position, layout and panels are kept. If the new URL fails as well, the ordinary source error is shown and RosView stops asking for 30 s. A host that changes the `url` prop instead restarts the viewer; use `refreshUrls` to avoid that.
+- The bucket / server CORS rules must apply to **error responses too** (403 included) and expose `Content-Range`, `Content-Length`, `ETag` and `Accept-Ranges`. Without CORS headers on a 403 the browser reports a network error and RosView cannot tell an expired URL from an outage; it then renews only when `urlExpiresAt` has passed (or is within 60 s).
+- `refreshUrls` receives the URL strings exactly as you passed them to `url` / `urls` (never made absolute).
 - `clearCache()` drops every cached byte of every viewer on the page and aborts in-flight range requests.
 - Unindexed MCAP is scanned once through the same cache (the scan result stays in memory only when embedded). ROS 1 `.bag` reads through ranges too; ROS 2 `.db3` (SQLite) must still be downloaded whole, and renews its URL once if it gets 401/403.
 
@@ -180,7 +182,7 @@ clearCache();
 - A 3D panel only when there are TF or pose topics (or a BVH skeleton) **and** the browser has WebGL; a Pose panel for pose topics.
 - Raw Messages as a thin strip at the bottom (the only panel when nothing else applies).
 
-Plots draw while messages arrive. For remote range-backed recordings a Plot reads only a window of +/- 30 s around the playhead and recentres it as the playhead moves (its x axis follows the window); it never preloads the whole file. Local files keep reading the full range. The embedded root renders a labelled `region`, not a `<main>` landmark.
+Plots draw while messages arrive. For remote range-backed recordings a Plot reads only a window of +/- 30 s around the playhead and recentres it as the playhead moves (its x axis follows the window); it never preloads the whole file. A hint above the chart says so. Local files keep reading the full range; in a merged set that contains any remote source, every Plot uses the window. The embedded root renders a labelled `region`, not a `<main>` landmark.
 
 `messages` replaces viewer copy by message id (ICU strings, applied over en / zh / ja; `RosViewMessageKey` lists the ids):
 

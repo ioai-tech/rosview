@@ -148,7 +148,8 @@ export async function prepareSourceMember(
     rangeBlockCache.setMaxBytes(resolveRemoteCacheBytes());
     const renewal = remoteOptions.renewal;
     const rangeSource = new RangeSource({
-      url: resolveBrowserHttpUrl(ds.url),
+      url: ds.url,
+      resolveUrl: resolveBrowserHttpUrl,
       sourceKey: remoteOptions.sourceKey,
       knownTotalBytes: ds.sizeBytes,
       renewal,

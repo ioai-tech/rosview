@@ -23,10 +23,21 @@ export class RangeHttpError extends Error {
   }
 }
 
+/** The server answered a range request with different bytes than were asked for. */
+export class RangeMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RangeMismatchError';
+  }
+}
+
 export type RangeProgress = { loadedBytes: number; totalBytes: number; transferredBytes: number };
 
 export interface RangeSourceOptions {
+  /** The URL exactly as the host passed it; this is what `refreshUrls` receives back. */
   url: string;
+  /** Maps the host URL to what `fetch` should request (for example root-relative to absolute). */
+  resolveUrl?: (url: string) => string;
   /** Host-stable identity of the recording (never the signed URL). Enables cache reuse across opens. */
   sourceKey?: string;
   knownTotalBytes?: number;
@@ -69,6 +80,20 @@ function deferred(): Deferred {
   return { promise, resolve, reject };
 }
 
+function deferredVoid(): { promise: Promise<void>; resolve: () => void; reject: (e: unknown) => void } {
+  let resolve!: () => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  promise.catch(() => undefined);
+  return { promise, resolve, reject };
+}
+
+/** Another request already runs against a server that ignores Range; wait for its whole-file response. */
+class WholeFileInFlight extends Error {}
+
 function abortError(): Error {
   const e = new Error('Aborted');
   e.name = 'AbortError';
@@ -94,6 +119,7 @@ let anonymousCounter = 0;
 
 export class RangeSource implements RenewableUrl {
   #url: string;
+  #resolve: (url: string) => string;
   #sourceKey?: string;
   #known?: number;
   #renewal?: UrlRenewal;
@@ -117,10 +143,17 @@ export class RangeSource implements RenewableUrl {
   #progressTimer?: ReturnType<typeof setTimeout>;
   #lastProgressAt = 0;
   #lastDemandAt = 0;
+  #probe?: AbortController;
+  #rangeSupported = false;
+  /** Set when a 200 answered a ranged request: that one response fills the cache. */
+  #wholeFile?: { promise: Promise<void>; resolve: () => void; reject: (e: unknown) => void };
+  /** The first request goes alone, so a server that ignores Range is noticed before six runs hit it. */
+  #gate?: { promise: Promise<void>; resolve: () => void };
   #pumpTimer?: ReturnType<typeof setTimeout>;
 
   constructor(options: RangeSourceOptions) {
     this.#url = options.url;
+    this.#resolve = options.resolveUrl ?? ((u) => u);
     this.#sourceKey = options.sourceKey || undefined;
     this.#known =
       typeof options.knownTotalBytes === 'number' && Number.isFinite(options.knownTotalBytes) && options.knownTotalBytes > 0
@@ -147,7 +180,10 @@ export class RangeSource implements RenewableUrl {
 
   /** Resolves the file size (one request unless the host passed it). */
   open(): Promise<number> {
-    this.#opening ??= this.#open();
+    this.#opening ??= this.#open().catch((err: unknown) => {
+      this.#opening = undefined; // a later read may open again (for example after clearCache)
+      throw err;
+    });
     return this.#opening;
   }
 
@@ -157,6 +193,8 @@ export class RangeSource implements RenewableUrl {
       return this.#size;
     }
     const controller = new AbortController();
+    this.#probe = controller;
+    if (this.#disposed) controller.abort();
     const res = await this.#request(0, B - 1, controller.signal);
     const total = this.#parseTotal(res);
     if (!(total > 0)) {
@@ -169,7 +207,11 @@ export class RangeSource implements RenewableUrl {
     this.#etag = res.headers.get('ETag') ?? undefined;
     this.#attachStore(total);
     const run: Run = { first: 0, last: 0, kind: 'demand', controller, deferreds: new Map() };
-    await this.#consume(res, run, 0);
+    try {
+      await this.#consume(res, run, 0);
+    } finally {
+      this.#probe = undefined;
+    }
     return this.#size;
   }
 
@@ -226,7 +268,21 @@ export class RangeSource implements RenewableUrl {
       if (signal?.aborted) throw abortError();
       const waits = this.#ensure(first, last, 'demand');
       if (waits.length > 0) {
-        await Promise.all(signal ? [...waits, new Promise<never>((_, rej) => signal.addEventListener('abort', () => rej(abortError()), { once: true }))] : waits);
+        const all = Promise.all(waits);
+        if (!signal) {
+          await all;
+        } else {
+          let onAbort: (() => void) | undefined;
+          const aborted = new Promise<never>((_, reject) => {
+            onAbort = () => reject(abortError());
+            signal.addEventListener('abort', onAbort, { once: true });
+          });
+          try {
+            await Promise.race([all, aborted]);
+          } finally {
+            if (onAbort) signal.removeEventListener('abort', onAbort);
+          }
+        }
       }
       const out = this.#assemble(offset, length, first, last);
       if (out) return out;
@@ -370,6 +426,7 @@ export class RangeSource implements RenewableUrl {
   }
 
   #abortAll(): void {
+    this.#probe?.abort();
     for (const run of [...this.#active]) this.#abortRun(run);
     for (const run of this.#queue) this.#dropRun(run, abortError());
     this.#queue = [];
@@ -388,6 +445,16 @@ export class RangeSource implements RenewableUrl {
           throw new Error('Short read from the range server');
         } catch (err) {
           if (run.controller.signal.aborted) throw abortError();
+          if (err instanceof RangeMismatchError) throw err; // wrong bytes are never retried
+          if (err instanceof WholeFileInFlight) {
+            await this.#wholeFile?.promise;
+            while (next <= run.last && this.#store.has(next)) next++;
+            if (next > run.last) {
+              for (const [i, d] of run.deferreds) if (this.#store.has(i)) d.resolve();
+              break;
+            }
+            throw new RangeMismatchError('The whole-file response did not contain the requested bytes.');
+          }
           const status = err instanceof RangeHttpError ? err.status : 0;
           if (status !== 0 && !RETRYABLE.has(status)) throw err;
           if (++attempt >= MAX_ATTEMPTS) throw err;
@@ -412,24 +479,84 @@ export class RangeSource implements RenewableUrl {
    */
   async #request(start: number, end: number, signal: AbortSignal): Promise<Response> {
     if (this.#renewal?.expiringSoon()) await this.#renewal.renew(this, this.#url);
+    if (!this.#rangeSupported && !this.#wholeFile) {
+      if (this.#gate) await this.#gate.promise;
+      else this.#gate = deferredVoid();
+    }
+    if (this.#wholeFile) throw new WholeFileInFlight();
+    try {
+      return await this.#requestLoop(start, end, signal);
+    } finally {
+      this.#gate?.resolve(); // whatever the first outcome was, other runs may go on
+    }
+  }
+
+  async #requestLoop(start: number, end: number, signal: AbortSignal): Promise<Response> {
     for (let renewed = false; ; ) {
       const current = this.#url;
       let res: Response;
       try {
-        res = await this.#fetch(current, { headers: { Range: `bytes=${start}-${end}` }, signal });
+        res = await this.#fetch(this.#resolve(current), { headers: { Range: `bytes=${start}-${end}` }, signal });
       } catch (err) {
         if (signal.aborted) throw abortError();
+        // A refused request without CORS headers on the error response surfaces as a network
+        // error; past the declared expiry that is an expired URL.
+        if (!renewed && this.#renewal?.pastExpiry()) {
+          renewed = true;
+          if (await this.#renewal.renew(this, current)) continue;
+        }
         throw err;
       }
-      if (res.status === 206 || res.status === 200) return res;
+      if (signal.aborted) {
+        await res.body?.cancel().catch(() => undefined);
+        throw abortError();
+      }
+      if (res.status === 206) {
+        const bad = this.#contentRangeMismatch(res, start, end);
+        if (bad) {
+          await res.body?.cancel().catch(() => undefined);
+          throw new RangeMismatchError(bad);
+        }
+        this.#rangeSupported = true;
+        this.#gate?.resolve();
+        return res;
+      }
+      if (res.status === 200) {
+        const cl = Number(res.headers.get('Content-Length') ?? '');
+        if (this.#size > 0 && Number.isFinite(cl) && cl > 0 && cl !== this.#size) {
+          await res.body?.cancel().catch(() => undefined);
+          throw new RangeMismatchError(`The server returned ${cl} bytes but the recording is ${this.#size} bytes.`);
+        }
+        // The server ignored Range: this one response carries the whole file for every reader.
+        const whole = deferredVoid();
+        this.#wholeFile = whole;
+        this.#gate?.resolve();
+        return res;
+      }
       await res.body?.cancel().catch(() => undefined);
       if ((res.status === 401 || res.status === 403) && this.#renewal && !renewed) {
         renewed = true;
         if (await this.#renewal.renew(this, current)) continue;
       }
+      this.#gate?.resolve();
       if (res.status === 416) throw new RangeHttpError('Requested range not satisfiable', 416, current);
       throw new RangeHttpError(`Failed to read bytes ${start}-${end}: ${res.status} ${res.statusText}`.trim(), res.status, current);
     }
+  }
+
+  /** Non-empty message when a 206 does not describe the bytes that were requested. */
+  #contentRangeMismatch(res: Response, start: number, end: number): string | undefined {
+    const header = res.headers.get('Content-Range');
+    if (!header) return undefined; // not exposed by CORS: nothing to validate against
+    const m = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)\s*$/i.exec(header);
+    if (!m) return `Unreadable Content-Range "${header}".`;
+    const from = Number(m[1]);
+    const to = Number(m[2]);
+    if (from !== start || to > end) return `Asked for bytes ${start}-${end} but the server sent ${from}-${to}.`;
+    if (m[3] !== '*' && this.#size > 0 && Number(m[3]) !== this.#size) {
+      return `The recording is ${this.#size} bytes but the server reports ${m[3]}.`;
+    }
+    return undefined;
   }
 
   /** Streams a response into the cache block by block; returns the next uncommitted block index. */
@@ -450,6 +577,20 @@ export class RangeSource implements RenewableUrl {
       this.#store.etag = etag;
     }
     const whole = res.status === 200;
+    if (whole) {
+      try {
+        return await this.#consumeBody(res, run, firstBlock, whole);
+      } catch (err) {
+        this.#wholeFile?.reject(err);
+        throw err;
+      } finally {
+        this.#wholeFile?.resolve();
+      }
+    }
+    return await this.#consumeBody(res, run, firstBlock, whole);
+  }
+
+  async #consumeBody(res: Response, run: Run, firstBlock: number, whole: boolean): Promise<number> {
     if (whole && this.#size > this.#cache.maxBytes) {
       await res.body?.cancel().catch(() => undefined);
       throw new Error('The server ignored the Range header and the recording is larger than the cache budget.');

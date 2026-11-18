@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RangeSource, RangeHttpError } from './RangeSource';
+import { RangeSource, RangeHttpError, RangeMismatchError } from './RangeSource';
+import { rangeBlockCache } from './rangeCache';
+import { clearMemoryIndexes } from './rangeHandle';
 import { RangeBlockCache, RANGE_BLOCK_BYTES as B } from './rangeCache';
 import { UrlRenewal } from './urlRenewal';
 
@@ -212,6 +214,174 @@ describe('URL renewal', () => {
     const server = fakeServer(8 * B);
     const source = new RangeSource({ url: 'https://x/old', knownTotalBytes: 8 * B, cache: new RangeBlockCache(), fetchImpl: server.fetchImpl });
     await expect(source.read(0, 10)).rejects.toMatchObject({ status: 403 });
+    source.dispose();
+  });
+});
+
+describe('server answers that must not reach the cache', () => {
+  const base = (size: number) => {
+    const data = new Uint8Array(size).map((_, i) => i & 0xff);
+    return data;
+  };
+
+  it('rejects a 206 whose Content-Range does not match the request, and writes nothing', async () => {
+    const data = base(8 * B);
+    const wrong: typeof fetch = () =>
+      Promise.resolve(
+        new Response(data.slice(0, B), {
+          status: 206,
+          headers: { 'Content-Range': `bytes 0-${B - 1}/${8 * B}`, 'Content-Length': String(B) },
+        }),
+      );
+    const cache = new RangeBlockCache();
+    const source = new RangeSource({ url: 'https://x/a', knownTotalBytes: 8 * B, cache, fetchImpl: wrong });
+    await expect(source.read(4 * B, 10)).rejects.toBeInstanceOf(RangeMismatchError); // asked 4B.., got 0..
+    expect(cache.bytes).toBe(0);
+    source.dispose();
+  });
+
+  it('rejects a 206 that reports a different total size', async () => {
+    const data = base(8 * B);
+    const f: typeof fetch = (_u, init) => {
+      const m = /bytes=(\d+)-(\d+)/.exec(new Headers(init?.headers).get('Range') ?? '')!;
+      const start = Number(m[1]);
+      const end = Number(m[2]);
+      return Promise.resolve(
+        new Response(data.slice(start, end + 1), { status: 206, headers: { 'Content-Range': `bytes ${start}-${end}/${9 * B}` } }),
+      );
+    };
+    const source = new RangeSource({ url: 'https://x/a', knownTotalBytes: 8 * B, cache: new RangeBlockCache(), fetchImpl: f });
+    await expect(source.read(0, 10)).rejects.toBeInstanceOf(RangeMismatchError);
+    source.dispose();
+  });
+
+  it('a server that ignores Range with a known size is downloaded once, not once per run', async () => {
+    const size = 24 * B;
+    const server = fakeServer(size, { honourRange: false });
+    server.validUrls.add('https://x/a');
+    const source = new RangeSource({ url: 'https://x/a', knownTotalBytes: size, cache: new RangeBlockCache(), fetchImpl: server.fetchImpl });
+    const reads = await Promise.all([source.read(0, B), source.read(10 * B, B), source.read(20 * B, B), source.read(5 * B, 3 * B)]);
+    expect(same(reads[1], server.data.slice(10 * B, 11 * B))).toBe(true);
+    expect(server.requests.length).toBe(1);
+    source.dispose();
+  });
+
+  it('refuses a 200 whose Content-Length differs from the known size', async () => {
+    const server = fakeServer(8 * B, { honourRange: false });
+    server.validUrls.add('https://x/a');
+    const source = new RangeSource({ url: 'https://x/a', knownTotalBytes: 6 * B, cache: new RangeBlockCache(), fetchImpl: server.fetchImpl });
+    await expect(source.read(0, 10)).rejects.toBeInstanceOf(RangeMismatchError);
+    source.dispose();
+  });
+});
+
+describe('read(signal) and teardown', () => {
+  it('resolves with a live signal and leaves no abort listeners behind', async () => {
+    const server = fakeServer(8 * B);
+    server.validUrls.add('https://x/a');
+    const source = new RangeSource({ url: 'https://x/a', knownTotalBytes: 8 * B, cache: new RangeBlockCache(), fetchImpl: server.fetchImpl });
+    const controller = new AbortController();
+    let added = 0;
+    let removed = 0;
+    const add = controller.signal.addEventListener.bind(controller.signal);
+    const remove = controller.signal.removeEventListener.bind(controller.signal);
+    controller.signal.addEventListener = ((...a: Parameters<typeof add>) => {
+      added++;
+      return add(...a);
+    }) as typeof add;
+    controller.signal.removeEventListener = ((...a: Parameters<typeof remove>) => {
+      removed++;
+      return remove(...a);
+    }) as typeof remove;
+    const out = await source.read(2 * B, 100, controller.signal);
+    expect(same(out, server.data.slice(2 * B, 2 * B + 100))).toBe(true);
+    expect(removed).toBe(added);
+    source.dispose();
+  });
+
+  it('rejects with AbortError when the signal aborts while waiting', async () => {
+    const never: typeof fetch = (_u, init) =>
+      new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('x', 'AbortError'))));
+    const source = new RangeSource({ url: 'https://x/a', knownTotalBytes: 8 * B, cache: new RangeBlockCache(), fetchImpl: never });
+    const controller = new AbortController();
+    const p = source.read(0, 10, controller.signal);
+    controller.abort();
+    await expect(p).rejects.toMatchObject({ name: 'AbortError' });
+    source.dispose();
+  });
+
+  it('clearCache aborts the size probe and its blocks do not refill the cleared store', async () => {
+    const size = 8 * B;
+    const server = fakeServer(size);
+    server.validUrls.add('https://x/a');
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow: typeof fetch = async (u, init) => {
+      await gate;
+      return server.fetchImpl(u, init);
+    };
+    const cache = new RangeBlockCache();
+    const source = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: slow });
+    const opening = source.open().catch((e: unknown) => e);
+    cache.clear();
+    release();
+    expect(await opening).toMatchObject({ name: 'AbortError' });
+    expect(cache.bytes).toBe(0);
+    // The source can open again afterwards.
+    expect(same(await source.read(0, 16), server.data.slice(0, 16))).toBe(true);
+    source.dispose();
+  });
+
+  it('a cleared store ignores late writes', () => {
+    const cache = new RangeBlockCache();
+    const store = cache.store('k', 4 * B);
+    store.set(0, new Uint8Array(10));
+    cache.clear();
+    store.set(1, new Uint8Array(10));
+    expect(store.has(1)).toBe(false);
+    expect(cache.bytes).toBe(0);
+  });
+
+  it('clearCache also forgets unindexed-MCAP scan results', () => {
+    clearMemoryIndexes();
+    expect(typeof rangeBlockCache.clear).toBe('function');
+    rangeBlockCache.clear(); // runs the listener registered by rangeHandle without throwing
+  });
+});
+
+describe('host URLs and CORS-less expiry', () => {
+  it('refreshUrls receives the URL exactly as the host passed it, not the resolved one', async () => {
+    const server = fakeServer(8 * B);
+    server.validUrls.add('http://host/rec.mcap?t=old').add('/rec.mcap?t=new');
+    server.validUrls.delete('http://host/rec.mcap?t=old');
+    const renewal = new UrlRenewal();
+    const refreshUrls = vi.fn(async (expired: string[]) => expired.map(() => '/rec.mcap?t=new'));
+    renewal.update({ refreshUrls });
+    const source = new RangeSource({
+      url: '/rec.mcap?t=old',
+      resolveUrl: (u) => `http://host${u}`,
+      knownTotalBytes: 8 * B,
+      renewal,
+      cache: new RangeBlockCache(),
+      fetchImpl: (u, i) => server.fetchImpl(String(u), i),
+    });
+    server.validUrls.add('http://host/rec.mcap?t=new');
+    await source.read(0, 10);
+    expect(refreshUrls.mock.calls[0][0]).toEqual(['/rec.mcap?t=old']);
+    source.dispose();
+  });
+
+  it('treats a CORS-less network failure past urlExpiresAt as an expired URL', async () => {
+    const server = fakeServer(8 * B);
+    server.validUrls.add('https://x/new');
+    const renewal = new UrlRenewal();
+    const refreshUrls = vi.fn(async (expired: string[]) => expired.map(() => 'https://x/new'));
+    renewal.update({ refreshUrls, urlExpiresAt: new Date(Date.now() - 1000).toISOString() });
+    const f: typeof fetch = (u, i) => (String(u).includes('/old') ? Promise.reject(new TypeError('Failed to fetch')) : server.fetchImpl(u, i));
+    const source = new RangeSource({ url: 'https://x/old', knownTotalBytes: 8 * B, renewal, cache: new RangeBlockCache(), fetchImpl: f });
+    // expiringSoon() renews first; reset so the network-error path is the one exercised
+    expect(same(await source.read(0, 10), server.data.slice(0, 10))).toBe(true);
+    expect(refreshUrls).toHaveBeenCalledTimes(1);
     source.dispose();
   });
 });

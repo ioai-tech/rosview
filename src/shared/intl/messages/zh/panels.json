@@ -431,5 +431,6 @@
   "urdfDebug.rule.linear": "线性",
   "urdfDebug.rule.constant": "常量",
   "urdfDebug.rule.ignore": "忽略",
-  "urdfDebug.help.body": "上传 URDF 并调整关节映射，直到预览与录制数据一致。若 mesh 朝向不对（常见于 CAD 导出），可切换「旋转 mesh 视觉」。对称关节对用于左右夹爪；Mimic 填充会根据 URDF 的 mimic 标签补齐从动关节。导出 recipe.json 或处理脚本后，可在本地重写 MCAP，写入 /robot_description 与 /tf。"
+  "urdfDebug.help.body": "上传 URDF 并调整关节映射，直到预览与录制数据一致。若 mesh 朝向不对（常见于 CAD 导出），可切换「旋转 mesh 视觉」。对称关节对用于左右夹爪；Mimic 填充会根据 URDF 的 mimic 标签补齐从动关节。导出 recipe.json 或处理脚本后，可在本地重写 MCAP，写入 /robot_description 与 /tf。",
+  "panels.plot.status.windowed": "显示播放头前后各 {seconds, number} 秒"
 }

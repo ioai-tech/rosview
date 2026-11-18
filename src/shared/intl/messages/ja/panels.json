@@ -431,5 +431,6 @@
   "urdfDebug.rule.linear": "線形",
   "urdfDebug.rule.constant": "定数",
   "urdfDebug.rule.ignore": "無視",
-  "urdfDebug.help.body": "URDF をアップロードし、プレビューが録画データと一致するまで関節マッピングを調整します。mesh の向きが合わない場合（CAD 出力でよくある）は「Mesh ビジュアルを回転」を切り替えてください。対称関節ペアは左右グリッパー用、Mimic 補完は URDF の mimic タグに従い従動関節を補完します。recipe.json または処理スクリプトをエクスポートすると、/robot_description と /tf を含む MCAP をローカルで再生成できます。"
+  "urdfDebug.help.body": "URDF をアップロードし、プレビューが録画データと一致するまで関節マッピングを調整します。mesh の向きが合わない場合（CAD 出力でよくある）は「Mesh ビジュアルを回転」を切り替えてください。対称関節ペアは左右グリッパー用、Mimic 補完は URDF の mimic タグに従い従動関節を補完します。recipe.json または処理スクリプトをエクスポートすると、/robot_description と /tf を含む MCAP をローカルで再生成できます。",
+  "panels.plot.status.windowed": "再生位置の前後 {seconds, number} 秒を表示"
 }

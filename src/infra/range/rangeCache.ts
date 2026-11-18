@@ -20,6 +20,7 @@ export class RangeStore {
   /** Server version seen when these blocks were fetched; a different one purges the store. */
   etag?: string;
   #blocks = new Map<number, Uint8Array>();
+  #cleared = false;
   #cache: RangeBlockCache;
 
   constructor(cache: RangeBlockCache, key: string, size: number) {
@@ -43,6 +44,8 @@ export class RangeStore {
   }
 
   set(index: number, data: Uint8Array): void {
+    // A store that was cleared or dropped must not be refilled by requests that were in flight.
+    if (this.#cleared) return;
     this.#blocks.set(index, data);
     this.#cache._added(this, index, data.byteLength);
   }
@@ -54,6 +57,7 @@ export class RangeStore {
 
   /** @internal */
   _clear(): void {
+    this.#cleared = true;
     this.#blocks.clear();
   }
 

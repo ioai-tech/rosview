@@ -67,7 +67,9 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
   const layoutStorageKey = props.layoutStorageKey ?? ROS_VIEW_LAYOUT_STORAGE_KEY;
   const suppressWelcomePanel = props.suppressWelcomePanel ?? props.mode === 'tool';
 
+  const resetLayoutRef = useRef<(() => boolean) | null>(null);
   const { player, sourceLoading } = usePlayerLifecycle(props, {
+    resetLayoutRef,
     requireSource,
     hasSource,
     lastLoadError,
@@ -118,6 +120,7 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
 
   const layoutProvider = (children: React.ReactNode) => (
     <RosViewerLayoutProvider
+      resetLayoutRef={resetLayoutRef}
       layoutPersistence={resolvedLayoutPersistence}
       layoutStorageKey={layoutStorageKey}
     >

@@ -5,6 +5,7 @@
 import * as Comlink from 'comlink';
 import type { Range } from '@/shared/utils/ranges';
 import type { RangeProgress, RangeSource } from './RangeSource';
+import { rangeBlockCache } from './rangeCache';
 import type { McapIndexCache, SerializedMcapIndex } from '@/infra/sources/McapUnindexedIterableSource';
 
 export interface RangeHandleApi {
@@ -28,6 +29,9 @@ const MAX_MEMORY_INDEXES = 8;
 export function clearMemoryIndexes(): void {
   memoryIndexes.clear();
 }
+
+// `clearCache()` also forgets scan results (schemas, channels, message offsets) of unindexed MCAPs.
+rangeBlockCache.onClear(clearMemoryIndexes);
 
 export interface ExposedRangeSource {
   port: MessagePort;

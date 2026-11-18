@@ -33,7 +33,6 @@ import {
 import {
   exportDockviewLayout,
   importDockviewLayout,
-  resetDockviewLayout,
 } from '../../layout/dockviewController';
 import { saveDockviewLayoutToStorage } from '@/core/preferences/layoutStorage';
 import { useRosViewerLayoutContext } from '@/features/viewer/RosViewerLayoutContext';
@@ -120,7 +119,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onReplayHistory,
 }) => {
   const { formatMessage } = useIntl();
-  const { layoutPersistence, layoutStorageKey } = useRosViewerLayoutContext();
+  const { layoutPersistence, layoutStorageKey, resetLayoutRef } = useRosViewerLayoutContext();
   const leftMenubarRef = useRef<HTMLDivElement>(null);
   const rightMenubarRef = useRef<HTMLDivElement>(null);
   const [leftMenubarValue, setLeftMenubarValue] = useState('');
@@ -159,8 +158,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   }, [layoutPersistence, layoutStorageKey]);
 
   const handleResetLayout = useCallback(() => {
-    resetDockviewLayout();
-  }, []);
+    resetLayoutRef.current?.();
+  }, [resetLayoutRef]);
 
   const hasOpenMenu =
     onOpenFilePick || onOpenDirectory || onOpenTarPick || onOpenRemotePrompt || onOpenSampleDialog;

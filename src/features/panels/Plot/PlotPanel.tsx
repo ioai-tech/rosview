@@ -31,7 +31,7 @@ import { displaySeriesLabels } from './plotSeriesDisplay';
 import { annotatePlotUnits } from './plotUnits';
 import { formatPlotDatasetWarning } from './plotWarnings';
 import { hasManualPlotViewport, usePlotChart, type PlotViewportState } from './usePlotChart';
-import { usePlotPanelData } from './usePlotPanelData';
+import { REMOTE_PLOT_WINDOW_SEC, usePlotPanelData } from './usePlotPanelData';
 import { usePlotTopicDetection } from './usePlotTopicDetection';
 import { timeToSec } from '@/core/analysis/timeSeries';
 
@@ -285,8 +285,17 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
             onChange={handleJointStateFieldsChange}
           />
         )}
+        {dataWindow && (
+          <span
+            className="ml-auto shrink-0 text-[10px] text-muted-foreground"
+            data-testid="plot-window-hint"
+            title={formatMessage({ id: 'panels.plot.status.windowed' }, { seconds: REMOTE_PLOT_WINDOW_SEC })}
+          >
+            {formatMessage({ id: 'panels.plot.status.windowed' }, { seconds: REMOTE_PLOT_WINDOW_SEC })}
+          </span>
+        )}
         {status && (
-          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{status}</span>
+          <span className={`${dataWindow ? '' : 'ml-auto '}shrink-0 text-[10px] text-muted-foreground`}>{status}</span>
         )}
       </div>
       <div className="relative min-h-0 flex-1 flex flex-col">
