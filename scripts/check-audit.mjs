@@ -18,14 +18,11 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { advisoryId, resolveWaived } from './audit-waivers.mjs';
+import { advisoryId, evaluateAudit, parseAuditReport, waivedInProduction } from './audit-waivers.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECURITY_POLICY = path.join(ROOT, 'SECURITY.md');
 const WAIVER_SECTION = '## Dependency vulnerabilities';
-
-/** Severities that fail the gate. */
-const BLOCKING = new Set(['high', 'critical']);
 
 /** GHSA ids documented in SECURITY.md. */
 function readWaivers() {
@@ -39,59 +36,75 @@ function readWaivers() {
   return new Set((section.match(/GHSA-[0-9a-z-]+/gi) ?? []).map((id) => id.toUpperCase()));
 }
 
-function runAudit() {
+/** `npm audit --json` (optionally production only). The report is on stdout even when npm exits 1. */
+function runAudit(extraArgs = []) {
+  let text;
   try {
-    return JSON.parse(execFileSync('npm', ['audit', '--json'], {
+    text = execFileSync('npm', ['audit', '--json', ...extraArgs], {
       cwd: ROOT,
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
-    }));
+    });
   } catch (err) {
-    // npm exits non-zero when it finds anything; the report is still on stdout.
-    if (err.stdout) return JSON.parse(err.stdout);
-    throw err;
+    text = err.stdout ?? '';
   }
+  return parseAuditReport(text);
 }
 
-const waivers = readWaivers();
-const audit = runAudit();
-const vulnerabilities = audit.vulnerabilities ?? {};
-const names = Object.keys(vulnerabilities);
+function main() {
+  const waivers = readWaivers();
+  const audit = runAudit();
+  const vulnerabilities = audit.vulnerabilities;
+  const names = Object.keys(vulnerabilities);
+  const verdict = evaluateAudit(vulnerabilities, waivers);
+  const reportable = names.filter((n) => verdict.get(n).blocking);
+  const failing = reportable.filter((n) => verdict.get(n).failing);
 
-const waived = resolveWaived(vulnerabilities, waivers);
+  // A waiver covers the toolchain only: none of its advisories may reach the production graph.
+  const production = runAudit(['--omit=dev']);
+  const leaked = waivedInProduction(production.vulnerabilities, waivers);
 
-const reportable = names.filter((n) => BLOCKING.has(vulnerabilities[n].severity));
-const failing = reportable.filter((n) => !waived.get(n));
+  console.log(`npm audit: ${names.length} advisories, ${reportable.length} blocking`);
+  for (const name of reportable) {
+    const node = vulnerabilities[name];
+    const advisories = (node.via ?? [])
+      .filter((v) => typeof v === 'object')
+      .map((v) => `  ${advisoryId(v) ?? v.url}  ${v.title}`);
+    console.log(`\n${verdict.get(name).waived ? 'WAIVED' : 'BLOCKING'}  ${name}@${node.range} (${node.severity})`);
+    for (const line of advisories) console.log(line);
+    console.log(`  fix: ${JSON.stringify(node.fixAvailable)}`);
+  }
 
-console.log(`npm audit: ${names.length} advisories, ${reportable.length} at ${[...BLOCKING].join('/')} level`);
-for (const name of reportable) {
-  const node = vulnerabilities[name];
-  const advisories = node.via
-    .filter((v) => typeof v === 'object')
-    .map((v) => `  ${advisoryId(v) ?? v.url}  ${v.title}`);
-  console.log(`\n${waived.get(name) ? 'WAIVED' : 'BLOCKING'}  ${name}@${node.range} (${node.severity})`);
-  for (const line of advisories) console.log(line);
-  console.log(`  fix: ${JSON.stringify(node.fixAvailable)}`);
-}
-
-// Stale waivers are noise: they hide future findings under an id that no
-// longer matches anything. Surface them, do not fail the build over them.
-const used = new Set(
-  names
-    .flatMap((n) => vulnerabilities[n].via ?? [])
-    .filter((v) => typeof v === 'object')
-    .map(advisoryId)
-    .filter(Boolean),
-);
-for (const id of waivers) {
-  if (!used.has(id)) console.warn(`\nwarning: waiver ${id} in SECURITY.md matches no advisory — remove it`);
-}
-
-if (failing.length > 0) {
-  console.error(
-    `\n${failing.length} blocking advisories. Fix them (upgrade / narrow override), or waive in ` +
-      `SECURITY.md "${WAIVER_SECTION}" when there is no non-breaking fix.`,
+  // Stale waivers are noise: they hide future findings under an id that no
+  // longer matches anything. Surface them, do not fail the build over them.
+  const used = new Set(
+    names
+      .flatMap((n) => vulnerabilities[n].via ?? [])
+      .filter((v) => typeof v === 'object')
+      .map(advisoryId)
+      .filter(Boolean),
   );
+  for (const id of waivers) {
+    if (!used.has(id)) console.warn(`\nwarning: waiver ${id} in SECURITY.md matches no advisory — remove it`);
+  }
+
+  if (leaked.length > 0) {
+    console.error(`\nwaived advisory ${leaked.join(', ')} reaches the production graph; a waiver must stay toolchain-only.`);
+    process.exit(1);
+  }
+  if (failing.length > 0) {
+    console.error(
+      `\n${failing.length} blocking advisories. Fix them (upgrade / narrow override), or waive in ` +
+        `SECURITY.md "${WAIVER_SECTION}" when there is no non-breaking fix.`,
+    );
+    process.exit(1);
+  }
+  console.log('\nok: no blocking advisories.');
+}
+
+try {
+  main();
+} catch (err) {
+  console.error(`check-audit failed: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }
-console.log('\nok: no blocking advisories.');
