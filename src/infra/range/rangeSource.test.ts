@@ -1,0 +1,217 @@
+import { describe, expect, it, vi } from 'vitest';
+import { RangeSource, RangeHttpError } from './RangeSource';
+import { RangeBlockCache, RANGE_BLOCK_BYTES as B } from './rangeCache';
+import { UrlRenewal } from './urlRenewal';
+
+/** Byte equality that stays fast for multi-MiB arrays. */
+const same = (a: Uint8Array, b: Uint8Array): boolean => Buffer.from(a).equals(Buffer.from(b));
+
+/** Fake range server: `validUrls` decides which URLs answer; every request is recorded. */
+function fakeServer(size: number, options: { etag?: string; honourRange?: boolean } = {}) {
+  const data = new Uint8Array(size);
+  for (let i = 0; i < size; i++) data[i] = (i * 31 + (i >> 8)) & 0xff;
+  const validUrls = new Set<string>();
+  const requests: Array<{ url: string; start: number; end: number }> = [];
+  const fetchImpl: typeof fetch = (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const range = /bytes=(\d+)-(\d+)/.exec(new Headers(init?.headers).get('Range') ?? '');
+    const start = range ? Number(range[1]) : 0;
+    const end = range ? Math.min(size - 1, Number(range[2])) : size - 1;
+    requests.push({ url, start, end });
+    if (!validUrls.has(url)) return Promise.resolve(new Response('expired', { status: 403, statusText: 'Forbidden' }));
+    const honour = options.honourRange !== false && range;
+    const body = honour ? data.slice(start, end + 1) : data;
+    const headers: Record<string, string> = { 'Content-Length': String(body.byteLength) };
+    if (honour) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+    if (options.etag) headers.ETag = options.etag;
+    // Deliver in 100 KiB pieces so partial progress is observable.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let o = 0; o < body.byteLength; o += 100 * 1024) controller.enqueue(body.slice(o, o + 100 * 1024));
+        controller.close();
+      },
+    });
+    return Promise.resolve(new Response(stream, { status: honour ? 206 : 200, headers }));
+  };
+  return { data, validUrls, requests, fetchImpl };
+}
+
+describe('RangeSource', () => {
+  it('reads only the blocks a read needs, not the whole file', async () => {
+    const server = fakeServer(40 * B);
+    server.validUrls.add('https://x/a');
+    const cache = new RangeBlockCache();
+    const source = new RangeSource({ url: 'https://x/a', cache, fetchImpl: server.fetchImpl });
+    const out = await source.read(20 * B + 10, 1000);
+    expect(same(out, server.data.slice(20 * B + 10, 20 * B + 1010))).toBe(true);
+    const bytes = server.requests.reduce((n, r) => n + (r.end - r.start + 1), 0);
+    expect(bytes).toBeLessThanOrEqual(2 * B + B); // size probe (block 0) + one block
+    expect(source.downloadedRanges().length).toBe(2);
+    source.dispose();
+  });
+
+  it('reuses cached blocks for the same sourceKey across a URL change and a reopen', async () => {
+    const server = fakeServer(16 * B, { etag: '"v1"' });
+    server.validUrls.add('https://x/old').add('https://x/new');
+    const cache = new RangeBlockCache();
+    const first = new RangeSource({ url: 'https://x/old', sourceKey: 'rec-1', cache, fetchImpl: server.fetchImpl });
+    await first.read(3 * B, 2 * B);
+    first.dispose();
+    const before = server.requests.length;
+    const second = new RangeSource({ url: 'https://x/new', sourceKey: 'rec-1', knownTotalBytes: 16 * B, cache, fetchImpl: server.fetchImpl });
+    const out = await second.read(3 * B, 2 * B);
+    expect(same(out, server.data.slice(3 * B, 5 * B))).toBe(true);
+    expect(server.requests.length).toBe(before); // served from memory, no network
+    second.dispose();
+  });
+
+  it('does not share blocks without a sourceKey and frees them on dispose', async () => {
+    const server = fakeServer(8 * B);
+    server.validUrls.add('https://x/a');
+    const cache = new RangeBlockCache();
+    const source = new RangeSource({ url: 'https://x/a', cache, fetchImpl: server.fetchImpl });
+    await source.read(0, B);
+    expect(cache.bytes).toBeGreaterThan(0);
+    source.dispose();
+    expect(cache.bytes).toBe(0);
+  });
+
+  it('evicts least-recently-used blocks beyond the byte budget', async () => {
+    const server = fakeServer(64 * B);
+    server.validUrls.add('https://x/a');
+    const cache = new RangeBlockCache(8 * B);
+    const source = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: server.fetchImpl });
+    for (let i = 0; i < 40; i += 2) await source.read(i * B, 2 * B);
+    expect(cache.bytes).toBeLessThanOrEqual(8 * B);
+    // The most recent read is still cached; the oldest is gone.
+    const before = server.requests.length;
+    await source.read(38 * B, 2 * B);
+    expect(server.requests.length).toBe(before);
+    await source.read(0, B);
+    expect(server.requests.length).toBeGreaterThan(before);
+    source.dispose();
+  });
+
+  it('clearCache drops every byte', async () => {
+    const server = fakeServer(8 * B);
+    server.validUrls.add('https://x/a');
+    const cache = new RangeBlockCache();
+    const source = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: server.fetchImpl });
+    await source.read(0, 4 * B);
+    expect(cache.bytes).toBeGreaterThan(0);
+    cache.clear();
+    expect(cache.bytes).toBe(0);
+    expect(source.downloadedRanges()).toEqual([]);
+    // Reads after a clear fetch again instead of failing.
+    expect(same(await source.read(0, 10), server.data.slice(0, 10))).toBe(true);
+    source.dispose();
+  });
+
+  it('never serves stale bytes after the recording changes under the same sourceKey', async () => {
+    const server = fakeServer(8 * B, { etag: '"v1"' });
+    server.validUrls.add('https://x/a');
+    const cache = new RangeBlockCache();
+    const source = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: server.fetchImpl });
+    await source.read(0, B);
+    const changed = fakeServer(8 * B, { etag: '"v2"' });
+    changed.validUrls.add('https://x/a');
+    const source2 = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: changed.fetchImpl });
+    // Different ETag means a different store key: no stale bytes are served.
+    expect(await source2.read(0, 16)).toEqual(changed.data.slice(0, 16));
+    source.dispose();
+    source2.dispose();
+  });
+
+  it('supports servers that ignore Range when the file fits the budget', async () => {
+    const server = fakeServer(3 * B + 5, { honourRange: false });
+    server.validUrls.add('https://x/a');
+    const cache = new RangeBlockCache();
+    const source = new RangeSource({ url: 'https://x/a', cache, fetchImpl: server.fetchImpl });
+    expect(same(await source.read(2 * B, 100), server.data.slice(2 * B, 2 * B + 100))).toBe(true);
+    source.dispose();
+  });
+});
+
+describe('URL renewal', () => {
+  it('renews once per batch on 403, retries, keeps the cache', async () => {
+    const server = fakeServer(32 * B);
+    server.validUrls.add('https://x/old');
+    const renewal = new UrlRenewal();
+    const refreshUrls = vi.fn(async (expired: string[]) => {
+      server.validUrls.add('https://x/new');
+      return expired.map(() => 'https://x/new');
+    });
+    renewal.update({ refreshUrls });
+    const cache = new RangeBlockCache();
+    const a = new RangeSource({ url: 'https://x/old', sourceKey: 'a', knownTotalBytes: 32 * B, renewal, cache, fetchImpl: server.fetchImpl });
+    const b = new RangeSource({ url: 'https://x/old', sourceKey: 'b', knownTotalBytes: 32 * B, renewal, cache, fetchImpl: server.fetchImpl });
+    await a.read(0, B); // cached under the old URL
+    server.validUrls.delete('https://x/old'); // the old URL expires
+    // Two sources and several blocks fail at once: still one refresh call.
+    const reads = await Promise.all([a.read(10 * B, 3 * B), b.read(0, 2 * B), a.read(20 * B, B)]);
+    expect(same(reads[0], server.data.slice(10 * B, 13 * B))).toBe(true);
+    expect(refreshUrls).toHaveBeenCalledTimes(1);
+    expect(refreshUrls.mock.calls[0][0]).toEqual(['https://x/old', 'https://x/old']);
+    expect(a.getUrl()).toBe('https://x/new');
+    expect(b.getUrl()).toBe('https://x/new');
+    expect(same(await a.read(0, 100), server.data.slice(0, 100))).toBe(true); // still cached
+    a.dispose();
+    b.dispose();
+  });
+
+  it('shows the ordinary error when the renewed URL fails too, and stops asking', async () => {
+    const server = fakeServer(8 * B); // no valid URL at all
+    const renewal = new UrlRenewal();
+    const refreshUrls = vi.fn(async (expired: string[]) => expired.map(() => 'https://x/still-bad'));
+    renewal.update({ refreshUrls });
+    const source = new RangeSource({ url: 'https://x/old', knownTotalBytes: 8 * B, renewal, cache: new RangeBlockCache(), fetchImpl: server.fetchImpl });
+    await expect(source.read(0, 10)).rejects.toBeInstanceOf(RangeHttpError);
+    await expect(source.read(0, 10)).rejects.toMatchObject({ status: 403 });
+    expect(refreshUrls).toHaveBeenCalledTimes(1);
+    source.dispose();
+  });
+
+  it('surfaces the ordinary error when refreshUrls rejects', async () => {
+    const server = fakeServer(8 * B);
+    const renewal = new UrlRenewal();
+    renewal.update({ refreshUrls: () => Promise.reject(new Error('host down')) });
+    const source = new RangeSource({ url: 'https://x/old', knownTotalBytes: 8 * B, renewal, cache: new RangeBlockCache(), fetchImpl: server.fetchImpl });
+    await expect(source.read(0, 10)).rejects.toMatchObject({ status: 403 });
+    source.dispose();
+  });
+
+  it('renews ahead of urlExpiresAt (within 60 s)', async () => {
+    const server = fakeServer(8 * B);
+    server.validUrls.add('https://x/old').add('https://x/new');
+    const renewal = new UrlRenewal();
+    const refreshUrls = vi.fn(async (expired: string[]) => expired.map(() => 'https://x/new'));
+    renewal.update({ refreshUrls, urlExpiresAt: new Date(Date.now() + 30_000).toISOString() });
+    const source = new RangeSource({ url: 'https://x/old', knownTotalBytes: 8 * B, renewal, cache: new RangeBlockCache(), fetchImpl: server.fetchImpl });
+    await source.read(0, 10);
+    expect(refreshUrls).toHaveBeenCalledTimes(1);
+    expect(server.requests.every((r) => r.url === 'https://x/new')).toBe(true);
+    source.dispose();
+  });
+
+  it('does not renew again when the host re-renders with the same urlExpiresAt', async () => {
+    const server = fakeServer(8 * B);
+    server.validUrls.add('https://x/old').add('https://x/new');
+    const renewal = new UrlRenewal();
+    const refreshUrls = vi.fn(async (expired: string[]) => expired.map(() => 'https://x/new'));
+    const expiresAt = new Date(Date.now() + 30_000).toISOString();
+    renewal.update({ refreshUrls, urlExpiresAt: expiresAt });
+    const source = new RangeSource({ url: 'https://x/old', knownTotalBytes: 8 * B, renewal, cache: new RangeBlockCache(), fetchImpl: server.fetchImpl });
+    await source.read(0, 10);
+    renewal.update({ refreshUrls, urlExpiresAt: expiresAt }); // same prop value after a re-render
+    await source.read(3 * B, 10);
+    expect(refreshUrls).toHaveBeenCalledTimes(1);
+    source.dispose();
+  });
+
+  it('does not renew without refreshUrls', async () => {
+    const server = fakeServer(8 * B);
+    const source = new RangeSource({ url: 'https://x/old', knownTotalBytes: 8 * B, cache: new RangeBlockCache(), fetchImpl: server.fetchImpl });
+    await expect(source.read(0, 10)).rejects.toMatchObject({ status: 403 });
+    source.dispose();
+  });
+});

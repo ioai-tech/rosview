@@ -95,7 +95,7 @@ export function parseThreeDConfig(input: unknown): ThreeDConfig {
   if (!isRecord(input)) return base;
   const pointSize =
     typeof input.pointSize === 'number' && Number.isFinite(input.pointSize)
-      ? Math.max(0.01, Math.min(0.2, input.pointSize))
+      ? Math.max(0.002, Math.min(0.2, input.pointSize))
       : base.pointSize;
   return {
     showGrid: typeof input.showGrid === 'boolean' ? input.showGrid : base.showGrid,
@@ -103,6 +103,7 @@ export function parseThreeDConfig(input: unknown): ThreeDConfig {
     showPlaceholder:
       typeof input.showPlaceholder === 'boolean' ? input.showPlaceholder : base.showPlaceholder,
     pointSize,
+    followFrame: typeof input.followFrame === 'string' ? input.followFrame.trim() : base.followFrame,
     skeleton: parseSkeletonConfig(input.skeleton),
     urdf: parseUrdfSource(input.urdf),
     topicSettings: parseTopicSettings(input.topicSettings),

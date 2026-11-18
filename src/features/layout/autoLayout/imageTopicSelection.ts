@@ -1,8 +1,6 @@
 import type { TopicInfo } from '@/core/types/ros';
 import { isRosImageSchema } from '@/shared/ros/rosMessageTypes';
 
-const MAX_AUTO_IMAGE_TOPICS = 12;
-
 function normalizeTopicName(topicName: string): string {
   return topicName.trim().toLowerCase();
 }
@@ -53,7 +51,8 @@ export function imageTopicPriorityScore(topicName: string): number {
 }
 
 /**
- * Pick up to {@link MAX_AUTO_IMAGE_TOPICS} image topics with per-camera-stream deduping.
+ * Image topics with per-camera-stream deduping, best transport first. The layout planner
+ * (`planImageGrid`) orders them by camera role and keeps the first six.
  */
 export function selectImageTopicsForAutoLayout(topics: ReadonlyArray<TopicInfo>): string[] {
   const candidates = topics.filter((t) => isRosImageSchema(t.type));
@@ -62,7 +61,7 @@ export function selectImageTopicsForAutoLayout(topics: ReadonlyArray<TopicInfo>)
   for (const t of candidates) {
     const normalizedName = normalizeTopicName(t.name);
     const score = imageTopicPriorityScore(t.name);
-    if (score < 0) continue;
+    if (score <= -1_000) continue; // metadata-only streams; depth stays, ranked last by the planner
     const prev = bestByName.get(normalizedName);
     if (!prev || score > prev.score) {
       bestByName.set(normalizedName, { name: t.name, score });
@@ -74,8 +73,7 @@ export function selectImageTopicsForAutoLayout(topics: ReadonlyArray<TopicInfo>)
     .map((name) => bestByName.get(name))
     .filter((value): value is { name: string; score: number } => value != null)
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-    .map((x) => x.name)
-    .slice(0, MAX_AUTO_IMAGE_TOPICS);
+    .map((x) => x.name);
 
   return picked;
 }

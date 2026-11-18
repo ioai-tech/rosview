@@ -1,5 +1,5 @@
 import { createIntl, createIntlCache } from 'react-intl';
-import { getRosViewMessages, type RosViewLocale } from './loadRosViewMessages';
+import { getRosViewMessages, type RosViewLocale, type RosViewMessageOverrides } from './loadRosViewMessages';
 
 const intlCache = createIntlCache();
 
@@ -10,12 +10,12 @@ function localeFor(lang: RosViewLocale): string {
 }
 
 /** For strings outside `IntlProvider` (e.g. `RosViewer` data effects). */
-export function createRosViewIntl(lang: RosViewLocale) {
+export function createRosViewIntl(lang: RosViewLocale, overrides?: RosViewMessageOverrides) {
   return createIntl(
     {
       locale: localeFor(lang),
       defaultLocale: 'en',
-      messages: getRosViewMessages(lang),
+      messages: getRosViewMessages(lang, overrides),
     },
     intlCache,
   );

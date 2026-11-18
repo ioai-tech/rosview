@@ -37,7 +37,7 @@ import {
   framePerspectiveCameraToGrid,
   Z_UP,
 } from '@/features/panels/common/zUpSceneLayout';
-import { extractPathPoints3, readPoseStampedPosition3 } from '@/features/panels/common/poseExtractors';
+import { extractPathPoints3 } from '@/features/panels/common/poseExtractors';
 import * as THREE from 'three';
 import { useRosViewTheme } from '@/features/viewer/RosViewProvider';
 
@@ -51,6 +51,8 @@ import {
   type RobotRenderable,
 } from './core/renderables';
 import type { JointStateMsg, TFMessage } from './core/types';
+import { applyMarkerUpdate, headerFrame, markersToPrimitives, type FrameResolver, type MarkerUpdate, type ScenePrimitive } from './core/markers';
+import { TransformTree } from './core/transformTree';
 
 import {
   defaultThreeDConfig,
@@ -67,6 +69,7 @@ interface ThreeDPanelProps {
   showAxes?: boolean;
   showPlaceholder?: boolean;
   pointSize?: number;
+  followFrame?: string;
   skeleton?: ThreeDSkeletonConfig;
   /** Where to load the URDF document from. When omitted, defaults to `topic` source with auto-detect. */
   urdf?: UrdfSource;
@@ -92,6 +95,8 @@ const TMP_BOUNDS_BOX = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
 const TMP_BOUNDS_BOX_BOX = new THREE.Box3();
 const SHARED_BOX_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
 const SHARED_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.5, 16, 12);
+// Unit cylinder along +z (ROS CYLINDER marker convention; three.js cylinders run along +y).
+const SHARED_CYLINDER_GEOMETRY = new THREE.CylinderGeometry(0.5, 0.5, 1, 16).rotateX(Math.PI / 2);
 
 function computeMarkerPrimitivesBoundingBox(primitives: MarkerPrimitive[]): THREE.Box3 | null {
   if (primitives.length === 0) return null;
@@ -103,7 +108,7 @@ function computeMarkerPrimitivesBoundingBox(primitives: MarkerPrimitive[]): THRE
   const v = new THREE.Vector3();
 
   for (const p of primitives) {
-    if (p.kind === 'line') {
+    if (p.kind === 'line' || p.kind === 'segments' || p.kind === 'instances') {
       for (const pt of p.points) {
         v.set(pt[0], pt[1], pt[2]);
         if (!has) {
@@ -166,7 +171,7 @@ export function bvhPrimitiveFrameKey(resetVersion: number, primitives: MarkerPri
   for (const primitive of [first, last]) {
     if (!primitive) continue;
     parts.push(primitive.key);
-    if (primitive.kind === 'line') {
+    if (primitive.kind === 'line' || primitive.kind === 'segments' || primitive.kind === 'instances') {
       const firstPoint = primitive.points[0];
       const lastPoint = primitive.points[primitive.points.length - 1];
       if (firstPoint) parts.push(roundedTupleKey(firstPoint));
@@ -490,13 +495,23 @@ const LivePointCloudLayer = ({
   topic,
   color,
   size,
+  resolveFrame,
+  autofit = true,
 }: {
   player: Player;
   panelId: string;
   topic: string;
   color: string;
   size: number;
+  /** Places the cloud in the fixed frame through its header frame at its stamp; raw coordinates when unknown. */
+  resolveFrame?: FrameResolver;
+  autofit?: boolean;
 }) => {
+  const resolveFrameRef = useRef(resolveFrame);
+  useEffect(() => {
+    resolveFrameRef.current = resolveFrame;
+  }, [resolveFrame]);
+  const frameByJobRef = useRef(new Map<number, { frameId?: string; stampNs?: bigint }>());
   const gpuRef = useRef<PointCloudGpuState | null>(null);
   const pointsRef = useRef<THREE.Points | null>(null);
   const [pointsObject, setPointsObject] = useState<THREE.Points | null>(null);
@@ -524,8 +539,8 @@ const LivePointCloudLayer = ({
   }, [color, size]);
 
   useEffect(() => {
-    didAutofitRef.current = false;
-  }, [topic]);
+    didAutofitRef.current = !autofit;
+  }, [autofit, topic]);
 
   useEffect(() => {
     const points = pointsRef.current;
@@ -542,7 +557,7 @@ const LivePointCloudLayer = ({
     const worker = new PointCloudParseWorkerClass();
     workerRef.current = worker;
 
-    const autofitOnce = (geo: THREE.BufferGeometry) => {
+    const autofitOnce = (geo: THREE.BufferGeometry, placement: THREE.Matrix4) => {
       if (didAutofitRef.current) return;
       const cam = cameraRef.current;
       if (!(cam instanceof THREE.PerspectiveCamera)) return;
@@ -553,6 +568,7 @@ const LivePointCloudLayer = ({
         geo.getAttribute('position') as THREE.BufferAttribute,
       );
       if (box.isEmpty()) return;
+      box.applyMatrix4(placement);
       const target = framePerspectiveCameraToBox(cam, box);
       const oc = controlsRef.current;
       oc.target.copy(target);
@@ -565,8 +581,13 @@ const LivePointCloudLayer = ({
       colors: Float32Array | undefined,
       pointCount: number,
       maxPoints: number,
+      frame: { frameId?: string; stampNs?: bigint } | undefined,
     ) => {
       if (pointCount <= 0) return;
+      const placement =
+        frame?.frameId && resolveFrameRef.current
+          ? resolveFrameRef.current(frame.frameId, frame.stampNs ?? 0n)
+          : undefined;
       const parsed: PointCloudData = {
         positions,
         colors,
@@ -583,6 +604,7 @@ const LivePointCloudLayer = ({
           color: colorRef.current,
           vertexColors,
         });
+        points.matrixAutoUpdate = false;
         pointsRef.current = points;
         setPointsObject(points);
       } else {
@@ -593,7 +615,10 @@ const LivePointCloudLayer = ({
           vertexColors,
         });
       }
-      autofitOnce(next.geometry);
+      if (placement) points.matrix.copy(placement);
+      else points.matrix.identity();
+      points.matrixWorldNeedsUpdate = true;
+      autofitOnce(next.geometry, points.matrix);
       invalidateRef.current();
     };
 
@@ -617,7 +642,9 @@ const LivePointCloudLayer = ({
       if (response.type === 'parsed') {
         const positions = new Float32Array(response.positions);
         const colors = response.colors ? new Float32Array(response.colors) : undefined;
-        applyParsed(positions, colors, response.pointCount, response.maxPoints);
+        const frame = frameByJobRef.current.get(response.id);
+        frameByJobRef.current.delete(response.id);
+        applyParsed(positions, colors, response.pointCount, response.maxPoints, frame);
       }
       flushPending();
     };
@@ -668,6 +695,11 @@ const LivePointCloudLayer = ({
 
         const payload = copyToTransferableArrayBuffer(data);
         const id = nextIdRef.current++;
+        const jobs = frameByJobRef.current;
+        jobs.set(id, { frameId, stampNs: headerFrame(record).stampNs });
+        for (const key of jobs.keys()) {
+          if (key < id - 8) jobs.delete(key);
+        }
         const job: PointCloudParseRequest = {
           type: 'parse',
           id,
@@ -715,31 +747,7 @@ type Simple3DTrack = {
   mode: 'path' | 'pose';
 };
 
-export type MarkerPrimitive =
-  | {
-      kind: 'sphere' | 'cube';
-      key: string;
-      frameIndex?: number;
-      position: [number, number, number];
-      scale: [number, number, number];
-      color: string;
-    }
-  | {
-      kind: 'orientedBox';
-      key: string;
-      frameIndex?: number;
-      position: [number, number, number];
-      scale: [number, number, number];
-      quaternion: [number, number, number, number];
-      color: string;
-    }
-  | {
-      kind: 'line';
-      key: string;
-      frameIndex?: number;
-      points: Array<[number, number, number]>;
-      color: string;
-    };
+export type MarkerPrimitive = ScenePrimitive;
 
 const TrackLine: React.FC<{ track: Simple3DTrack }> = ({ track }) => {
   const object = useMemo((): THREE.Object3D | null => {
@@ -809,10 +817,12 @@ const MeshPrimitiveView: React.FC<{
     () => new THREE.MeshStandardMaterial({ color: primitive.color, roughness: 0.58, metalness: 0.04 }),
     [primitive.color],
   );
+  const shape = primitive.kind === 'orientedBox' && primitive.shape === 'cylinder' ? 'cylinder' : primitive.kind;
   const mesh = useMemo(() => {
-    const geometry = primitive.kind === 'sphere' ? SHARED_SPHERE_GEOMETRY : SHARED_BOX_GEOMETRY;
+    const geometry =
+      shape === 'sphere' ? SHARED_SPHERE_GEOMETRY : shape === 'cylinder' ? SHARED_CYLINDER_GEOMETRY : SHARED_BOX_GEOMETRY;
     return new THREE.Mesh(geometry, material);
-  }, [material, primitive.kind]);
+  }, [material, shape]);
 
   useEffect(() => () => material.dispose(), [material]);
 
@@ -837,29 +847,80 @@ const MeshPrimitiveView: React.FC<{
 });
 MeshPrimitiveView.displayName = 'MeshPrimitiveView';
 
+const MarkerSegmentsPrimitiveView: React.FC<{ primitive: Extract<MarkerPrimitive, { kind: 'segments' }> }> = React.memo(
+  ({ primitive }) => {
+    const { invalidate } = useThreeCanvas();
+    const geometry = useMemo(() => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(primitive.points.flat(), 3));
+      return geo;
+    }, [primitive.points]);
+    const material = useMemo(() => new THREE.LineBasicMaterial({ color: primitive.color }), [primitive.color]);
+    const object = useMemo(() => new THREE.LineSegments(geometry, material), [geometry, material]);
+    useEffect(() => () => geometry.dispose(), [geometry]);
+    useEffect(() => () => material.dispose(), [material]);
+    useEffect(() => invalidate(), [invalidate, object]);
+    useSceneObject(object);
+    return null;
+  },
+);
+MarkerSegmentsPrimitiveView.displayName = 'MarkerSegmentsPrimitiveView';
+
+const INSTANCE_MATRIX = new THREE.Matrix4();
+const INSTANCE_POSITION = new THREE.Vector3();
+const INSTANCE_SCALE = new THREE.Vector3();
+const INSTANCE_ROTATION = new THREE.Quaternion();
+
+function writeInstances(mesh: THREE.InstancedMesh, points: Array<[number, number, number]>, scale: [number, number, number]): void {
+  INSTANCE_SCALE.set(scale[0], scale[1], scale[2]);
+  points.forEach((point, index) => {
+    INSTANCE_POSITION.set(point[0], point[1], point[2]);
+    INSTANCE_MATRIX.compose(INSTANCE_POSITION, INSTANCE_ROTATION, INSTANCE_SCALE);
+    mesh.setMatrixAt(index, INSTANCE_MATRIX);
+  });
+  mesh.count = points.length;
+  mesh.instanceMatrix.needsUpdate = true;
+}
+
+/** SPHERE_LIST / CUBE_LIST / POINTS: one instanced mesh, every point at the marker's scale. */
+const MarkerInstancesPrimitiveView: React.FC<{ primitive: Extract<MarkerPrimitive, { kind: 'instances' }> }> = React.memo(
+  ({ primitive }) => {
+    const { invalidate } = useThreeCanvas();
+    const material = useMemo(
+      () => new THREE.MeshStandardMaterial({ color: primitive.color, roughness: 0.58, metalness: 0.04 }),
+      [primitive.color],
+    );
+    const mesh = useMemo(() => {
+      const geometry = primitive.shape === 'sphere' ? SHARED_SPHERE_GEOMETRY : SHARED_BOX_GEOMETRY;
+      const instanced = new THREE.InstancedMesh(geometry, material, Math.max(1, primitive.points.length));
+      instanced.frustumCulled = false;
+      return instanced;
+    }, [material, primitive.shape, primitive.points.length]);
+    useEffect(() => () => material.dispose(), [material]);
+    useEffect(() => () => mesh.dispose(), [mesh]);
+    useLayoutEffect(() => {
+      writeInstances(mesh, primitive.points, primitive.scale);
+      invalidate();
+    }, [invalidate, mesh, primitive]);
+    useSceneObject(mesh);
+    return null;
+  },
+);
+MarkerInstancesPrimitiveView.displayName = 'MarkerInstancesPrimitiveView';
+
 const MarkerPrimitiveView: React.FC<{ primitive: MarkerPrimitive }> = React.memo(({ primitive }) => {
   if (primitive.kind === 'line') {
     return <MarkerLinePrimitiveView primitive={primitive} />;
   }
+  if (primitive.kind === 'segments') {
+    return <MarkerSegmentsPrimitiveView primitive={primitive} />;
+  }
+  if (primitive.kind === 'instances') {
+    return <MarkerInstancesPrimitiveView primitive={primitive} />;
+  }
   return <MeshPrimitiveView primitive={primitive} />;
 });
 MarkerPrimitiveView.displayName = 'MarkerPrimitiveView';
-
-function toHexColor(color: unknown, fallback = '#38bdf8'): string {
-  if (!color || typeof color !== 'object') return fallback;
-  const record = color as Record<string, unknown>;
-  const r = typeof record.r === 'number' ? Math.max(0, Math.min(1, record.r)) : 0.22;
-  const g = typeof record.g === 'number' ? Math.max(0, Math.min(1, record.g)) : 0.74;
-  const b = typeof record.b === 'number' ? Math.max(0, Math.min(1, record.b)) : 0.97;
-  return `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
-}
-
-function markerFieldToString(value: unknown, fallback: string): string {
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint') {
-    return String(value);
-  }
-  return fallback;
-}
 
 function readPoseXYZ(pose: unknown): [number, number, number] | null {
   if (!pose || typeof pose !== 'object') return null;
@@ -877,40 +938,6 @@ function readPoseXYZ(pose: unknown): [number, number, number] | null {
   return null;
 }
 
-function extractMarkerPrimitives(message: unknown, fallbackColor: string): MarkerPrimitive[] {
-  if (!message || typeof message !== 'object') return [];
-  const mrec = message as Record<string, unknown>;
-  const list = Array.isArray(mrec.markers) ? mrec.markers : [message];
-  const out: MarkerPrimitive[] = [];
-  for (const raw of list) {
-    if (!raw || typeof raw !== 'object') continue;
-    const marker = raw as Record<string, unknown>;
-    const id = markerFieldToString(marker.id, String(out.length));
-    const ns = markerFieldToString(marker.ns, 'marker');
-    const key = `${ns}:${id}`;
-    const color = toHexColor(marker.color, fallbackColor);
-    const scaleRaw =
-      marker.scale && typeof marker.scale === 'object' ? (marker.scale as Record<string, unknown>) : {};
-    const scale: [number, number, number] = [
-      typeof scaleRaw.x === 'number' && scaleRaw.x > 0 ? scaleRaw.x : 0.2,
-      typeof scaleRaw.y === 'number' && scaleRaw.y > 0 ? scaleRaw.y : 0.2,
-      typeof scaleRaw.z === 'number' && scaleRaw.z > 0 ? scaleRaw.z : 0.2,
-    ];
-    if (marker.type === 4 && Array.isArray(marker.points)) {
-      const points = marker.points
-        .map((point: unknown) => readPoseStampedPosition3({ position: point }))
-        .filter((point): point is [number, number, number] => point != null);
-      if (points.length >= 2) {
-        out.push({ kind: 'line', key, points, color });
-      }
-      continue;
-    }
-    const position = readPoseXYZ(marker.pose) ?? readPoseXYZ({ position: marker.position }) ?? [0, 0, 0];
-    const kind: 'sphere' | 'cube' = marker.type === 1 ? 'cube' : 'sphere';
-    out.push({ kind, key, position, scale, color });
-  }
-  return out;
-}
 
 function jointRadius(name: string): number {
   if (/Thumb|Index|Middle|Ring|Pinky|InHand/i.test(name)) return 0.018;
@@ -1434,6 +1461,54 @@ const PlaceholderBox: React.FC<{ color: string }> = ({ color }) => {
 };
 
 // ── Scene ──────────────────────────────────────────────────────────
+// Third-person start pose relative to the followed frame: behind it and above, in the fixed frame.
+const FOLLOW_BACK_M = 0.6;
+const FOLLOW_UP_M = 0.9;
+
+/**
+ * Keeps the orbit target on a TF frame during playback. The first lookup places the camera behind and
+ * above the frame (along the frame's +z, the optical axis of a camera frame, projected on the ground);
+ * afterwards the camera moves with the frame, so the user's orbit and zoom are kept.
+ */
+const FollowFrameController: React.FC<{
+  player: Player;
+  frameId: string;
+  sceneTfRef: React.MutableRefObject<TransformTree>;
+}> = ({ player, frameId, sceneTfRef }) => {
+  const { camera, controls, invalidate } = useThreeCanvas();
+  const lastRef = useRef<THREE.Vector3 | null>(null);
+  useEffect(() => {
+    lastRef.current = null;
+    const position = new THREE.Vector3();
+    const delta = new THREE.Vector3();
+    return player.subscribeCurrentTime((time) => {
+      const tree = sceneTfRef.current;
+      if (!tree.hasFrame(frameId)) return;
+      const matrix = tree.getWorldMatrix(frameId, toNanoSec(time.sec, time.nsec));
+      if (!matrix) return;
+      position.setFromMatrixPosition(matrix);
+      const last = lastRef.current;
+      if (last) {
+        delta.subVectors(position, last);
+        if (delta.lengthSq() === 0) return;
+        camera.position.add(delta);
+        controls.target.add(delta);
+        last.copy(position);
+      } else {
+        const forward = new THREE.Vector3(matrix.elements[8], matrix.elements[9], 0);
+        if (forward.lengthSq() < 1e-6) forward.set(1, 0, 0);
+        forward.normalize();
+        controls.target.copy(position);
+        camera.position.copy(position).addScaledVector(forward, -FOLLOW_BACK_M).add(new THREE.Vector3(0, 0, FOLLOW_UP_M));
+        lastRef.current = position.clone();
+      }
+      controls.update();
+      invalidate();
+    });
+  }, [camera, controls, frameId, invalidate, player, sceneTfRef]);
+  return null;
+};
+
 const Scene = ({
   player,
   panelId,
@@ -1442,6 +1517,7 @@ const Scene = ({
   showAxes,
   showPlaceholder,
   pointSize,
+  followFrame,
   skeleton,
   urdf,
   topicSettings,
@@ -1454,6 +1530,7 @@ const Scene = ({
   showAxes: boolean;
   showPlaceholder: boolean;
   pointSize: number;
+  followFrame: string;
   skeleton: ThreeDSkeletonConfig;
   urdf: UrdfSource;
   topicSettings: ThreeDTopicSetting[];
@@ -1471,6 +1548,14 @@ const Scene = ({
   const urdfTextRef = useRef<string | null>(null);
   const [jointState, setJointState] = useState<JointStateMsg | null>(null);
   const tfMessagesRef = useRef<TFMessage[]>([]);
+  // Scene-level TF (independent of any URDF): markers and point clouds are placed in the fixed frame
+  // (the TF root, `world` when present) through their header frame at their stamp.
+  const sceneTfRef = useRef(new TransformTree());
+  const resolveFrame = useCallback<FrameResolver>((frameId, stampNs) => {
+    const tree = sceneTfRef.current;
+    if (!tree.hasFrame(frameId)) return undefined;
+    return tree.getWorldMatrix(frameId, stampNs);
+  }, []);
   const [tfVersion, setTfVersion] = useState(0);
   const [resetVersion, setResetVersion] = useState(0);
   const lastPlaybackTimeNsRef = useRef<bigint>(0n);
@@ -1492,19 +1577,26 @@ const Scene = ({
   const topics = useMessagePipeline((state: MessagePipelineState) => state.sortedTopics);
   const startTime = useMessagePipeline((state: MessagePipelineState) => state.playerState.activeData?.startTime);
 
-  const pcTopic = useMemo(
-    () => topics.find((t: TopicInfo) => t.type.includes('PointCloud2'))?.name,
+  const pcTopics = useMemo(
+    () => topics.filter((t: TopicInfo) => t.type.includes('PointCloud2')).map((t: TopicInfo) => t.name),
     [topics],
   );
+  const pcTopic = pcTopics[0];
   const enabledTopicSettings = useMemo((): ThreeDTopicSetting[] => {
+    // Marker topics render by default (as in RViz / Foxglove); a saved setting for the topic wins.
+    const configured = new Set(topicSettings.map((entry) => entry.topic));
+    const autoMarkers: ThreeDTopicSetting[] = topics
+      .filter((t: TopicInfo) => !configured.has(t.name) && /visualization_msgs\/(msg\/)?Marker(Array)?$/.test(t.type))
+      .map((t: TopicInfo) => ({ topic: t.name, enabled: true, renderMode: 'marker' as const, color: '#38bdf8' }));
     if (topicSettings.length > 0) {
-      return topicSettings.filter((entry) => entry.enabled && entry.topic.length > 0);
+      return [...topicSettings.filter((entry) => entry.enabled && entry.topic.length > 0), ...autoMarkers];
     }
     // Nothing configured: probe msgpack byte-array topics in `auto` mode so a teleop
     // human-body stream shows up as a skeleton without manual setup.
-    return topics
+    const autoBody = topics
       .filter((t: TopicInfo) => isByteArraySchema(t.type))
       .map((t: TopicInfo) => ({ topic: t.name, enabled: true, renderMode: 'auto' as const, color: skeleton.color }));
+    return [...autoBody, ...autoMarkers];
   }, [topicSettings, topics, skeleton.color]);
 
   // Pick the URDF topic to subscribe to. When `urdf.sourceType === 'topic'`:
@@ -1693,6 +1785,7 @@ const Scene = ({
 
       if (rewoundToStart || jumpedBack) {
         tfMessagesRef.current = [];
+        sceneTfRef.current = new TransformTree();
         setTfVersion(0);
         if (PLAYBACK_REWIND_CLEAR_POLICY.clearTracks) setTracks([]);
         if (PLAYBACK_REWIND_CLEAR_POLICY.clearMarkerPrimitives) setMarkerPrimitives([]);
@@ -1716,7 +1809,7 @@ const Scene = ({
     let nextJointState: JointStateMsg | undefined;
     let tfAppended = 0;
     const nextTracks = new Map<string, Simple3DTrack>();
-    const nextMarkers = new Map<string, MarkerPrimitive>();
+    const markerUpdates: MarkerUpdate[] = [];
     let nextLaser: PointCloudData | undefined;
     let nextOccupancy: PointCloudData | undefined;
     let nextSkeleton: MarkerPrimitive[] | undefined;
@@ -1748,6 +1841,16 @@ const Scene = ({
         if (!rec) continue;
         if (Array.isArray(rec.transforms)) {
           tfArr.push(payload as TFMessage);
+          for (const transform of (payload as TFMessage).transforms) {
+            const stampNs = headerFrame(transform).stampNs ?? 0n;
+            sceneTfRef.current.addTransform(
+              transform.header.frame_id,
+              transform.child_frame_id,
+              stampNs,
+              transform.transform.translation,
+              transform.transform.rotation,
+            );
+          }
           tfAppended++;
         }
       } else {
@@ -1792,8 +1895,7 @@ const Scene = ({
             rec &&
             (Array.isArray(rec.markers) || typeof rec.type === 'number'))
         ) {
-          const markers = extractMarkerPrimitives(payload, setting.color);
-          for (const marker of markers) nextMarkers.set(marker.key, marker);
+          markerUpdates.push(markersToPrimitives(payload, msg.topic, setting.color, resolveFrame));
           continue;
         }
         if (
@@ -1834,10 +1936,10 @@ const Scene = ({
         return Array.from(byTopic.values());
       });
     }
-    if (nextMarkers.size > 0) {
+    if (markerUpdates.length > 0) {
       setMarkerPrimitives((prev) => {
         const byKey = new Map(prev.map((marker) => [marker.key, marker]));
-        for (const [key, marker] of nextMarkers) byKey.set(key, marker);
+        for (const update of markerUpdates) applyMarkerUpdate(byKey, update);
         return Array.from(byKey.values());
       });
     }
@@ -1845,7 +1947,7 @@ const Scene = ({
     if (nextLaser) setLaserScanCloud(nextLaser);
     if (nextOccupancy) setOccupancyCloud(nextOccupancy);
     if (tfAppended > 0) setTfVersion((v) => v + 1);
-  }, [panelId, urdfTopic, jointsTopic, bvhTopic, skeleton, tfTopicSet, topicSettingByName]);
+  }, [panelId, urdfTopic, jointsTopic, bvhTopic, skeleton, tfTopicSet, topicSettingByName, resolveFrame]);
 
   useEffect(() => {
     const unsubscribe = messageBus.subscribeToMessages(panelId, processSubscriberBatch);
@@ -1868,15 +1970,19 @@ const Scene = ({
         onGroundLayout={handleBvhGroundLayout}
       />
 
-      {pcTopic && (
+      {pcTopics.map((topic, index) => (
         <LivePointCloudLayer
+          key={topic}
           player={player}
-          panelId={panelId}
-          topic={pcTopic}
+          panelId={`${panelId}:${topic}`}
+          topic={topic}
           color={colors.pointCloudColor}
           size={pointSize}
+          resolveFrame={resolveFrame}
+          autofit={index === 0 && !followFrame}
         />
-      )}
+      ))}
+      {followFrame && <FollowFrameController player={player} frameId={followFrame} sceneTfRef={sceneTfRef} />}
       {laserScanCloud && <PointCloud data={laserScanCloud} color="#f97316" size={0.02} />}
       {occupancyCloud && <PointCloud data={occupancyCloud} color="#a855f7" size={0.04} />}
       {tracks.map((track) => (
@@ -1918,6 +2024,7 @@ export const ThreeDPanel: React.FC<ThreeDPanelProps> = ({
   showAxes = false,
   showPlaceholder = true,
   pointSize = 0.05,
+  followFrame = '',
   skeleton = defaultThreeDConfig().skeleton,
   urdf,
   topicSettings = [],
@@ -1962,6 +2069,7 @@ export const ThreeDPanel: React.FC<ThreeDPanelProps> = ({
           showAxes={showAxes}
           showPlaceholder={showPlaceholder}
           pointSize={pointSize}
+          followFrame={followFrame}
           skeleton={skeleton}
           urdf={resolvedUrdf}
           topicSettings={topicSettings}

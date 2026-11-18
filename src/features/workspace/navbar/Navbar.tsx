@@ -33,9 +33,9 @@ import {
 import {
   exportDockviewLayout,
   importDockviewLayout,
-  reapplyAutoDockviewLayout,
+  resetDockviewLayout,
 } from '../../layout/dockviewController';
-import { clearSavedDockviewLayout, saveDockviewLayoutToStorage } from '@/core/preferences/layoutStorage';
+import { saveDockviewLayoutToStorage } from '@/core/preferences/layoutStorage';
 import { useRosViewerLayoutContext } from '@/features/viewer/RosViewerLayoutContext';
 import type { DatasetHistoryListItem } from '@/shared/utils/datasetHistory';
 
@@ -159,12 +159,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   }, [layoutPersistence, layoutStorageKey]);
 
   const handleResetLayout = useCallback(() => {
-    if (layoutPersistence === 'off') return;
-    clearSavedDockviewLayout(layoutStorageKey);
-  }, [layoutPersistence, layoutStorageKey]);
-
-  const handleReapplyAutoLayout = useCallback(() => {
-    reapplyAutoDockviewLayout();
+    resetDockviewLayout();
   }, []);
 
   const hasOpenMenu =
@@ -324,10 +319,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <MenubarItem className="text-xs" onSelect={() => handleResetLayout()}>
                     <RotateCcw className="mr-2 h-4 w-4 shrink-0" />
                     {formatMessage({ id: 'navbar.resetLayout' })}
-                  </MenubarItem>
-                  <MenubarItem className="text-xs" onSelect={() => handleReapplyAutoLayout()}>
-                    <RotateCcw className="mr-2 h-4 w-4 shrink-0" />
-                    {formatMessage({ id: 'navbar.reapplyAutoLayout' })}
                   </MenubarItem>
                 </MenubarGroup>
               </MenubarContent>

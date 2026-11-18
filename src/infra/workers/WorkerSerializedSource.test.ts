@@ -53,6 +53,7 @@ function dispatchWorkerError(message: string): void {
 vi.mock('comlink', () => ({
   wrap: vi.fn(() => mockRemote),
   proxy: vi.fn((value: unknown) => value),
+  transfer: vi.fn((value: unknown) => value),
 }));
 
 vi.mock('./transports/createWorkerTransport', () => ({

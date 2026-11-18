@@ -19,6 +19,8 @@ export interface DockviewController {
   exportLayout: () => FoxgloveLayoutData | null;
   importLayout: (value: unknown) => { restored: number; degraded: number; skipped: number };
   reapplyAutoLayout: () => boolean;
+  /** Forgets the saved layout of this viewer and restores the host / auto layout. */
+  resetLayout: () => boolean;
 }
 
 let controller: DockviewController | null = null;
@@ -47,4 +49,9 @@ export function importDockviewLayout(
 
 export function reapplyAutoDockviewLayout(): boolean {
   return controller?.reapplyAutoLayout() ?? false;
+}
+
+/** Forgets the saved layout and restores the layout the host or the topics define. */
+export function resetDockviewLayout(): boolean {
+  return controller?.resetLayout() ?? false;
 }

@@ -6,6 +6,7 @@ import { FOXGLOVE_PANEL_TITLE_KEY } from '@/features/panels/framework';
 import {
   createPanelInstanceId,
   markPanelInstanceId,
+  getPanelTypeFromId,
   replacePanelConfigs,
   replacePanelStates,
 } from '@/features/panels/framework';
@@ -15,14 +16,19 @@ import {
   type FoxgloveLayoutData,
   type FoxgloveMosaicNode,
 } from '@/core/preferences/foxgloveLayout';
-import { planColorDepthCameraRows, isDepthImageTopicName } from '@/features/layout/autoLayout/planRosImageGrid';
-import { buildImageRows } from '@/features/layout/autoLayout/buildImageRows';
+import { planImageGrid } from '@/features/layout/autoLayout/imageGrid';
 import { selectImageTopicsForAutoLayout } from '@/features/layout/autoLayout/imageTopicSelection';
 import { heuristicAudioInfoTopics } from '@/features/panels/Audio/core/resolveAudioInfo';
 import { getPanelDefinition } from '@/features/panels/registry';
-import { isAudioCommonInfoSchema, isJointStateSchema, isRawAudioSchema, isRosImageSchema, normalizeRosSchemaName } from '@/shared/ros/rosMessageTypes';
+import { isAudioCommonInfoSchema, isJointStateSchema, isRawAudioSchema, normalizeRosSchemaName } from '@/shared/ros/rosMessageTypes';
 import { pickDefaultRawMessagesTopic } from '@/features/layout/autoLayout/pickDefaultRawMessagesTopic';
 import { lookupPlotSchema } from '@/features/panels/Plot/schemaRegistry/plotSchemaRegistry';
+import { detectPlotSeriesForTopic } from '@/features/panels/Plot/plotTopicService';
+import { buildJointStateCombinedPath } from '@/features/panels/Plot/jointStatePaths';
+import { createPlotSeries, paletteColor, type PlotConfig } from '@/features/panels/Plot/defaults';
+import { defaultPlotConfig } from '@/features/panels/Plot/defaults';
+import { measuredTopicRank } from '@/shared/ros/rosMessageTypes';
+import { isWebGLAvailable } from '@/shared/utils/webglSupport';
 
 function imageTabTitle(topic: string): string {
   const parts = topic.split('/').filter(Boolean);
@@ -193,7 +199,15 @@ function collectTopicsForPanelSchemas(
 
 export interface BuildDefaultRosLayoutOptions {
   publishersByTopic?: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Whether a 3D panel can render here. Defaults to detecting WebGL in the current browser. */
+  webgl?: boolean;
 }
+
+const MAX_JOINT_STATE_PLOTS = 4;
+const MAX_IMU_PLOTS = 2;
+const PLOTS_PER_ROW = 3;
+/** Share of the column height given to the Raw Messages strip under other panels. */
+const RAW_STRIP_PERCENT = 14;
 
 function isTransformTopicType(type: string): boolean {
   const normalized = type.trim().toLowerCase();
@@ -213,12 +227,66 @@ function hasRobotLowLevelState(topics: ReadonlyArray<TopicInfo>): boolean {
   return topics.some((topic) => lookupPlotSchema(topic.type)?.adapterId === 'lowState');
 }
 
-/** 3D is useful when the bag carries robot motion / TF — not for pure camera feeds. */
-function shouldIncludeThreeDPanel(topics: ReadonlyArray<TopicInfo>): boolean {
-  if (isBvhOnlyDataset(topics)) {
-    return true;
+/**
+ * 3D needs something to draw: TF or pose topics (or a BVH skeleton), and WebGL. Joint states
+ * alone give an empty grid without a robot model, so they get Plots instead.
+ */
+function shouldIncludeThreeDPanel(
+  topics: ReadonlyArray<TopicInfo>,
+  hasPoseTopics: boolean,
+  webgl: boolean,
+): boolean {
+  if (!webgl) return false;
+  if (isBvhOnlyDataset(topics)) return true;
+  return hasPoseTopics || topics.some((topic) => isTransformTopicType(topic.type));
+}
+
+function isImuSchema(type: string): boolean {
+  return normalizeRosSchemaName(type) === 'sensor_msgs/imu';
+}
+
+function plotTabTitle(topic: string): string {
+  const parts = topic.split('/').filter(Boolean);
+  return parts.slice(-2).join('/') || topic;
+}
+
+/** One Plot per JointState topic (`position[:]`, measured streams first) and per Imu topic. */
+function appendSensorPlots(
+  topics: ReadonlyArray<TopicInfo>,
+  configById: Record<string, FoxgloveConfig>,
+): string[] {
+  const ids: string[] = [];
+  const jointTopics = topics
+    .filter((topic) => isJointStateSchema(topic.type))
+    .sort((a, b) => measuredTopicRank(a.name) - measuredTopicRank(b.name) || a.name.localeCompare(b.name))
+    .slice(0, MAX_JOINT_STATE_PLOTS);
+  for (const topic of jointTopics) {
+    const detected = detectPlotSeriesForTopic({
+      topic: topic.name,
+      schemaName: topic.type,
+      jointStateFields: ['position'],
+    });
+    const series = detected.series.map((entry) => ({
+      ...entry,
+      path: entry.path || buildJointStateCombinedPath(['position']),
+      label: entry.label || 'position',
+    }));
+    const config: PlotConfig = { ...defaultPlotConfig(), series };
+    const id = createPanelInstanceId('Plot');
+    configById[id] = { ...config, [FOXGLOVE_PANEL_TITLE_KEY]: plotTabTitle(topic.name) };
+    ids.push(id);
   }
-  return topics.some((topic) => isJointStateSchema(topic.type) || isTransformTopicType(topic.type));
+  const imuTopics = topics.filter((topic) => isImuSchema(topic.type)).slice(0, MAX_IMU_PLOTS);
+  for (const topic of imuTopics) {
+    const paths = ['angular_velocity.x', 'angular_velocity.y', 'angular_velocity.z', 'linear_acceleration.x', 'linear_acceleration.y', 'linear_acceleration.z'];
+    const series = paths.map((path, index) =>
+      createPlotSeries({ id: `series-${index + 1}`, topic: topic.name, path, label: path, color: paletteColor(index) }),
+    );
+    const id = createPanelInstanceId('Plot');
+    configById[id] = { ...defaultPlotConfig(), series, [FOXGLOVE_PANEL_TITLE_KEY]: plotTabTitle(topic.name) };
+    ids.push(id);
+  }
+  return ids;
 }
 
 function isHdf5Dataset(
@@ -237,6 +305,10 @@ function isHdf5Dataset(
   return true;
 }
 
+function hasRawPanel(configById: Record<string, FoxgloveConfig>): boolean {
+  return Object.keys(configById).some((id) => getPanelTypeFromId(id) === 'RawMessages');
+}
+
 export function buildDefaultRosFoxgloveLayoutData(
   topics: ReadonlyArray<TopicInfo>,
   options?: BuildDefaultRosLayoutOptions,
@@ -248,38 +320,13 @@ export function buildDefaultRosFoxgloveLayoutData(
   const usedImageTopics = new Set<string>();
 
   const pickedImageTopics = selectImageTopicsForAutoLayout(topics);
-  const hasDepthImageStreams = topics.some(
-    (topic) => isRosImageSchema(topic.type) && isDepthImageTopicName(topic.name),
-  );
-
-  if (hasDepthImageStreams) {
-    const { colorRow, depthRow } = planColorDepthCameraRows(topics);
-    const colorImageIds = appendImagePanelsForRow(colorRow, configById);
-    const depthImageIds = appendImagePanelsForRow(depthRow, configById);
-    for (const topic of colorRow) {
-      if (topic) usedImageTopics.add(topic);
+  for (const row of planImageGrid(pickedImageTopics)) {
+    const imageIds = appendImagePanelsForRow(row, configById);
+    for (const topic of row) {
+      usedImageTopics.add(topic);
     }
-    for (const topic of depthRow) {
-      if (topic) usedImageTopics.add(topic);
-    }
-    if (colorImageIds.length === 1 && depthImageIds.length === 1) {
-      // A single RGB-D camera: side by side instead of two full-width rows.
-      stackParts.push(rowMosaicFromPanelIds([...colorImageIds, ...depthImageIds])!);
-    } else {
-      const colorMosaic = rowMosaicFromPanelIds(colorImageIds);
-      const depthMosaic = rowMosaicFromPanelIds(depthImageIds);
-      if (colorMosaic) stackParts.push(colorMosaic);
-      if (depthMosaic) stackParts.push(depthMosaic);
-    }
-  } else if (pickedImageTopics.length > 0) {
-    for (const row of buildImageRows(pickedImageTopics)) {
-      const imageIds = appendImagePanelsForRow(row, configById);
-      for (const topic of row) {
-        usedImageTopics.add(topic);
-      }
-      const mosaic = rowMosaicFromPanelIds(imageIds);
-      if (mosaic) stackParts.push(mosaic);
-    }
+    const mosaic = rowMosaicFromPanelIds(imageIds);
+    if (mosaic) stackParts.push(mosaic);
   }
 
   const audioTopicCandidates = collectTopicsForPanelSchemas(topics, 'Audio')
@@ -295,8 +342,8 @@ export function buildDefaultRosFoxgloveLayoutData(
     stackParts.push(rawId);
   } else {
     const poseTopics = collectTopicsForPanelSchemas(topics, 'Pose');
-    const includeThreeD = shouldIncludeThreeDPanel(topics);
-    const motionRow: string[] = [];
+    const includeThreeD = shouldIncludeThreeDPanel(topics, poseTopics.length > 0, options?.webgl ?? isWebGLAvailable());
+    const motionPanels: string[] = [];
 
     if (poseTopics.length > 0) {
       const poseId = createPanelInstanceId('Pose');
@@ -307,31 +354,36 @@ export function buildDefaultRosFoxgloveLayoutData(
           enabled: true,
         })),
       };
-      motionRow.push(poseId);
+      motionPanels.push(poseId);
     }
     if (includeThreeD) {
       const threeDId = createPanelInstanceId('3D');
       configById[threeDId] = {};
-      motionRow.push(threeDId);
+      motionPanels.push(threeDId);
     }
     if (hasRobotLowLevelState(topics)) {
       const plotId = createPanelInstanceId('Plot');
       configById[plotId] = {};
-      motionRow.push(plotId);
+      motionPanels.push(plotId);
     }
-    const motionMosaic = rowMosaicFromPanelIds(motionRow);
-    if (motionMosaic) stackParts.push(motionMosaic);
+    motionPanels.push(...appendSensorPlots(topics, configById));
+    for (let at = 0; at < motionPanels.length; at += PLOTS_PER_ROW) {
+      const motionMosaic = rowMosaicFromPanelIds(motionPanels.slice(at, at + PLOTS_PER_ROW));
+      if (motionMosaic) stackParts.push(motionMosaic);
+    }
   }
 
-  if (stackParts.length === 0 && !isBvhOnlyDataset(topics) && !hdf5Dataset) {
-    const rawId = appendFallbackRawMessagesPanel(topics, configById);
-    stackParts.push(rawId);
-  } else if (stackParts.length === 1 && !isBvhOnlyDataset(topics) && !hdf5Dataset) {
+  if (stackParts.length === 0 && !hdf5Dataset) {
     const rawId = appendFallbackRawMessagesPanel(topics, configById);
     stackParts.push(rawId);
   }
 
-  const layout = stackEqualMosaic('column', stackParts);
+  let layout = stackEqualMosaic('column', stackParts);
+  if (stackParts.length > 0 && !isBvhOnlyDataset(topics) && !hdf5Dataset && !hasRawPanel(configById)) {
+    // Raw Messages stays available as a thin strip under the data panels, collapsed by default.
+    const rawId = appendFallbackRawMessagesPanel(topics, configById, { excludeTopics: usedImageTopics });
+    layout = { direction: 'column', first: layout, second: rawId, splitPercentage: 100 - RAW_STRIP_PERCENT };
+  }
 
   return {
     layout,

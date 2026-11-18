@@ -14,7 +14,7 @@
   "welcome.historyCollapse": "收起",
   "welcome.historyEmpty": "暂无最近记录。",
   "welcome.historyPermissionDenied": "无法读取已保存的文件或文件夹，请授权后重试或重新选择。",
-  "welcome.historyFileCount": "{count} 个文件",
+  "welcome.historyFileCount": "{count, plural, other {# 个文件}}",
   "welcome.historyFolderPicker": "文件夹",
   "welcome.historyDroppedFiles": "拖入的文件",
   "welcome.historyFromFilePicker": "本地文件选择",

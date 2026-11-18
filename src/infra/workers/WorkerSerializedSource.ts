@@ -46,6 +46,7 @@ export class WorkerSerializedSource implements ISourceHandle {
   private _ringReader?: SharedPayloadRing;
   private _workerFailure?: Error;
   private _pendingInitializeReject?: (error: Error) => void;
+  private _disposers: Array<() => void> = [];
 
   constructor(worker: Worker) {
     this._worker = worker;
@@ -90,7 +91,11 @@ export class WorkerSerializedSource implements ISourceHandle {
       const result = await this._raceWorkerFailure(
         this._wrapAbortableInitialize(
           this._remote.initialize(
-            sanitizedArgs,
+            // MessagePorts (range handle) move to the worker instead of being cloned.
+            Comlink.transfer(
+              sanitizedArgs,
+              Object.values(sanitizedArgs).filter((v): v is MessagePort => v instanceof MessagePort),
+            ),
             onProgress ? Comlink.proxy(onProgress) : undefined,
           ),
         ),
@@ -283,9 +288,15 @@ export class WorkerSerializedSource implements ISourceHandle {
     return this._fallbackReason;
   }
 
+  /** Runs when the worker is terminated (closes the range handle behind it). */
+  addDisposer(fn: () => void): void {
+    this._disposers.push(fn);
+  }
+
   terminate(): void {
     this._abortPendingInitialize(new WorkerSourceCancelledError());
     this._worker.terminate();
+    for (const fn of this._disposers.splice(0)) fn();
   }
 
   private _resolveSharedPayloadData(

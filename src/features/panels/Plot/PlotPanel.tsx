@@ -225,7 +225,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
       ? progress
         ? formatMessage(
             { id: 'panels.plot.status.loadingProgress' },
-            { count: progress.messages.toLocaleString() },
+            { count: progress.messages },
           )
         : formatMessage({ id: 'panels.plot.status.loading' })
       : error
@@ -334,7 +334,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
             {progress
               ? formatMessage(
                   { id: 'panels.plot.status.loadingProgress' },
-                  { count: progress.messages.toLocaleString() },
+                  { count: progress.messages },
                 )
               : formatMessage({ id: 'panels.plot.status.loading' })}
           </div>

@@ -147,6 +147,49 @@ const rows = parseRemoteDatasetListJson(await res.json());
 
 ---
 
+## 进阶：预签名 URL、流式读取与页内缓存
+
+RosView 用小粒度 HTTP Range 请求读取远程录制（512 KiB 块，单次请求最多数 MiB）：对带索引的 MCAP，先读摘要与 chunk 索引，再只读播放头附近的 chunk，因此首帧只需几百 KB，而不是整文件。已下载的块**仅在内存中、仅在页面生命周期内**保留（默认预算 512 MiB，最近最少使用淘汰）。不会写入 IndexedDB、Cache Storage 或 OPFS，录制字节不会在登出或删除后残留。设置 `preferencePersistence="off"` 还会关闭最近文件历史。
+
+```tsx
+import { RosViewer, clearCache } from '@ioai/rosview';
+
+<RosViewer
+  url={presignedUrl}
+  sourceKey={recording.id}            // 宿主稳定 id，不要用带签名的 URL
+  urlExpiresAt={expiresAtIso}         // 可选：到期前 60 秒续期
+  refreshUrls={async (expired) => fetchFreshUrls(expired)} // 顺序与数量一一对应
+  preferencePersistence="off"
+/>
+
+// 登出、移除成员或删除数据时：
+clearCache();
+```
+
+- `sourceKey` 让同一录制在同一标签页内（如 数据、原始、数据）从内存重开，并在 URL 刷新后保留缓存。内容变化时它必须变化（带上版本或 ETag）；服务端 `ETag` 不同也会清除该项。仅当查看器恰有一个远程源时生效。
+- `refreshUrls(expired)`：请求收到 401/403，或在 `urlExpiresAt` 前 60 秒内发起请求时，每批最多调用一次，参数为所有打开的远程源的当前 URL，按相同顺序返回新 URL。失败的请求重试一次；位置、布局与面板保持不变。新 URL 仍失败则显示原有的数据源错误，并在 30 秒内不再续期。若宿主改用更换 `url` 属性，查看器会重启，请使用 `refreshUrls`。
+- `clearCache()` 清空页面上所有查看器的缓存字节并中止进行中的 Range 请求。
+- 无索引 MCAP 通过同一缓存扫描一次（嵌入时扫描结果仅保存在内存）。ROS 1 `.bag` 同样按 Range 读取；ROS 2 `.db3`（SQLite）仍需整体下载，遇到 401/403 会续期一次。
+
+## 进阶：自动布局、文案与重置布局
+
+`preferAutoLayout` 根据话题生成默认面板：
+
+- 图像话题最多六个，按 `head`、`front`、`wrist`、`left`、`right`、`rgb`/`color`、其他、最后 `depth` 与 `ir` 排序；`left`/`right` 立体对并排。一到三个相机为一行，四个为 2x2，五或六个为 3x2。
+- 每个 `sensor_msgs/JointState` 话题一个 `position[:]` 曲线图（实测流优先于指令流，最多四个），每个 `sensor_msgs/Imu` 话题一个曲线图（角速度与线加速度）。
+- 仅当存在 TF 或位姿话题（或 BVH 骨架）**且**浏览器支持 WebGL 时才有 3D 面板；位姿话题生成 Pose 面板。
+- 原始消息作为底部窄条（无其他面板时为唯一面板）。
+
+曲线图随消息到达逐步绘制。嵌入根节点是带标签的 `region`，不再渲染 `<main>` 地标。
+
+`messages` 按消息 id 替换文案（ICU 字符串，叠加在 en / zh / ja 之上；`RosViewMessageKey` 列出所有 id）：
+
+```tsx
+<RosViewer messages={{ 'layout.viewerRegion': '录制查看器' }} />
+```
+
+`layoutStorageKey` 按宿主隔离已保存的布局（请带上应用名）。`resetLayout()` 通过 `onPlayerReady({ player, hasSource, resetLayout })` 传入；它清除该 key 下已保存的布局，并恢复 `initialLayout` / `defaultPanel` 或自动布局。导航栏「布局」菜单有同样的“重置布局”。
+
 ## 进阶：Navbar 品牌文案
 
 Navbar 左侧默认显示 **ROS View**。嵌入到更大页面时，可以隐藏或替换为你的产品名：

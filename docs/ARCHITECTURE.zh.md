@@ -36,7 +36,7 @@
 |------|------|----------|
 | **本地单文件** | 拖拽到窗口 / 点击「打开文件」按钮 | `File` API → `BlobReadable` |
 | **本地目录** | 点击「打开目录」/ 拖拽目录 | `FileSystemDirectoryHandle` → 扫描 `.mcap/.bag/.db3/.h5/.hdf5/.bvh` 文件列表 |
-| **远程单文件** | URL 输入框 / 查询参数 `?url=` | `fetch` + `Range` 请求 → `CachedFilelike` 分块缓存 |
+| **远程单文件** | URL 输入框 / 查询参数 `?url=` | `fetch` + `Range` 请求 → `RangeSource` 分块缓存 |
 | **远程文件列表** | 宿主传入 `fileManifest` prop | 加载 JSON manifest，在 Datasets Tab 展示与切换 |
 
 ### 2.2 文件格式与消息编码
@@ -46,7 +46,7 @@
 | 格式 | 解析库 | Range 支持 | 说明 |
 |------|--------|------------|------|
 | **MCAP** | `@mcap/core` + `@foxglove/mcap-support` | 完整支持（索引读取） | 首选格式，有 chunk 索引可做高效区间查询 |
-| **ROS1 .bag** | `@foxglove/rosbag` | 完整支持（chunk 索引） | 通过 `CachedFilelike` + `BrowserHttpReader` 实现 |
+| **ROS1 .bag** | `@foxglove/rosbag` | 完整支持（chunk 索引） | 通过 `RangeSource` + `BrowserHttpReader` 实现 |
 | **ROS2 .db3** | `@foxglove/rosbag2` + `sql.js` (WASM) | 本地 / 远程（远程自动整文件下载） | SQLite 格式限制，无法 Range 流式；远程大文件建议转 MCAP |
 | **HDF5** | `@ioai/hdf5` (WASM) | 部分读取 | 科学数据；浏览器内解析 |
 | **BVH** | 内置解析 | 不适用（非 ROS bag 类流） | 骨骼动作捕捉动画回放 |
@@ -236,7 +236,7 @@
 |----|------|
 | `@mcap/core` | MCAP 文件格式读写核心（索引读取 + 流式读取） |
 | `@foxglove/mcap-support` | MCAP 通道解析、Schema 到 JS 对象的桥接、解压处理器 |
-| `@foxglove/rosbag` | ROS1 .bag 文件读取（支持 BlobReader + 远程 CachedFilelike） |
+| `@foxglove/rosbag` | ROS1 .bag 文件读取（支持 BlobReader + 远程 RangeSource） |
 | `@foxglove/rosbag2` | ROS2 .db3 文件读取（SQLite 查询 + CDR 解码） |
 | `@foxglove/rosmsg` | ROS 消息定义解析 |
 | `@foxglove/rosmsg-serialization` | ROS1 消息反序列化 |
@@ -319,7 +319,7 @@ flowchart TB
 
     LocalFile -->|BlobReadable| IterableSource
     LocalDir -->|FileSystemFileHandle| IterableSource
-    RemoteURL -->|"CachedFilelike\n(Range 分块)"| IterableSource
+    RemoteURL -->|"RangeSource\n(Range 分块)"| IterableSource
     RemoteList -->|URL 切换| RemoteURL
 
     IterableSource -->|initialize| ParseChannel
@@ -355,10 +355,10 @@ interface Readable {
 // 使用 @mcap/browser BlobReadable，并适配到 MCAP IReadable API。
 
 // 远程文件（HTTP Range + LRU 缓存）
-class CachedFilelike implements Readable {
+class RangeSource {
   // 50MB 块大小，LRU 缓存
   // 单连接复用，顺序读时自动 read-ahead
-  // 与 Foxglove 的 CachedFilelike 设计一致
+  // 与 Foxglove 的 RangeSource 设计一致
 }
 ```
 
@@ -515,7 +515,7 @@ sequenceDiagram
     Worker->>Server: GET (探活 + 获取 Content-Length)
     Server-->>Worker: 200 OK, Accept-Ranges: bytes, Content-Length: 500MB
 
-    Note over Worker: 创建 CachedFilelike (50MB 块, LRU)
+    Note over Worker: 创建 RangeSource (50MB 块, LRU)
 
     Worker->>Server: Range: bytes=0-52428799 (尾部 50MB 读索引)
     Server-->>Worker: 206 Partial Content
@@ -532,13 +532,12 @@ sequenceDiagram
     Note over Worker: BlockLoader 后台预加载剩余 chunks
 ```
 
-**CachedFilelike 关键参数（参考 Foxglove）：**
+**RangeSource 关键参数（参考 Foxglove）：**
 
 | 参数 | 值 | 说明 |
 |------|-----|------|
-| `CACHE_BLOCK_SIZE` | 50 MB | 单次 Range 请求的块大小 |
-| `CLOSE_ENOUGH_THRESHOLD` | 50 MB | 当前下载流距目标 < 此值时不另开连接 |
-| `cacheSizeInBytes` | Bag: 200MB / MCAP: Infinity | LRU 缓存上限 |
+| `RANGE_BLOCK_BYTES` | 512 KiB | Cache block; a request is at most 8 blocks |
+| Cache budget | 512 MiB default (256 MiB-1 GiB by device memory) | LRU across all sources, memory only, `clearCache()` empties it |
 
 **CORS 要求：** 远程服务器必须正确配置 `Access-Control-Allow-Origin`、`Access-Control-Expose-Headers: Content-Length, Accept-Ranges, Content-Range`。
 
@@ -554,7 +553,7 @@ sequenceDiagram
 | 批量读取 | 17ms 批量 | 保持 17ms 批量，但优化批量内的序列化开销 |
 | 跨线程传输 | Comlink.transfer ArrayBuffer | 同样使用 Transferable，减少不必要的 structuredClone |
 | 面板渲染 | React 组件 + selector | **帧索引 ref + subscriber 模式**（参考 lerobot-studio），播放推进不触发 React 树重渲染 |
-| 缓存策略 | CachedFilelike + LRU | 相同策略，根据文件格式选择不同 cache size |
+| 缓存策略 | RangeSource + LRU | 相同策略，根据文件格式选择不同 cache size |
 | 面板代码分割 | React.lazy per panel type | 同样 React.lazy，但面板更轻量（fewer dependencies） |
 | 布局库 | react-mosaic（纯分割） | DockView（Tab + 拖拽 + 分割），对复杂布局体验更好 |
 | 预加载 | BlockLoader 400 blocks | 相同策略，可动态调整 block 数量 |
@@ -850,7 +849,7 @@ rosview/
     └── infra/
         ├── workers/                    # mcap/bag/db3/hdf5 worker 与传输层
         ├── sources/                    # IterableSource 与各格式实现
-        └── services/                   # HttpFileReader、CachedFilelike
+        └── services/                   # HttpFileReader、RangeSource
 ```
 
 以下能力若在旧版树状图中出现、但上表中未列出，视为 **规划/拆分方向** 或尚未以独立文件落地，以 `git` 与 IDE 为准。
@@ -1022,7 +1021,7 @@ interface ExtensionContext {
 1. 迁移数据解析到 Web Worker（Comlink + Transferable）
 2. 添加 ROS1 .bag 支持
 3. 添加 ROS2 .db3 支持
-4. 实现 CachedFilelike + HTTP Range 远程加载
+4. 实现 RangeSource + HTTP Range 远程加载
 5. 实现 Plot 面板（uplot）
 6. 实现 Joints 面板
 

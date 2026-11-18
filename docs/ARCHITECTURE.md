@@ -44,7 +44,7 @@ ROS View is a **browser-native** playback and visualization tool for robotics re
 |------|-------------|----------------|
 | **Local single file** | Drag-and-drop / "Open File" button | `File` API → `BlobReadable` |
 | **Local directory** | "Open Directory" / folder drag | `FileSystemDirectoryHandle` → scan `.mcap/.bag/.db3` |
-| **Remote single file** | URL input / `?url=` query param | `fetch` + Range → `CachedFilelike` chunked cache |
+| **Remote single file** | URL input / `?url=` query param | `fetch` + Range → `RangeSource` chunked cache |
 | **Remote file manifest** | `fileManifest` prop (embedded app) | Load JSON list, switch in Datasets tab |
 
 ### 2.2 File Formats and Message Encodings
@@ -54,7 +54,7 @@ ROS View is a **browser-native** playback and visualization tool for robotics re
 | Format | Library | Range Support | Notes |
 |--------|---------|---------------|-------|
 | **MCAP** | `@mcap/core` + `@foxglove/mcap-support` | Full (chunk index) | Preferred; efficient interval queries |
-| **ROS1 `.bag`** | `@foxglove/rosbag` | Full (chunk index) | via `CachedFilelike` + `BrowserHttpReader` |
+| **ROS1 `.bag`** | `@foxglove/rosbag` | Full (chunk index) | via `RangeSource` |
 | **ROS2 `.db3`** | `@foxglove/rosbag2` + `sql.js` (WASM) | Local / remote (remote auto-downloads in full) | SQLite limitation, no Range streaming; convert to MCAP for large remote files |
 
 **Supported message encodings:**
@@ -243,7 +243,7 @@ Fixed-width sidebar (collapsible) on the left with three tabs:
 |---------|---------|
 | `@mcap/core` | MCAP file format read/write core (indexed + streaming) |
 | `@foxglove/mcap-support` | MCAP channel parsing, schema-to-JS bridging, decompression handlers |
-| `@foxglove/rosbag` | ROS1 `.bag` reader (BlobReader + remote CachedFilelike) |
+| `@foxglove/rosbag` | ROS1 `.bag` reader (BlobReader + remote RangeSource) |
 | `@foxglove/rosbag2` | ROS2 `.db3` reader (SQLite queries + CDR decode) |
 | `@foxglove/rosmsg` | ROS message definition parsing |
 | `@foxglove/rosmsg-serialization` | ROS1 message deserialization |
@@ -326,7 +326,7 @@ flowchart TB
 
     LocalFile -->|BlobReadable| IterableSource
     LocalDir -->|FileSystemFileHandle| IterableSource
-    RemoteURL -->|"CachedFilelike\n(Range chunks)"| IterableSource
+    RemoteURL -->|"RangeSource\n(Range chunks)"| IterableSource
     RemoteList -->|URL switch| RemoteURL
 
     IterableSource -->|initialize| ParseChannel
@@ -362,9 +362,9 @@ interface Readable {
 // Uses @mcap/browser BlobReadable and adapts it to the MCAP IReadable API.
 
 // Remote file (HTTP Range + LRU cache)
-class CachedFilelike implements Readable {
-  // 50 MB block size, LRU cache
-  // Single connection reuse; automatic read-ahead for sequential reads
+class RangeSource {
+  // 512 KiB blocks fetched as small parallel Range requests, in-memory LRU (page lifetime)
+  // Demand reads pre-empt read-ahead; 401/403 renews the presigned URL
 }
 ```
 
@@ -519,9 +519,9 @@ sequenceDiagram
     Worker->>Server: GET (probe + get Content-Length)
     Server-->>Worker: 200 OK, Accept-Ranges: bytes, Content-Length: 500 MB
 
-    Note over Worker: Create CachedFilelike (50 MB blocks, LRU)
+    Note over Worker: Main thread: RangeSource (512 KiB blocks, in-memory LRU), reached through a MessagePort
 
-    Worker->>Server: Range: bytes=0-52428799 (read tail 50 MB for index)
+    Worker->>Server: Range: footer + summary (small blocks at the file tail)
     Server-->>Worker: 206 Partial Content
     Note over Worker: MCAP: read footer → chunk index
     Note over Worker: Bag: read connection records + chunk info
@@ -536,13 +536,12 @@ sequenceDiagram
     Note over Worker: BlockLoader preloads remaining chunks in background
 ```
 
-**CachedFilelike key parameters:**
+**RangeSource key parameters:**
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| `CACHE_BLOCK_SIZE` | 50 MB | Block size per Range request |
-| `CLOSE_ENOUGH_THRESHOLD` | 50 MB | Skip opening a new connection if current download is within this distance |
-| `cacheSizeInBytes` | Bag: 200 MB / MCAP: Infinity | LRU cache limit |
+| `RANGE_BLOCK_BYTES` | 512 KiB | Cache block; a request is at most 8 blocks |
+| Cache budget | 512 MiB default (256 MiB-1 GiB by device memory) | LRU across all sources, memory only, `clearCache()` empties it |
 
 **CORS requirements:** Remote servers must return `Access-Control-Allow-Origin`, `Access-Control-Expose-Headers: Content-Length, Accept-Ranges, Content-Range`.
 
@@ -558,7 +557,7 @@ sequenceDiagram
 | **Batch reads** | 17 ms batch window — one batch ≈ one render frame's worth of messages |
 | **Zero-copy transfer** | `Comlink.transfer` with `Transferable ArrayBuffer`; avoids unnecessary `structuredClone` |
 | **Panel rendering** | `ref + subscriber` pattern — playback advancement does not trigger React tree re-renders |
-| **Cache strategy** | `CachedFilelike` LRU; block size tuned per file format |
+| **Cache strategy** | `RangeSource` LRU; block size tuned per file format |
 | **Code splitting** | `React.lazy` per panel type; unused panels are never in the initial bundle |
 | **Layout library** | DockView (tabs + drag + split) — better UX for complex layouts than split-only alternatives |
 | **Background preload** | `BlockLoader` with up to 400 time blocks preloaded behind the current playback position |
@@ -809,7 +808,7 @@ rosview/
     └── infra/
         ├── workers/                    # mcap/bag/db3/hdf5 workers and transport
         ├── sources/                    # IterableSource implementations
-        └── services/                   # HttpFileReader, CachedFilelike
+        └── services/                   # range/ (RangeSource, in-memory block cache)
 ```
 
 ---
@@ -885,7 +884,7 @@ The standardized `IIterableSource` interface makes it straightforward to add:
 1. Migrate data parsing to Web Worker (Comlink + Transferable)
 2. ROS1 `.bag` support
 3. ROS2 `.db3` support
-4. CachedFilelike + HTTP Range remote loading
+4. RangeSource + HTTP Range remote loading
 5. Plot panel (uplot)
 6. Joints panel
 

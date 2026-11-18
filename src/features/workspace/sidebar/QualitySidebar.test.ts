@@ -82,7 +82,7 @@ describe('QualitySidebar', () => {
     expect(html).toContain('Scanned 1000 / 1000 (100%)');
     expect(html).not.toContain('Training quality');
     expect(html).not.toContain('Score');
-    expect(html).toContain('1 errors');
+    expect(html).toContain('1 error');
     expect(html).toContain('/camera/left/color/image_resized/compressed timestamp rollback');
     expect(html).toContain('Anomaly 1');
     expect(html).toContain('Max |Δ| 43.3 ms');

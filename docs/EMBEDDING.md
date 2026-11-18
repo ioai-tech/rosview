@@ -147,6 +147,49 @@ const rows = parseRemoteDatasetListJson(await res.json());
 
 ---
 
+## Advanced: Presigned URLs, streaming and the in-tab cache
+
+RosView reads remote recordings with small HTTP Range requests (512 KiB blocks, at most a few MiB per request): for an indexed MCAP it fetches the summary and chunk index, then only the chunks around the playhead, so the first image appears after a few hundred kilobytes rather than after the whole file. Downloaded blocks are kept **in memory for the lifetime of the page only** (default budget 512 MiB, least-recently-used). Nothing is written to IndexedDB, Cache Storage or OPFS, so recording bytes cannot outlive a logout or an erasure. Set `preferencePersistence="off"` to also disable the recent-files history.
+
+```tsx
+import { RosViewer, clearCache } from '@ioai/rosview';
+
+<RosViewer
+  url={presignedUrl}
+  sourceKey={recording.id}            // host-stable id, never the signed URL
+  urlExpiresAt={expiresAtIso}         // optional: renew 60 s before expiry
+  refreshUrls={async (expired) => fetchFreshUrls(expired)} // same order, same length
+  preferencePersistence="off"
+/>
+
+// On logout, membership removal or erasure:
+clearCache();
+```
+
+- `sourceKey` lets the same recording reopen in the same tab (for example Data, then Raw, then Data) from memory, and keeps the cache across a URL refresh. It must change when the content changes (include a version or ETag); a differing server `ETag` also purges the entry. It is honoured only while the viewer has exactly one remote source.
+- `refreshUrls(expired)` is called at most once per batch, with the current URL of every open remote source, when a request gets 401 or 403 or starts within 60 s of `urlExpiresAt`. Resolve to the new URLs in the same order. The failed request is retried once; position, layout and panels are kept. If the new URL fails as well, the ordinary source error is shown and RosView stops asking for 30 s. A host that changes the `url` prop instead restarts the viewer; use `refreshUrls` to avoid that.
+- `clearCache()` drops every cached byte of every viewer on the page and aborts in-flight range requests.
+- Unindexed MCAP is scanned once through the same cache (the scan result stays in memory only when embedded). ROS 1 `.bag` reads through ranges too; ROS 2 `.db3` (SQLite) must still be downloaded whole, and renews its URL once if it gets 401/403.
+
+## Advanced: Auto layout, copy and layout reset
+
+`preferAutoLayout` builds the default panels from the topics:
+
+- Image topics, at most six, ranked `head`, `front`, `wrist`, `left`, `right`, `rgb`/`color`, others, then `depth` and `ir`; a `left`/`right` pair stays side by side. One to three cameras are one row, four are 2x2, five or six are 3x2.
+- One Plot of `position[:]` per `sensor_msgs/JointState` topic (measured streams before command streams, at most four) and one per `sensor_msgs/Imu` topic (angular velocity and linear acceleration).
+- A 3D panel only when there are TF or pose topics (or a BVH skeleton) **and** the browser has WebGL; a Pose panel for pose topics.
+- Raw Messages as a thin strip at the bottom (the only panel when nothing else applies).
+
+Plots draw while messages arrive. The embedded root renders a labelled `region`, not a `<main>` landmark.
+
+`messages` replaces viewer copy by message id (ICU strings, applied over en / zh / ja; `RosViewMessageKey` lists the ids):
+
+```tsx
+<RosViewer messages={{ 'layout.viewerRegion': 'Recording viewer' }} />
+```
+
+`layoutStorageKey` isolates the saved layout per host (use a key that includes your app name). `resetLayout()` is passed to `onPlayerReady({ player, hasSource, resetLayout })`; it forgets the saved layout under that key and restores `initialLayout` / `defaultPanel`, or the auto layout. The navbar Layout menu has the same "Reset layout" entry.
+
 ## Advanced: Navbar branding
 
 The navbar shows **ROS View** on the left by default. When embedding inside a larger app, you can hide it or replace it with your product name:

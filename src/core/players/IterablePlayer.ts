@@ -600,6 +600,8 @@ export class IterablePlayer implements Player {
         }
         this._noteSourceSuccess();
         this._distributeMessages(messages, seekTime);
+        // User-timing entry (click to frames delivered) for performance budgets and tests.
+        performance.measure("rosview:seek", { start: now });
       }
     } catch (err) {
       if (this._isPlaybackEpochCurrent(epoch)) {

@@ -14,6 +14,25 @@ import {
 } from '@/infra/workers/preloadWorkerWasm';
 import { isRosRecordingFilename, type DatasetItem } from '@/shared/utils/datasetSources';
 import { resolveBrowserHttpUrl } from '@/shared/utils/resolveBrowserHttpUrl';
+import { RangeSource } from '@/infra/range/RangeSource';
+import { exposeRangeSource, type ExposedRangeSource } from '@/infra/range/rangeHandle';
+import { rangeBlockCache } from '@/infra/range/rangeCache';
+import type { UrlRenewal } from '@/infra/range/urlRenewal';
+import { resolveRemoteCacheBytes } from '@/infra/workers/remoteCacheConfig';
+
+/** Per-viewer settings for how remote recordings are read. */
+export interface RemoteReadOptions {
+  renewal?: UrlRenewal;
+  /** Host-stable id of the (single) recording; enables cache reuse across opens. */
+  sourceKey?: string;
+  /** False when the host turned persistence off: nothing about the recording may reach IndexedDB. */
+  persist?: boolean;
+}
+
+/** True for the formats that read through a `RangeSource` (everything remote except bvh / hdf5). */
+function usesRangeSource(ext: string | undefined): boolean {
+  return ext !== 'bvh' && ext !== 'hdf5' && ext !== 'h5';
+}
 
 export function extensionForDataset(ds: DatasetItem): string | undefined {
   if (ds.kind === 'file' && ds.file) {
@@ -55,6 +74,7 @@ export async function buildInitArgsForDataset(
   ds: DatasetItem,
   ext: string | undefined,
   autoDataQualityScan: boolean,
+  remote?: { exposed: ExposedRangeSource },
 ): Promise<Record<string, unknown>> {
   const workerPerf =
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('workerPerf') === '1';
@@ -78,6 +98,10 @@ export async function buildInitArgsForDataset(
     }
     if (typeof ds.sizeBytes === 'number' && Number.isFinite(ds.sizeBytes) && ds.sizeBytes > 0) {
       init.knownTotalBytes = Math.floor(ds.sizeBytes);
+    }
+    if (remote) {
+      init.rangePort = remote.exposed.port;
+      init.rangeCacheBytes = rangeBlockCache.maxBytes;
     }
     return init;
   }
@@ -114,12 +138,32 @@ export async function buildInitArgsForDataset(
 export async function prepareSourceMember(
   ds: DatasetItem,
   autoDataQualityScan: boolean,
+  remoteOptions: RemoteReadOptions = {},
 ): Promise<{ member: CombinedSourceMember; ext: string | undefined }> {
   const ext = extensionForDataset(ds);
   const worker = await createWorkerForExtension(ext);
   worker.onerror = (ev) => console.error('MAIN: Worker error', ev);
-  const initArgs = await buildInitArgsForDataset(ds, ext, autoDataQualityScan);
+  let exposed: ExposedRangeSource | undefined;
+  if (ds.kind === 'url' && ds.url && usesRangeSource(ext)) {
+    rangeBlockCache.setMaxBytes(resolveRemoteCacheBytes());
+    const renewal = remoteOptions.renewal;
+    const rangeSource = new RangeSource({
+      url: resolveBrowserHttpUrl(ds.url),
+      sourceKey: remoteOptions.sourceKey,
+      knownTotalBytes: ds.sizeBytes,
+      renewal,
+    });
+    exposed = exposeRangeSource(rangeSource, {
+      indexKey: remoteOptions.sourceKey,
+      renewUrl: renewal
+        ? async (failed) => ((await renewal.renew(rangeSource, failed)) ? rangeSource.getUrl() : undefined)
+        : undefined,
+    });
+  }
+  const initArgs = await buildInitArgsForDataset(ds, ext, autoDataQualityScan, exposed ? { exposed } : undefined);
+  if (remoteOptions.persist === false) initArgs.persistIndex = false;
   const source = new WorkerSerializedSource(worker);
+  if (exposed) source.addDisposer(() => exposed.dispose());
   return { member: { label: ds.name, source, initArgs }, ext };
 }
 

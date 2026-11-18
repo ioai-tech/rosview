@@ -1,4 +1,4 @@
-/** Byte-range source with an async `size()` — matches `CachedFilelike`. */
+/** Byte-range source with an async `size()` — matches `RemoteRangeFile`. */
 export interface AsyncByteRangeSource {
   size(): Promise<number>;
   read(offset: number, length: number): Promise<Uint8Array>;

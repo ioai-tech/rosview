@@ -26,7 +26,7 @@ import {
   hasPanelDefinition,
 } from '../panels/registry';
 import { PanelTabHeader } from './PanelTabHeader';
-import { readSavedDockviewLayout } from '@/core/preferences/layoutStorage';
+import { clearSavedDockviewLayout, readSavedDockviewLayout } from '@/core/preferences/layoutStorage';
 import { createSinglePanelLayout } from '@/core/preferences/createSinglePanelLayout';
 import type { PreferencePersistence } from '@/core/preferences/types';
 import { useSidebarStore } from '@/shared/hooks/useSidebarStore';
@@ -341,6 +341,32 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({
     return { restored: result.restored, degraded: result.degraded, skipped: result.skipped };
   }, []);
 
+  /**
+   * Back to the layout the host declared (`initialLayout` / `defaultPanel`), else the topic-driven
+   * auto layout; the saved layout under this viewer's storage key is forgotten first.
+   */
+  const resetLayout = useCallback((): boolean => {
+    const api = apiRef.current;
+    if (!api) return false;
+    if (layoutPersistenceRef.current === 'localStorage') {
+      clearSavedDockviewLayout(layoutStorageKeyRef.current);
+    }
+    const declarative =
+      initialLayoutRef.current ??
+      (defaultPanelRef.current ? createSinglePanelLayout(defaultPanelRef.current) : null);
+    if (declarative && !layoutHasUnknownTopicReferences(declarative, topicsRef.current)) {
+      suppressWelcomeRestoreRef.current = true;
+      try {
+        api.panels.forEach((panel) => panel.api.close());
+        importLayoutState(declarative);
+      } finally {
+        suppressWelcomeRestoreRef.current = false;
+      }
+      return api.panels.length > 0;
+    }
+    return reapplyAutoLayout();
+  }, [reapplyAutoLayout, importLayoutState]);
+
   const components = useMemo(() => {
     const mapped: Record<string, (props: IDockviewPanelProps) => React.ReactElement> = {};
     for (const definition of getPanelDefinitions()) {
@@ -426,6 +452,7 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({
       exportLayout: exportLayoutState,
       importLayout: importLayoutState,
       reapplyAutoLayout,
+      resetLayout,
     });
 
     for (const d of dockviewEventDisposablesRef.current) {
@@ -527,7 +554,7 @@ export const DockviewLayout: React.FC<DockviewLayoutProps> = ({
       });
     }
     onLayoutReadyRef.current?.({ panelCount: event.api.panels.length });
-  }, [openPanel, duplicatePanel, exportLayoutState, importLayoutState, reapplyAutoLayout]);
+  }, [openPanel, duplicatePanel, exportLayoutState, importLayoutState, reapplyAutoLayout, resetLayout]);
 
   return (
     <DockviewApiContext.Provider value={contextApi}>

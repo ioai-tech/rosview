@@ -90,6 +90,18 @@ const MERGED = {
 
 export type RosViewLocale = keyof typeof MERGED;
 
-export function getRosViewMessages(lang: RosViewLocale): RosViewMessages {
-  return MERGED[lang] ?? MERGED.en;
+/** Every message id the viewer uses (the English catalog is the source of truth). */
+export type RosViewMessageKey = keyof typeof MERGED.en;
+
+/** Host-supplied copy that replaces catalog entries; values are ICU message strings. */
+export type RosViewMessageOverrides = Partial<Record<RosViewMessageKey, string>>;
+
+export function getRosViewMessages(lang: RosViewLocale, overrides?: RosViewMessageOverrides): RosViewMessages {
+  const base = MERGED[lang] ?? MERGED.en;
+  if (!overrides) return base;
+  const out: Record<string, string> = { ...base };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (typeof value === 'string' && Object.prototype.hasOwnProperty.call(base, key)) out[key] = value;
+  }
+  return out;
 }

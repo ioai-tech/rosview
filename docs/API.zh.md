@@ -83,7 +83,11 @@ import '@ioai/rosview/style.css';
 | `onFatalError` | `(error: Error) => void` | 文件加载失败且无可用回退时调用。 |
 | `onThemeChange` | `(theme: 'light' \| 'dark' \| 'system') => void` | 用户通过导航栏切换主题时调用。 |
 | `onLanguageChange` | `(language: 'en' \| 'zh' \| 'ja') => void` | 用户通过导航栏切换语言时调用。 |
-| `onPlayerReady` | `({ player, hasSource }) => void` | 播放器 `presence` 首次变为 `ready` 时调用。 |
+| `onPlayerReady` | `({ player, hasSource, resetLayout }) => void` | 播放器 `presence` 首次变为 `ready` 时调用；`resetLayout()` 恢复宿主/自动布局。 |
+| `sourceKey` | `string` | 宿主稳定的录制 id，用于页内内存缓存（见 EMBEDDING）。 |
+| `refreshUrls` | `(expired: string[]) => Promise<string[]>` | 预签名 URL 续期，每批至少一次最多一次调用。 |
+| `urlExpiresAt` | `string` | URL 过期时间（ISO 8601），到期前 60 秒续期。 |
+| `messages` | `Partial<Record<RosViewMessageKey, string>>` | 按 id 替换界面文案（ICU）。 |
 | `onLayoutReady` | `({ panelCount }) => void` | Dockview 布局 hydration 完成时调用。 |
 | `onSourceLoadingChange` | `(loading: boolean) => void` | 远程/本地源正在初始化时通知宿主。 |
 | `extensions` | `RosViewExtension[]` | 可选宿主扩展：侧边栏 Tab、播放条/时间轴叠加层等。 |
