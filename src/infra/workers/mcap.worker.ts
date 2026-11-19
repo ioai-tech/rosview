@@ -26,7 +26,6 @@ import type { TransportDiagnostics, WorkerTransportConfig } from "./transport";
 import { SharedPayloadRing } from "./sharedPayloadRing";
 import { resolveRemoteCacheBytes } from './remoteCacheConfig';
 import { fromNano, toNano } from '@/shared/utils/time';
-import type { Range } from '@/shared/utils/ranges';
 import { compactTimeRanges, inferProgressTimeRangeCompaction } from '@/shared/utils/timeRanges';
 import { workerPerf } from './workerPerf';
 import { DataQualityScanController } from './dataQualityScanController';
@@ -36,6 +35,7 @@ import {
   isByteRangeCovered,
   type ChunkCoverage,
 } from './playableTimeRanges';
+import { planPlaybackBuffer, type PlaybackBufferPlan } from './playbackBufferPlan';
 
 type IndexedChunkCoverage = ChunkCoverage;
 
@@ -202,8 +202,9 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
       });
       if (this._cachedReadable) {
         this._totalBytes = await this._cachedReadable.size();
+        // No read-ahead yet: a paused viewer reads only what its frame needs (backfill demand
+        // reads). Read-ahead starts with playback (`preparePlaybackBuffer`, the playback cursor).
         this._prefetchAnchor = init.start;
-        this._scheduleTimePrefixPrefetch();
       }
       workerPerf.flushMaybe(true);
       return this._cachedReadable ? { ...init, remoteRangeBacked: true } : init;
@@ -220,8 +221,12 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
 
   getMessageCursor(args: MessageIteratorArgs): Promise<IMessageCursor<unknown>> {
     if (!this._source) throw new Error("Not initialized");
-    this._prefetchAnchor = args.startTime;
-    this._scheduleTimePrefixPrefetch();
+    if (args.endTime == undefined) {
+      // The playback cursor (open-ended). Range scans for panels pass an end time and never
+      // move the playback read-ahead.
+      this._prefetchAnchor = args.startTime;
+      this._scheduleTimePrefixPrefetch();
+    }
     const iterator = this._source.messageIterator(args);
     const cursorOptions = {
       ...this._transportConfig,
@@ -233,8 +238,9 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
 
   async getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
     if (!this._source) throw new Error("Not initialized");
+    // Backfill serves a frame at `time` (paused, seek, step): it reads what that frame needs, on
+    // demand, and starts no read-ahead.
     this._prefetchAnchor = args.time;
-    this._scheduleTimePrefixPrefetch();
     return await this._source.getBackfillMessages(args);
   }
 
@@ -342,7 +348,7 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
     }
 
     const downloadedByteRanges = this._cachedReadable.getDownloadedRanges();
-    const ready = isByteRangeCovered(plan.byteRange, downloadedByteRanges);
+    const ready = plan.byteRanges.every((range) => isByteRangeCovered(range, downloadedByteRanges));
     return {
       ready,
       bufferedUntil: fromNano(plan.endNs),
@@ -364,53 +370,15 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
     if (!plan) {
       return status;
     }
-    this._cachedReadable.prefetch(plan.byteRange.start, plan.byteRange.end - plan.byteRange.start, {
-      replace: true,
-    });
+    this._cachedReadable.prefetch(plan.byteRanges, { replace: true });
     return status;
   }
 
-  private _buildPlaybackBufferPlan(
-    anchorNs: bigint,
-    minAheadMs: number,
-  ): { byteRange: Range; endNs: bigint } | undefined {
-    const targetNs = anchorNs + BigInt(Math.max(1, Math.round(minAheadMs))) * 1_000_000n;
-    const horizonEndNs = anchorNs + MAX_PREFETCH_HORIZON_NS;
-    const targetBytes = this._inferPrefetchTargetBytes();
-    const firstIndex = this._chunkCoverage.findIndex((chunk) => chunk.endNs >= anchorNs);
-    if (firstIndex < 0) {
-      return undefined;
-    }
-
-    let byteStart: number | undefined;
-    let byteEnd = 0;
-    let contiguousEndNs = anchorNs;
-    let includedEndNs = anchorNs;
-
-    for (let index = firstIndex; index < this._chunkCoverage.length; index++) {
-      const chunk = this._chunkCoverage[index];
-      if (chunk.startNs > horizonEndNs) break;
-      if (chunk.startNs > contiguousEndNs + MAX_CONTIGUOUS_CHUNK_GAP_NS) break;
-
-      byteStart = byteStart == undefined ? chunk.byteRange.start : Math.min(byteStart, chunk.byteRange.start);
-      byteEnd = Math.max(byteEnd, chunk.byteRange.end);
-      if (chunk.endNs > contiguousEndNs) {
-        contiguousEndNs = chunk.endNs;
-      }
-      if (chunk.endNs > includedEndNs) {
-        includedEndNs = chunk.endNs;
-      }
-
-      const byteLength = byteEnd - byteStart;
-      if (includedEndNs >= targetNs || byteLength >= targetBytes) {
-        break;
-      }
-    }
-
-    if (byteStart == undefined || byteEnd <= byteStart) {
-      return undefined;
-    }
-    return { byteRange: { start: byteStart, end: byteEnd }, endNs: includedEndNs };
+  private _buildPlaybackBufferPlan(anchorNs: bigint, minAheadMs: number): PlaybackBufferPlan | undefined {
+    return planPlaybackBuffer(this._chunkCoverage, anchorNs, minAheadMs, {
+      targetBytes: this._inferPrefetchTargetBytes(),
+      horizonNs: MAX_PREFETCH_HORIZON_NS,
+    });
   }
 
   private _inferPrefetchTargetBytes(): number {

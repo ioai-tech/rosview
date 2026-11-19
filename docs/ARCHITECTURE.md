@@ -533,7 +533,7 @@ sequenceDiagram
     Server-->>Worker: 206 Partial Content
     Worker-->>App: Transferable MessageEvent[]
 
-    Note over Worker: BlockLoader preloads remaining chunks in background
+    Note over Worker: While playing: read-ahead of the chunks of the next seconds (each chunk's own byte range). While paused: nothing beyond the frame's backfill.
 ```
 
 **RangeSource key parameters:**

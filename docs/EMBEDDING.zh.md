@@ -149,7 +149,7 @@ const rows = parseRemoteDatasetListJson(await res.json());
 
 ## 进阶：预签名 URL、流式读取与页内缓存
 
-RosView 用小粒度 HTTP Range 请求读取远程录制（512 KiB 块，单次请求最多数 MiB）：对带索引的 MCAP，先读摘要与 chunk 索引，再只读播放头附近的 chunk，因此首帧只需几百 KB，而不是整文件。已下载的块**仅在内存中、仅在页面生命周期内**保留（默认预算 512 MiB，最近最少使用淘汰）。不会写入 IndexedDB、Cache Storage 或 OPFS，录制字节不会在登出或删除后残留。设置 `preferencePersistence="off"` 还会关闭最近文件历史。
+RosView 用小粒度 HTTP Range 请求读取远程录制（512 KiB 块，单次请求最多数 MiB）：对带索引的 MCAP，先读摘要与 chunk 索引，再只读播放头附近的 chunk，因此首帧只需几百 KB，而不是整文件。暂停时（打开后和暂停中拖动进度后）只读取播放头所在帧需要的数据：该时刻的 chunk，以及借助 chunk 索引与消息索引找到的各面板话题的最新一条消息——即使它位于文件末尾写入的 chunk 中（例如以首帧为时间戳的地图或 `/tf_static`）；每个面板的画面在自己的字节到达后立即显示，随后停止读取。预读（接下来几秒的录制，绝不读取相距很远的 chunk 之间的字节）只在播放时进行。已下载的块**仅在内存中、仅在页面生命周期内**保留（默认预算 512 MiB，最近最少使用淘汰）。不会写入 IndexedDB、Cache Storage 或 OPFS，录制字节不会在登出或删除后残留。设置 `preferencePersistence="off"` 还会关闭最近文件历史。
 
 ```tsx
 import { RosViewer, clearCache } from '@ioai/rosview';

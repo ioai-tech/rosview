@@ -307,12 +307,21 @@ export class RangeSource implements RenewableUrl {
     return out;
   }
 
-  /** Read-ahead. `replace` drops queued / in-flight read-ahead that no longer matches the playhead. */
-  prefetch(offset: number, length: number, options?: { replace?: boolean }): void {
-    if (this.#disposed || length <= 0 || this.#size <= 0 || offset >= this.#size) return;
-    const end = Math.min(this.#size, offset + Math.min(length, this.#cache.maxBytes / 2));
-    const first = Math.floor(offset / B);
-    const last = Math.floor((end - 1) / B);
+  /**
+   * Read-ahead of `ranges` (byte ranges, in the order they should arrive). `replace` drops queued /
+   * in-flight read-ahead that no longer matches the playhead. At most half the cache is read ahead.
+   */
+  prefetch(ranges: readonly Range[], options?: { replace?: boolean }): void {
+    if (this.#disposed || this.#size <= 0) return;
+    const blocks: Array<[number, number]> = [];
+    let budget = this.#cache.maxBytes / 2;
+    for (const range of ranges) {
+      const end = Math.min(this.#size, range.end, range.start + budget);
+      if (range.start >= end) continue;
+      blocks.push([Math.floor(range.start / B), Math.floor((end - 1) / B)]);
+      budget -= end - range.start;
+      if (budget <= 0) break;
+    }
     if (options?.replace) {
       // A moved read-ahead anchor means a seek or a cursor restart: its demand reads follow
       // within milliseconds and must own the link, so read-ahead starts only after a quiet gap.
@@ -323,10 +332,12 @@ export class RangeSource implements RenewableUrl {
         return false;
       });
       for (const run of [...this.#active]) {
-        if (run.kind === 'prefetch' && (run.last < first || run.first > last)) this.#abortRun(run);
+        if (run.kind === 'prefetch' && !blocks.some(([first, last]) => run.last >= first && run.first <= last)) {
+          this.#abortRun(run);
+        }
       }
     }
-    void this.#ensure(first, last, 'prefetch');
+    for (const [first, last] of blocks) void this.#ensure(first, last, 'prefetch');
   }
 
   /** Returns the promises a caller must await; empty when everything is cached. */

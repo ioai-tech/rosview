@@ -529,7 +529,7 @@ sequenceDiagram
     Server-->>Worker: 206 Partial Content
     Worker-->>App: Transferable MessageEvent[]
 
-    Note over Worker: BlockLoader 后台预加载剩余 chunks
+    Note over Worker: 播放时：预读接下来几秒的 chunk（各 chunk 自己的字节范围）。暂停时：只做当前帧的回填。
 ```
 
 **RangeSource 关键参数（参考 Foxglove）：**

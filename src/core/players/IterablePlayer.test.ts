@@ -1582,3 +1582,92 @@ describe('IterablePlayer stepMessage', () => {
     player.close();
   });
 });
+
+describe('IterablePlayer paused frame', () => {
+  const MAP_TOPIC = '/scene/map';
+
+  function mapMessage(): MessageEvent {
+    return { ...makeImageMessageAt(0), topic: MAP_TOPIC, schemaName: 'sensor_msgs/PointCloud2' };
+  }
+
+  it('delivers each topic as soon as it is read, and a slow one after the RPC deadline', async () => {
+    const source = makeSource([]);
+    const map = deferred<MessageEvent[]>();
+    vi.mocked(source.getBackfillMessages).mockImplementation(async ({ topics }) =>
+      topics[0] === MAP_TOPIC ? await map.promise : [{ ...makeImageMessageAt(0) }],
+    );
+    const player = new IterablePlayer(source, { rpcTimeoutMs: 20 });
+    const frames: string[] = [];
+    try {
+      await player.initialize({});
+      for (const topic of [TOPIC, MAP_TOPIC]) {
+        player.registerHighFrequencyConsumer(`panel:${topic}`, {
+          topic,
+          lane: 'video',
+          onLatestMessage: (message) => frames.push(message.topic),
+        });
+      }
+      await flushAsyncWork();
+      // One request per topic: the map's large, distant chunk does not hold the image back.
+      expect(vi.mocked(source.getBackfillMessages).mock.calls.every(([args]) => args.topics.length === 1)).toBe(true);
+      expect(frames).toContain(TOPIC);
+      expect(frames).not.toContain(MAP_TOPIC);
+
+      // The map takes longer than the RPC deadline (a slow link, not a hung worker): still shown.
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      map.resolve([mapMessage()]);
+      await flushAsyncWork();
+      expect(frames).toContain(MAP_TOPIC);
+    } finally {
+      player.close();
+    }
+  });
+
+  it('drops a late frame once the paused frame moved on', async () => {
+    const source = makeSource([]);
+    const late = deferred<MessageEvent[]>();
+    vi.mocked(source.getBackfillMessages).mockImplementation(async ({ time }) =>
+      time.sec === 0 ? await late.promise : [makeImageMessageAt(time.sec)],
+    );
+    const player = new IterablePlayer(source, { rpcTimeoutMs: 20 });
+    const frames: number[] = [];
+    try {
+      await player.initialize({});
+      player.registerHighFrequencyConsumer('panel', {
+        topic: TOPIC,
+        lane: 'video',
+        onLatestMessage: (message) => frames.push(message.receiveTime.sec),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      player.seek({ sec: 5, nsec: 0 });
+      await flushAsyncWork();
+      late.resolve([makeImageMessageAt(0)]);
+      await flushAsyncWork();
+      expect(frames).toEqual([5]);
+    } finally {
+      player.close();
+    }
+  });
+
+  it('starts no read-ahead while paused, also after a seek; play starts it', async () => {
+    const source = makeSource([makeImageMessage()]);
+    const prepare = vi.fn(async () => ({ ready: true }));
+    (source as unknown as { preparePlaybackBuffer: typeof prepare }).preparePlaybackBuffer = prepare;
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      player.seek({ sec: 5, nsec: 0 });
+      await flushAsyncWork();
+      expect(prepare).not.toHaveBeenCalled();
+      player.play();
+      await flushAsyncWork();
+      expect(prepare).toHaveBeenCalledTimes(1);
+    } finally {
+      player.close();
+      vi.unstubAllGlobals();
+    }
+  });
+});
