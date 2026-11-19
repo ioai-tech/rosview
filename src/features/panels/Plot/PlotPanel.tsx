@@ -269,7 +269,8 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="plot-panel">
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted px-2 py-1">
-        <div className="min-w-0 flex-1 max-w-xs">
+        {/* The topic stays readable in a narrow panel: the window hint truncates first. */}
+        <div className="min-w-[7.5rem] flex-1 max-w-xs">
           <TopicQuickPicker
             value={primary?.topic ?? ''}
             onChange={updatePrimaryTopic}
@@ -287,7 +288,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
         )}
         {dataWindow && (
           <span
-            className="ml-auto shrink-0 text-[10px] text-muted-foreground"
+            className="ml-auto min-w-0 truncate text-[10px] text-muted-foreground"
             data-testid="plot-window-hint"
             title={formatMessage({ id: 'panels.plot.status.windowed' }, { seconds: REMOTE_PLOT_WINDOW_SEC })}
           >

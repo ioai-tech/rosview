@@ -1603,14 +1603,22 @@ export class IterablePlayer implements Player {
         ? Math.floor(args.batchWallTimeMs)
         : RANGE_READ_BATCH_WALL_MS;
     let emitted = 0;
+    let ended: Promise<void> | undefined;
+    const endCursor = (): Promise<void> => (ended ??= cursor.end());
+    // An abort ends the cursor, which releases a batch still waiting for data.
+    const onAbort = (): void => void endCursor();
+    args.signal?.addEventListener("abort", onAbort, { once: true });
     try {
       for (;;) {
         if (args.signal?.aborted || emitted >= maxMessages) {
           break;
         }
+        // Waits for data: over a remote link the first chunk takes longer than a playback tick's
+        // wait, and an empty batch must mean the range is exhausted, not "not read yet".
         const batch = await cursor.nextBatch(86_400_000, {
           maxMessages: Math.min(batchSize, maxMessages - emitted),
           maxWallTimeMs: batchWallTimeMs,
+          waitForData: true,
         });
         if (batch.length === 0) {
           break;
@@ -1633,7 +1641,8 @@ export class IterablePlayer implements Player {
         }
       }
     } finally {
-      await cursor.end();
+      args.signal?.removeEventListener("abort", onAbort);
+      await endCursor();
     }
   }
 

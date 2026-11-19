@@ -191,3 +191,50 @@ describe('MessageCursor', () => {
     await cursor.end();
   });
 });
+
+describe('MessageCursor range scans', () => {
+  function slowIterator(firstAfterMs: number, messages: MessageEvent[]): AsyncIterableIterator<MessageEvent> {
+    let index = 0;
+    return {
+      async next() {
+        if (index === 0) await new Promise((resolve) => setTimeout(resolve, firstAfterMs));
+        const value = messages[index++];
+        return value ? { done: false, value } : { done: true, value: undefined };
+      },
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    };
+  }
+
+  it('without waitForData an empty batch only means nothing was read yet', async () => {
+    const cursor = new MessageCursor(slowIterator(200, [message(1)]), { mode: 'comlink', binaryPayloadThresholdBytes: 64 * 1024 });
+    expect(await cursor.nextBatch(1000)).toEqual([]);
+    await cursor.end();
+  });
+
+  it('with waitForData it waits for the first message of a slow (remote) read', async () => {
+    const cursor = new MessageCursor(slowIterator(200, [message(1), message(2)]), {
+      mode: 'comlink',
+      binaryPayloadThresholdBytes: 64 * 1024,
+    });
+    const seen: number[] = [];
+    for (;;) {
+      const batch = await cursor.nextBatch(86_400_000, { waitForData: true });
+      if (batch.length === 0) break; // exhausted, never "not read yet"
+      seen.push(...batch.map((m) => m.receiveTime.sec));
+    }
+    expect(seen).toEqual([1, 2]);
+    await cursor.end();
+  });
+
+  it('end() releases a batch waiting for data', async () => {
+    const cursor = new MessageCursor(slowIterator(10_000, [message(1)]), {
+      mode: 'comlink',
+      binaryPayloadThresholdBytes: 64 * 1024,
+    });
+    const pending = cursor.nextBatch(86_400_000, { waitForData: true });
+    void cursor.end();
+    expect(await pending).toEqual([]);
+  });
+});

@@ -87,7 +87,7 @@ export class CombinedMessageCursor implements IMessageCursor<unknown> {
 
   async nextBatch(
     durationMs: number,
-    options?: { maxMessages?: number; maxWallTimeMs?: number; endTime?: Time },
+    options?: { maxMessages?: number; maxWallTimeMs?: number; endTime?: Time; waitForData?: boolean },
   ): Promise<MessageEvent[]> {
     if (this._children.length === 0) {
       return [];

@@ -61,9 +61,14 @@ export type SourceInitProgressCallback = (progress: SourceInitProgress) => void;
 /** `T` is the deserialized message payload carried in {@link MessageEvent.message}. */
 export interface IMessageCursor<T = unknown> {
   next(): Promise<IteratorResult<MessageEvent<T>>>;
+  /**
+   * The next messages. Without `waitForData` it waits briefly (playback ticks must not block), so an
+   * empty batch only means "nothing read yet". With `waitForData` it waits until a message is read or
+   * the cursor is exhausted, so an empty batch means the cursor's range is done (range scans).
+   */
   nextBatch(
     durationMs: number,
-    options?: { maxMessages?: number; maxWallTimeMs?: number; endTime?: Time },
+    options?: { maxMessages?: number; maxWallTimeMs?: number; endTime?: Time; waitForData?: boolean },
   ): Promise<MessageEvent<T>[]>;
   end(): Promise<void>;
 }
