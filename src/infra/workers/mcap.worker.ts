@@ -4,6 +4,7 @@ import { McapIndexedReader } from "@mcap/core";
 import type { IReadable } from "@mcap/core";
 import type { Initialization, MessageEvent, TimeRange } from '@/core/types/ros';
 import type {
+  BackfillTopicCallback,
   IWorkerSerializedSourceWorker,
   MessageIteratorArgs,
   GetBackfillMessagesArgs,
@@ -48,7 +49,7 @@ const MAX_CONTIGUOUS_CHUNK_GAP_NS = 750_000_000n;
 const DEFAULT_PREFETCH_AHEAD_MS = 5_000;
 const PLAYBACK_CURSOR_BUFFER_AHEAD_MS = 1_500;
 
-class McapWorkerImpl implements IWorkerSerializedSourceWorker {
+export class McapWorkerImpl implements IWorkerSerializedSourceWorker {
   private _source?: IIterableSource;
   private _cachedReadable?: RemoteRangeFile;
   private _initialization?: Initialization;
@@ -236,12 +237,17 @@ class McapWorkerImpl implements IWorkerSerializedSourceWorker {
     return Promise.resolve(Comlink.proxy(new MessageCursor(iterator, cursorOptions)));
   }
 
-  async getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
+  async getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback): Promise<MessageEvent[]> {
     if (!this._source) throw new Error("Not initialized");
     // Backfill serves a frame at `time` (paused, seek, step): it reads what that frame needs, on
     // demand, and starts no read-ahead.
     this._prefetchAnchor = args.time;
-    return await this._source.getBackfillMessages(args);
+    try {
+      return await this._source.getBackfillMessages(args, onTopic);
+    } finally {
+      // The callback crossed from the main thread as a Comlink proxy, which holds a MessagePort.
+      (onTopic as Partial<Comlink.Remote<BackfillTopicCallback>> | undefined)?.[Comlink.releaseProxy]?.();
+    }
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {

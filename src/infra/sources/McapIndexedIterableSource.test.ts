@@ -374,3 +374,75 @@ describe('McapIndexedIterableSource initialize', () => {
     expect(init.topicStats['/camera/head/color']?.messageCount).toBe(10);
   });
 });
+
+describe('McapIndexedIterableSource backfill', () => {
+  /** A reader whose per-topic lookups wait until the test releases them. */
+  function slowReader(topics: string[]) {
+    const channels = topics.map((topic, index) => ({ id: index + 1, topic }));
+    const gates = new Map<string, () => void>();
+    let active = 0;
+    let maxActive = 0;
+    const reader = {
+      channelsById: new Map(
+        channels.map((channel) => [
+          channel.id,
+          { ...channel, schemaId: 1, messageEncoding: 'cdr', metadata: new Map<string, string>() },
+        ]),
+      ),
+      schemasById: new Map([[1, { name: 'std_msgs/msg/String', encoding: 'ros2msg', data: new Uint8Array() }]]),
+      statistics: { channelMessageCounts: new Map() },
+      readMessages: async function* ({ topics: wanted }: { topics: string[] }) {
+        const channel = channels.find((c) => c.topic === wanted[0])!;
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise<void>((resolve) => gates.set(channel.topic, resolve));
+        active -= 1;
+        yield { channelId: channel.id, logTime: 1n, publishTime: 1n, data: new Uint8Array() };
+      },
+    };
+    const source = new McapIndexedIterableSource(reader as never);
+    (source as unknown as { _channelsById: Map<number, ParsedChannel> })._channelsById = new Map(
+      channels.map((channel) => [channel.id, { deserialize: () => ({}), datatypes: new Map() }]),
+    );
+    return { source, gates, maxActive: () => maxActive };
+  }
+
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('reads a bounded number of topics at once, hands each over as it is read, and stops when told', async () => {
+    const topics = Array.from({ length: 10 }, (_, i) => `/t${i}`);
+    const { source, gates, maxActive } = slowReader(topics);
+    const handed: string[] = [];
+    let keepGoing = true;
+    const done = source.getBackfillMessages({ time: { sec: 1, nsec: 0 }, topics }, (topic, messages) => {
+      handed.push(`${topic}:${messages.length}`);
+      return keepGoing;
+    });
+    await tick();
+    // In order, at most four at once: a layout with many topics holds a few decompressed chunks.
+    expect([...gates.keys()]).toEqual(['/t0', '/t1', '/t2', '/t3']);
+    gates.get('/t2')!();
+    await tick();
+    expect(handed).toEqual(['/t2:1']);
+    expect([...gates.keys()]).toContain('/t4');
+
+    keepGoing = false;
+    gates.get('/t0')!();
+    await tick();
+    for (const topic of ['/t1', '/t3', '/t4']) gates.get(topic)!();
+    // The caller moved on: no topic after /t4 is read, and nothing is returned twice.
+    await expect(done).resolves.toEqual([]);
+    expect(gates.has('/t5')).toBe(false);
+    expect(maxActive()).toBe(4);
+  });
+
+  it('returns every topic at the end without a callback', async () => {
+    const topics = ['/a', '/b'];
+    const { source, gates } = slowReader(topics);
+    const done = source.getBackfillMessages({ time: { sec: 1, nsec: 0 }, topics });
+    await tick();
+    gates.get('/b')!();
+    gates.get('/a')!();
+    expect((await done).map((message) => message.topic)).toEqual(['/a', '/b']);
+  });
+});

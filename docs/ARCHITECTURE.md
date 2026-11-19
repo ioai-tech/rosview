@@ -533,7 +533,7 @@ sequenceDiagram
     Server-->>Worker: 206 Partial Content
     Worker-->>App: Transferable MessageEvent[]
 
-    Note over Worker: While playing: read-ahead of the chunks of the next seconds (each chunk's own byte range). While paused: nothing beyond the frame's backfill.
+    Note over Worker: While playing: read-ahead of the chunks of the next seconds (each chunk's own byte range). While paused: no read-ahead; only the frame's backfill and the windows of time-series panels (Plot, Align, Timeline). A frame's backfill is one call: the worker reads at most 4 topics at once, Image and 3D topics first, and hands each over as soon as it is read.
 ```
 
 **RangeSource key parameters:**
