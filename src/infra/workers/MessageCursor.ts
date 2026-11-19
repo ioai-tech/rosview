@@ -82,7 +82,7 @@ export class MessageCursor implements IMessageCursor<unknown> {
 
   async nextBatch(
     durationMs: number,
-    options?: { maxMessages?: number; maxWallTimeMs?: number; endTime?: Time },
+    options?: { maxMessages?: number; maxWallTimeMs?: number; endTime?: Time; waitForData?: boolean },
   ): Promise<MessageEvent[]> {
     const batchStart = performance.now();
     const maxMessages = Math.max(1, options?.maxMessages ?? MessageCursor.DEFAULT_MAX_BATCH_MESSAGES);
@@ -91,7 +91,7 @@ export class MessageCursor implements IMessageCursor<unknown> {
     const startTime = Date.now();
     const waitStart = performance.now();
 
-    await this._waitForQueue(MessageCursor.EMPTY_QUEUE_WAIT_MS);
+    await this._waitForQueue(options?.waitForData ? undefined : MessageCursor.EMPTY_QUEUE_WAIT_MS);
     workerPerf.record("cursor.nextBatch.waitForQueue", performance.now() - waitStart);
     if (this._pumpError) {
       throw toThrownError(this._pumpError);
