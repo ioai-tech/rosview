@@ -1,6 +1,6 @@
 import type { Initialization, MessageEvent, TopicInfo } from '@/core/types/ros';
 import type { GetAdjacentMessageArgs, IIterableSource } from '../IIterableSource';
-import type { MessageIteratorArgs, GetBackfillMessagesArgs } from '@/infra/workers/types';
+import type { BackfillTopicCallback, MessageIteratorArgs, GetBackfillMessagesArgs } from '@/infra/workers/types';
 import { findUnsafeIntegerFields } from './unsafeIntegers';
 import type { DerivedTopic, TopicAdapter, TopicAdapterPlan } from './types';
 
@@ -93,10 +93,11 @@ export class TopicAdapterIterableSource implements IIterableSource {
     }
   }
 
-  async getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
+  async getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback): Promise<MessageEvent[]> {
     if (this._adapted.size === 0) {
-      return await this._inner.getBackfillMessages(args);
+      return await this._inner.getBackfillMessages(args, onTopic);
     }
+    // Derived topics are expanded from their source topic, so they are returned at the end.
     const wanted = new Set(args.topics);
     const events = await this._inner.getBackfillMessages({ ...args, topics: this._toInnerTopics(args.topics) });
     return events.flatMap((event) => this._expand(event, wanted));

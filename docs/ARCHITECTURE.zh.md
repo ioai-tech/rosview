@@ -529,7 +529,7 @@ sequenceDiagram
     Server-->>Worker: 206 Partial Content
     Worker-->>App: Transferable MessageEvent[]
 
-    Note over Worker: 播放时：预读接下来几秒的 chunk（各 chunk 自己的字节范围）。暂停时：只做当前帧的回填。
+    Note over Worker: 播放时：预读接下来几秒的 chunk（各 chunk 自己的字节范围）。暂停时：不预读，只做当前帧的回填以及时间序列面板（Plot、Align、Timeline）的时间窗口读取。一帧的回填是一次调用：Worker 同时最多读取 4 个话题，Image 与 3D 话题优先，每个话题读到后立即交付。
 ```
 
 **RangeSource 关键参数（参考 Foxglove）：**

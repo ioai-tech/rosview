@@ -147,7 +147,8 @@ test('paused seek reads the chunks at the new time only; playback read-ahead is 
   const afterSeekLog = await settledLog(page, 4_000);
   const seekRead = requestedBytes(afterSeekLog) - beforeSeek;
   console.log(`paused seek: read ${(seekRead / MIB).toFixed(1)} MiB`);
-  expect(seekRead).toBeLessThanOrEqual(4 * MIB);
+  // The chunks at the new time (about 1 MiB); a read-ahead of the next seconds would be more.
+  expect(seekRead).toBeLessThanOrEqual(2 * MIB);
   await expect(page.getByTestId('image-panel-status').first()).toHaveText(/^\d+x\d+/);
   await page.waitForTimeout(3_000);
   expect((await rangeLog()).length).toBe(afterSeekLog.length);

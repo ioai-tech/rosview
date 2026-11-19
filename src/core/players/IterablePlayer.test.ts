@@ -160,10 +160,13 @@ describe('IterablePlayer high-frequency lane', () => {
       { preferSharedView: true, copyPayload: false },
     );
     expect(messageBus.getLastMessage(TOPIC)).toBeNull();
-    expect(source.getBackfillMessages).toHaveBeenCalledWith({
-      time: { sec: 0, nsec: 0 },
-      topics: [TOPIC],
-    });
+    expect(source.getBackfillMessages).toHaveBeenCalledWith(
+      {
+        time: { sec: 0, nsec: 0 },
+        topics: [TOPIC],
+      },
+      expect.any(Function),
+    );
 
     player.close();
   });
@@ -1590,16 +1593,22 @@ describe('IterablePlayer paused frame', () => {
     return { ...makeImageMessageAt(0), topic: MAP_TOPIC, schemaName: 'sensor_msgs/PointCloud2' };
   }
 
-  it('delivers each topic as soon as it is read, and a slow one after the RPC deadline', async () => {
+  it('asks for the frame first in one call, delivers each topic as it is read, and a slow one after the RPC deadline', async () => {
     const source = makeSource([]);
-    const map = deferred<MessageEvent[]>();
-    vi.mocked(source.getBackfillMessages).mockImplementation(async ({ topics }) =>
-      topics[0] === MAP_TOPIC ? await map.promise : [{ ...makeImageMessageAt(0) }],
-    );
+    const map = deferred<void>();
+    vi.mocked(source.getBackfillMessages).mockImplementation(async ({ topics }, onTopic) => {
+      for (const topic of topics) {
+        if (topic === MAP_TOPIC) await map.promise;
+        await onTopic?.(topic, [topic === MAP_TOPIC ? mapMessage() : { ...makeImageMessageAt(0), topic }]);
+      }
+      return [];
+    });
     const player = new IterablePlayer(source, { rpcTimeoutMs: 20 });
     const frames: string[] = [];
     try {
       await player.initialize({});
+      player.registerSubscriptions('plot', [{ topic: '/joint_states', subscriberId: 'plot' }]);
+      player.registerSubscriptions('logs', [{ topic: '/rosout', subscriberId: 'logs' }]);
       for (const topic of [TOPIC, MAP_TOPIC]) {
         player.registerHighFrequencyConsumer(`panel:${topic}`, {
           topic,
@@ -1608,18 +1617,85 @@ describe('IterablePlayer paused frame', () => {
         });
       }
       await flushAsyncWork();
-      // One request per topic: the map's large, distant chunk does not hold the image back.
-      expect(vi.mocked(source.getBackfillMessages).mock.calls.every(([args]) => args.topics.length === 1)).toBe(true);
+      const calls = vi.mocked(source.getBackfillMessages).mock.calls;
+      // One call for the whole frame (the worker bounds how many topics it reads at once), with the
+      // topics a user waits for (Image, 3D) first.
+      expect(calls.at(-1)?.[0].topics).toEqual([TOPIC, MAP_TOPIC, '/joint_states', '/rosout']);
       expect(frames).toContain(TOPIC);
       expect(frames).not.toContain(MAP_TOPIC);
 
       // The map takes longer than the RPC deadline (a slow link, not a hung worker): still shown.
       await new Promise((resolve) => setTimeout(resolve, 60));
-      map.resolve([mapMessage()]);
+      map.resolve();
       await flushAsyncWork();
       expect(frames).toContain(MAP_TOPIC);
     } finally {
       player.close();
+    }
+  });
+
+  it('stops the backfill call once the frame moved on', async () => {
+    const source = makeSource([]);
+    const gate = deferred<void>();
+    const answers: boolean[] = [];
+    vi.mocked(source.getBackfillMessages).mockImplementation(async ({ time, topics }, onTopic) => {
+      if (time.sec === 0) await gate.promise;
+      for (const topic of topics) answers.push(await (onTopic?.(topic, [makeImageMessageAt(time.sec)]) ?? true));
+      return [];
+    });
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      player.registerHighFrequencyConsumer('panel', { topic: TOPIC, lane: 'video', onLatestMessage: vi.fn() });
+      await flushAsyncWork();
+      player.seek({ sec: 5, nsec: 0 });
+      await flushAsyncWork();
+      expect(answers).toEqual([true]);
+      gate.resolve();
+      await flushAsyncWork();
+      // The call at 0 s is told to stop: its frame is no longer wanted.
+      expect(answers).toEqual([true, false]);
+    } finally {
+      player.close();
+    }
+  });
+
+  it('drops a backfill result that arrives after the deadline while playing', async () => {
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const source = makeSource([]);
+    vi.mocked(source.getMessageCursor).mockResolvedValue({ nextBatch: vi.fn(async () => []), end: vi.fn() } as never);
+    (source as unknown as { preparePlaybackBuffer: () => Promise<{ ready: boolean }> }).preparePlaybackBuffer =
+      async () => ({ ready: true });
+    const slow = deferred<void>();
+    vi.mocked(source.getBackfillMessages).mockImplementation(async ({ time, topics }, onTopic) => {
+      if (time.sec === 7) await slow.promise;
+      for (const topic of topics) await onTopic?.(topic, [makeImageMessageAt(time.sec)]);
+      return [];
+    });
+    const player = new IterablePlayer(source, { rpcTimeoutMs: 20 });
+    const frames: number[] = [];
+    try {
+      await player.initialize({});
+      player.registerHighFrequencyConsumer('panel', {
+        topic: TOPIC,
+        lane: 'video',
+        onLatestMessage: (message) => frames.push(message.receiveTime.sec),
+      });
+      await flushAsyncWork();
+      player.play();
+      player.seek({ sec: 3, nsec: 0 });
+      await flushAsyncWork();
+      expect(frames).toContain(3);
+      player.seek({ sec: 7, nsec: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      slow.resolve();
+      await flushAsyncWork();
+      // Playback fills the panel by then; the late frame would be stale.
+      expect(frames).not.toContain(7);
+    } finally {
+      player.close();
+      vi.unstubAllGlobals();
     }
   });
 
@@ -1629,6 +1705,7 @@ describe('IterablePlayer paused frame', () => {
     vi.mocked(source.getBackfillMessages).mockImplementation(async ({ time }) =>
       time.sec === 0 ? await late.promise : [makeImageMessageAt(time.sec)],
     );
+    // (This source returns everything at the end, like a source without per-topic delivery.)
     const player = new IterablePlayer(source, { rpcTimeoutMs: 20 });
     const frames: number[] = [];
     try {

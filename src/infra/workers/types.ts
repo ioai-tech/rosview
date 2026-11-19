@@ -15,6 +15,14 @@ export interface GetBackfillMessagesArgs {
   topics: string[];
 }
 
+/**
+ * Receives one backfill topic's messages (empty when the topic has none) as soon as they are read,
+ * so a caller can show each topic without waiting for the others. Returning false stops the call:
+ * no further topic is read. Messages passed here are not returned again at the end. A source that
+ * does not support it ignores it and returns every message at the end.
+ */
+export type BackfillTopicCallback = (topic: string, messages: MessageEvent[]) => boolean | Promise<boolean>;
+
 export type AdjacentDirection = 'next' | 'prev';
 
 export interface GetAdjacentMessageArgs {
@@ -81,7 +89,7 @@ export interface IWorkerSerializedSourceWorker {
   configureTransport(config: WorkerTransportConfig): Promise<void>;
   startDataQualityScan(): Promise<void>;
   getMessageCursor(args: MessageIteratorArgs): Promise<IMessageCursor<unknown>>;
-  getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]>;
+  getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback): Promise<MessageEvent[]>;
   getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null>;
   preparePlaybackBuffer(args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus>;
   getLoadProgress(): Promise<LoadProgress>;
