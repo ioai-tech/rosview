@@ -229,7 +229,33 @@ export class RangeSource implements RenewableUrl {
     // A reopen of a recording whose first block this page still holds asks for one byte: enough to
     // learn the size and the version (ETag) without downloading the block again.
     const revalidate = this.#sourceKey != undefined && this.#cache.cachedSize(this.#sourceKey) != undefined;
-    const res = await this.#request(0, revalidate ? 0 : B - 1, controller.signal);
+    let stalls = 0;
+    try {
+      for (;;) {
+        // The first request is where a dead server is met most often: it has the same stall
+        // detection as every other request.
+        const watch = this.#watch(controller.signal);
+        try {
+          return await this.#probeOnce(revalidate, controller, watch);
+        } catch (err) {
+          if (!watch.stalled) throw err;
+          if (++stalls > STALL_RETRIES) throw this.#stallError(`opening ${this.#describe()}`);
+        } finally {
+          watch.dispose();
+        }
+      }
+    } finally {
+      this.#probe = undefined;
+    }
+  }
+
+  async #probeOnce(
+    revalidate: boolean,
+    controller: AbortController,
+    watch: { signal: AbortSignal; touch: () => void },
+  ): Promise<number> {
+    const res = await this.#request(0, revalidate ? 0 : B - 1, watch.signal);
+    watch.touch();
     const total = this.#parseTotal(res);
     if (!(total > 0)) {
       await res.body?.cancel().catch(() => undefined);
@@ -242,7 +268,6 @@ export class RangeSource implements RenewableUrl {
     this.#attachStore(total);
     if (revalidate && res.status === 206) {
       await res.body?.cancel().catch(() => undefined);
-      this.#probe = undefined;
       const store = this.#store;
       // Another version cached under the same key is never served (a changed size is another store).
       if (this.#etag && store.etag && store.etag !== this.#etag) this.#cache.dropStore(store);
@@ -250,12 +275,15 @@ export class RangeSource implements RenewableUrl {
       return this.#size;
     }
     const run: Run = { first: 0, last: 0, kind: 'demand', controller, deferreds: new Map() };
-    try {
-      await this.#consume(res, run, 0);
-    } finally {
-      this.#probe = undefined;
-    }
+    await this.#consume(res, run, 0, { onBytes: watch.touch, signal: watch.signal });
+    if (!this.#store.has(0)) throw new Error('Short read from the range server');
     return this.#size;
+  }
+
+  #stallError(what: string): RangeStallError {
+    return new RangeStallError(
+      `No data arrived from the server for ${Math.round(this.#stallMs / 1000)} s while ${what}, also after a retry.`,
+    );
   }
 
   #describe(): string {
@@ -508,10 +536,8 @@ export class RangeSource implements RenewableUrl {
             while (next <= run.last && this.#store.has(next)) next++;
             if (next > run.last) break;
             if (++stalls > STALL_RETRIES) {
-              throw new RangeStallError(
-                `No data arrived from the server for ${Math.round(this.#stallMs / 1000)} s while reading ` +
-                  `${this.#describe()} (bytes ${next * B}–${Math.min(this.#size, (run.last + 1) * B) - 1}), ` +
-                  'also after a retry.',
+              throw this.#stallError(
+                `reading ${this.#describe()} (bytes ${next * B}–${Math.min(this.#size, (run.last + 1) * B) - 1})`,
               );
             }
             continue;
