@@ -15,13 +15,24 @@ export interface GetBackfillMessagesArgs {
   topics: string[];
 }
 
+/** Why one backfill topic could not be read (plain data: it crosses a worker boundary). */
+export interface BackfillTopicError {
+  name: string;
+  message: string;
+}
+
 /**
  * Receives one backfill topic's messages (empty when the topic has none) as soon as they are read,
- * so a caller can show each topic without waiting for the others. Returning false stops the call:
- * no further topic is read. Messages passed here are not returned again at the end. A source that
- * does not support it ignores it and returns every message at the end.
+ * so a caller can show each topic without waiting for the others. A topic that could not be read
+ * comes with `error` and no messages; the other topics are still read. Returning false stops the
+ * call: no further topic is read. Messages passed here are not returned again at the end. A source
+ * that does not support it ignores it, returns every message at the end, and rejects on an error.
  */
-export type BackfillTopicCallback = (topic: string, messages: MessageEvent[]) => boolean | Promise<boolean>;
+export type BackfillTopicCallback = (
+  topic: string,
+  messages: MessageEvent[],
+  error?: BackfillTopicError,
+) => boolean | Promise<boolean>;
 
 export type AdjacentDirection = 'next' | 'prev';
 

@@ -9,7 +9,12 @@ import type {
   TopicStats,
 } from '@/core/types/ros';
 import type { GetAdjacentMessageArgs, IIterableSource } from "./IIterableSource";
-import type { BackfillTopicCallback, MessageIteratorArgs, GetBackfillMessagesArgs } from '@/infra/workers/types';
+import type {
+  BackfillTopicCallback,
+  BackfillTopicError,
+  MessageIteratorArgs,
+  GetBackfillMessagesArgs,
+} from '@/infra/workers/types';
 import { parseChannel } from "./parseChannel";
 import type { ParsedChannel } from "./parseChannel";
 import { fromNano, toNano } from '@/shared/utils/time';
@@ -234,15 +239,32 @@ export class McapIndexedIterableSource implements IIterableSource {
       while (!stopped && next < args.topics.length) {
         const index = next++;
         const topic = args.topics[index];
-        const event = await this._latestMessageAt(topic, time);
         if (!onTopic) {
-          found[index] = event;
-        } else if (!stopped && !(await onTopic(topic, event ? [event] : []))) {
-          stopped = true;
+          found[index] = await this._latestMessageAt(topic, time);
+          continue;
         }
+        // One topic that cannot be read (a stalled range, a corrupt chunk) is handed over as failed;
+        // the rest of the frame is still read and shown.
+        let event: MessageEvent | undefined;
+        let error: BackfillTopicError | undefined;
+        try {
+          event = await this._latestMessageAt(topic, time);
+        } catch (err) {
+          error = {
+            name: err instanceof Error ? err.name : 'Error',
+            message: err instanceof Error ? err.message : String(err),
+          };
+        }
+        if (stopped) return;
+        if (!(await onTopic(topic, event ? [event] : [], error))) stopped = true;
       }
     };
-    await Promise.all(Array.from({ length: Math.min(BACKFILL_CONCURRENCY, args.topics.length) }, lane));
+    try {
+      await Promise.all(Array.from({ length: Math.min(BACKFILL_CONCURRENCY, args.topics.length) }, lane));
+    } finally {
+      // However the call ends (also when a lane throws), no lane starts another topic.
+      stopped = true;
+    }
     return found.filter((event): event is MessageEvent => event != undefined);
   }
 

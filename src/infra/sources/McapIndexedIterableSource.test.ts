@@ -436,6 +436,38 @@ describe('McapIndexedIterableSource backfill', () => {
     expect(maxActive()).toBe(4);
   });
 
+  it('hands a topic that cannot be read over as failed and still reads the rest of the frame', async () => {
+    const topics = Array.from({ length: 8 }, (_, i) => `/t${i}`);
+    const { source, gates } = slowReader(topics);
+    const stall = Object.assign(new Error('No data arrived from the server for 20 s'), { name: 'RangeStallError' });
+    const reader = (source as unknown as { _reader: { readMessages: (args: { topics: string[] }) => AsyncGenerator } })._reader;
+    const read = reader.readMessages.bind(reader);
+    reader.readMessages = (args) => {
+      if (args.topics[0] === '/t1') {
+        return (async function* () {
+          await tick();
+          if (stall) throw stall;
+          yield undefined;
+        })();
+      }
+      return read(args);
+    };
+    const handed: Array<[string, number, string | undefined]> = [];
+    const done = source.getBackfillMessages({ time: { sec: 1, nsec: 0 }, topics }, (topic, messages, error) => {
+      handed.push([topic, messages.length, error?.name]);
+      return true;
+    });
+    for (let i = 0; i < 20 && gates.size < 7; i++) {
+      await tick();
+      for (const release of gates.values()) release();
+    }
+    await expect(done).resolves.toEqual([]);
+    expect(handed).toContainEqual(['/t1', 0, 'RangeStallError']);
+    expect(handed.filter(([, count]) => count === 1).map(([topic]) => topic).sort()).toEqual(
+      ['/t0', '/t2', '/t3', '/t4', '/t5', '/t6', '/t7'],
+    );
+  });
+
   it('returns every topic at the end without a callback', async () => {
     const topics = ['/a', '/b'];
     const { source, gates } = slowReader(topics);

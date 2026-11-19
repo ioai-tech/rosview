@@ -199,6 +199,9 @@ export class IterablePlayer implements Player {
   private _preparePlaybackBufferQueued = false;
   private _sourceFailureCount = 0;
   private _playbackProblems: PlayerProblem[] = [];
+  /** Topics whose frame could not be read, with the reason (cleared when the topic delivers). */
+  private _topicReadErrors = new Map<string, string>();
+  private _playbackProblemIsTimeout = false;
   private _rpcTimeoutMs = PLAYBACK_RPC_TIMEOUT_MS;
   private _cursorCloseTimeoutMs = PLAYBACK_CURSOR_CLOSE_TIMEOUT_MS;
   private _sourceFailureThreshold = PLAYBACK_SOURCE_FAILURE_THRESHOLD;
@@ -422,13 +425,22 @@ export class IterablePlayer implements Player {
     let framesDelivered = pendingFrames.size > 0 ? onFramesDelivered : undefined;
     const delivered = new Set<string>();
     let late = false;
-    const deliver = (done: readonly string[], messages: MessageEvent[]): boolean => {
+    // A new attempt at these topics' frame: their previous read errors no longer apply.
+    if (this._clearTopicReadErrors(topics)) this._emitState();
+    const deliver = (done: readonly string[], messages: MessageEvent[], error?: { message: string }): boolean => {
       if (!this._isPlaybackEpochCurrent(epoch) || (late && this._isPlaying)) return false;
       for (const topic of done) {
         delivered.add(topic);
         pendingFrames.delete(topic);
       }
-      this._noteSourceSuccess();
+      if (error) {
+        // The panels of these topics show why their frame is missing instead of waiting forever.
+        for (const topic of done) this._topicReadErrors.set(topic, error.message);
+        this._syncProblems();
+        this._emitState();
+      } else {
+        this._noteSourceSuccess();
+      }
       if (messages.length > 0) {
         this._distributeMessages(messages, time);
         this._lastPipelineEmitMs = 0;
@@ -447,23 +459,60 @@ export class IterablePlayer implements Player {
         messages.filter((message) => !delivered.has(message.topic)),
       );
     };
+    // The whole call failed (a source without per-topic delivery, or a worker error): every topic
+    // not delivered yet gets that error.
+    const failRest = (err: Error): void => {
+      deliver(ordered.filter((topic) => !delivered.has(topic)), [], { message: err.message });
+    };
     try {
       deliverRest(
         await this._withSourceTimeout(
-          this._source.getBackfillMessages({ time, topics: ordered }, (topic, messages) => deliver([topic], messages)),
+          this._source.getBackfillMessages({ time, topics: ordered }, (topic, messages, error) =>
+            deliver([topic], messages, error),
+          ),
           "playback backfill timed out",
           deliverRest,
+          failRest,
         ),
       );
     } catch (err) {
       late = true;
       if (!this._isPlaybackEpochCurrent(epoch)) return;
       if (isTimeoutError(err)) {
+        // A slow link, not an answer: each topic is shown, or its error, when it arrives.
         console.info("IterablePlayer: backfill is slow; each topic is shown when it arrives");
       } else {
         console.warn("IterablePlayer: backfill failed", err);
+        late = false;
+        failRest(err instanceof Error ? err : new Error(String(err)));
       }
     }
+  }
+
+  /** Drops the read errors of `topics`; true when one was dropped. */
+  private _clearTopicReadErrors(topics: Iterable<string>): boolean {
+    let changed = false;
+    for (const topic of topics) changed = this._topicReadErrors.delete(topic) || changed;
+    if (changed) this._syncProblems();
+    return changed;
+  }
+
+  /** Publishes playback problems and per-topic read errors on the active data. */
+  private _syncProblems(): void {
+    if (!this._state.activeData) return;
+    const topicErrors = Object.fromEntries(this._topicReadErrors);
+    this._state.activeData = {
+      ...this._state.activeData,
+      topicErrors,
+      problems: [
+        ...(this._initialization?.problems ?? []),
+        ...this._playbackProblems,
+        ...Object.entries(topicErrors).map(([topic, message]) => ({
+          severity: "error" as const,
+          message: `${topic}: ${message}`,
+        })),
+      ],
+    };
   }
 
   async initialize(args: Record<string, unknown>): Promise<void> {
@@ -477,6 +526,7 @@ export class IterablePlayer implements Player {
         this._applyInitProgress(progress);
       });
       this._topicLastMessageNs.clear();
+      this._topicReadErrors.clear();
       this._currentTime = this._initialization.start;
       this._state.presence = "ready";
 
@@ -585,6 +635,7 @@ export class IterablePlayer implements Player {
     }
     this._sourceFailureCount = 0;
     this._setPlaybackProblem(undefined);
+    this._playbackProblemIsTimeout = false;
     this._emitState();
     this._scheduleNextTick();
   }
@@ -903,6 +954,7 @@ export class IterablePlayer implements Player {
     const batchesForHighFrequencyConsumers = new Map<string, MessageEvent[]>();
     const topicsWithSubscribers = new Set<string>();
 
+    if (this._topicReadErrors.size > 0) this._clearTopicReadErrors(new Set(messages.map((m) => m.topic)));
     for (const msg of messages) {
       this._topicLastMessageNs.set(msg.topic, toNano(msg.receiveTime));
       const subscriberIds = this._subscriberIdsByTopic.get(msg.topic);
@@ -1260,6 +1312,13 @@ export class IterablePlayer implements Player {
           maxMessages: capacity,
         }),
         "playback nextBatch timed out",
+        undefined,
+        // The read the deadline gave up on may still fail for a real reason (a stalled range
+        // fails after 20 s or more): that reason replaces the timeout.
+        (err) => {
+          if (this._isPlaybackEpochCurrent(epoch) && cursor === this._cursor) this._noteSourceFailure(err);
+          else if (this._playbackProblemIsTimeout) this._noteSourceFailure(err);
+        },
       );
       if (
         !this._isPlaybackEpochCurrent(epoch) ||
@@ -1321,8 +1380,9 @@ export class IterablePlayer implements Player {
     promise: Promise<T>,
     message: string,
     onLateValue?: (value: T) => void,
+    onLateError?: (error: Error) => void,
   ): Promise<T> {
-    return withTimeout(promise, this._rpcTimeoutMs, message, onLateValue);
+    return withTimeout(promise, this._rpcTimeoutMs, message, onLateValue, onLateError);
   }
 
   private _noteSourceSuccess(): void {
@@ -1330,19 +1390,32 @@ export class IterablePlayer implements Player {
   }
 
   private _noteSourceFailure(error: unknown): void {
+    if (error instanceof Error && error.name === "AbortError") {
+      return;
+    }
     if (!isTimeoutError(error)) {
+      // A real error from the source (for example a stalled or refused read) is the answer:
+      // shown as it is, also when it replaces an earlier timeout.
+      this._failPlayback(error instanceof Error ? error.message : String(error));
       return;
     }
     this._sourceFailureCount += 1;
     if (this._sourceFailureCount < this._sourceFailureThreshold) {
       return;
     }
+    this._failPlayback(
+      `Reading the recording timed out: no answer within ${Math.round(this._rpcTimeoutMs / 1000)} s (${error.message}).`,
+      true,
+    );
+  }
+
+  private _failPlayback(message: string, timeout = false): void {
     this._setBuffering(false);
-    this._setPlaybackProblem({
-      severity: "error",
-      message: error.message,
-    });
-    this.pause();
+    this._setPlaybackProblem({ severity: "error", message });
+    // A timeout is a guess; the real error of the read it gave up on may still arrive and replace it.
+    this._playbackProblemIsTimeout = timeout;
+    if (this._isPlaying) this.pause();
+    else this._emitState();
   }
 
   private _setPlaybackProblem(problem: PlayerProblem | undefined): void {
@@ -1351,12 +1424,7 @@ export class IterablePlayer implements Player {
       ...this._state.progress,
       playbackError: problem?.message,
     };
-    if (this._state.activeData) {
-      this._state.activeData = {
-        ...this._state.activeData,
-        problems: [...(this._initialization?.problems ?? []), ...this._playbackProblems],
-      };
-    }
+    this._syncProblems();
   }
 
   private async _preparePlaybackBuffer(): Promise<void> {

@@ -92,6 +92,11 @@ export interface PlayerState {
     isLooping: boolean;
     speed: number;
     problems: PlayerProblem[];
+    /**
+     * Topics whose message for the current frame could not be read, with the reason (for example
+     * a stalled range request). A panel shows it instead of waiting for data that will not come.
+     */
+    topicErrors?: Readonly<Record<string, string>>;
     /** Whether the source supports efficient per-topic random access reads. */
     randomAccessByTopic?: boolean;
     /** Remote range-backed source: avoid whole-recording reads. */
