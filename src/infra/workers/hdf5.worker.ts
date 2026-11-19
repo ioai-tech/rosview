@@ -1,4 +1,6 @@
 import * as Comlink from 'comlink';
+import { withBackfillCallback } from './backfillCallback';
+import type { BackfillTopicCallback } from './types';
 import { loadHdf5Runtime, openHdf5File } from './hdf5RuntimeLoader';
 import type { Initialization } from '@/core/types/ros';
 import type {
@@ -22,7 +24,7 @@ import { mountBlobAsFile, mountUrlAsLazyFile, type MountedFile } from '@/infra/s
 import { resolveWorkerHttpUrl } from '@/shared/utils/resolveWorkerHttpUrl';
 import { DataQualityScanController } from './dataQualityScanController';
 
-class Hdf5WorkerImpl implements IWorkerSerializedSourceWorker {
+export class Hdf5WorkerImpl implements IWorkerSerializedSourceWorker {
   private _source?: IIterableSource;
   private _initialization?: Initialization;
   private _mounted?: MountedFile;
@@ -89,9 +91,10 @@ class Hdf5WorkerImpl implements IWorkerSerializedSourceWorker {
     })));
   }
 
-  async getBackfillMessages(args: GetBackfillMessagesArgs) {
+  async getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback) {
     if (!this._source) throw new Error('Hdf5Worker: not initialized');
-    return await this._source.getBackfillMessages(args);
+    const source = this._source;
+    return await withBackfillCallback(onTopic, (callback) => source.getBackfillMessages(args, callback));
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs) {

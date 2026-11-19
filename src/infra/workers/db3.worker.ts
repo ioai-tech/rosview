@@ -1,4 +1,6 @@
 import * as Comlink from "comlink";
+import { withBackfillCallback } from './backfillCallback';
+import type { BackfillTopicCallback } from './types';
 import type { Initialization, MessageEvent } from '@/core/types/ros';
 import type {
   IWorkerSerializedSourceWorker,
@@ -22,7 +24,7 @@ import { RemoteRangeFile, isMessagePort } from '@/infra/range/rangeHandle';
 import { resolveWorkerHttpUrl } from '@/shared/utils/resolveWorkerHttpUrl';
 import { trackInitProgress } from './throttledInitProgress';
 
-class Db3Worker implements IWorkerSerializedSourceWorker {
+export class Db3Worker implements IWorkerSerializedSourceWorker {
   private _source?: IIterableSource;
   private _initialization?: Initialization;
   private _totalBytes = 0;
@@ -171,9 +173,10 @@ class Db3Worker implements IWorkerSerializedSourceWorker {
     })));
   }
 
-  async getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
+  async getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback): Promise<MessageEvent[]> {
     if (!this._source) throw new Error("Not initialized");
-    return await this._source.getBackfillMessages(args);
+    const source = this._source;
+    return await withBackfillCallback(onTopic, (callback) => source.getBackfillMessages(args, callback));
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {

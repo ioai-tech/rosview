@@ -1,4 +1,6 @@
 import * as Comlink from "comlink";
+import { withBackfillCallback } from './backfillCallback';
+import type { BackfillTopicCallback } from './types';
 import type { Initialization } from "@/core/types/ros";
 import type {
   GetAdjacentMessageArgs,
@@ -18,7 +20,7 @@ import { BvhIterableSource } from "@/infra/sources/bvh/BvhIterableSource";
 import { resolveWorkerHttpUrl } from "@/shared/utils/resolveWorkerHttpUrl";
 import { DataQualityScanController } from './dataQualityScanController';
 
-class BvhWorkerImpl implements IWorkerSerializedSourceWorker {
+export class BvhWorkerImpl implements IWorkerSerializedSourceWorker {
   private _source?: BvhIterableSource;
   private _initialization?: Initialization;
   private _transportConfig: WorkerTransportConfig = {
@@ -79,9 +81,10 @@ class BvhWorkerImpl implements IWorkerSerializedSourceWorker {
     );
   }
 
-  async getBackfillMessages(args: GetBackfillMessagesArgs) {
+  async getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback) {
     if (!this._source) throw new Error("BvhWorker: not initialized");
-    return await this._source.getBackfillMessages(args);
+    const source = this._source;
+    return await withBackfillCallback(onTopic, () => source.getBackfillMessages(args));
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs) {

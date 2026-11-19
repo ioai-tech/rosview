@@ -1,4 +1,6 @@
 import * as Comlink from "comlink";
+import { withBackfillCallback } from './backfillCallback';
+import type { BackfillTopicCallback } from './types';
 import type { Initialization, MessageEvent } from '@/core/types/ros';
 import type {
   IWorkerSerializedSourceWorker,
@@ -22,7 +24,7 @@ import { DataQualityScanController } from './dataQualityScanController';
 import { trackInitProgress } from './throttledInitProgress';
 import { buildRemoteBagReadable, type SyncSizeBagReadable } from './remoteBagReadable';
 
-class BagWorker implements IWorkerSerializedSourceWorker {
+export class BagWorker implements IWorkerSerializedSourceWorker {
   private _source?: IIterableSource;
   private _cachedReadable?: RemoteRangeFile;
   private _initialization?: Initialization;
@@ -96,9 +98,10 @@ class BagWorker implements IWorkerSerializedSourceWorker {
     })));
   }
 
-  async getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
+  async getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback): Promise<MessageEvent[]> {
     if (!this._source) throw new Error("Not initialized");
-    return await this._source.getBackfillMessages(args);
+    const source = this._source;
+    return await withBackfillCallback(onTopic, (callback) => source.getBackfillMessages(args, callback));
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {
