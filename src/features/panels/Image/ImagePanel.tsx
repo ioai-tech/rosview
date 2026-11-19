@@ -94,6 +94,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const topicSchema = useMessagePipeline((state) =>
     state.playerState.activeData?.topics.find((entry) => entry.name === topic)?.type ?? '',
   );
+  const readError = useMessagePipeline((state) => state.playerState.activeData?.topicErrors?.[topic]);
 
   // Worker lifecycle: init on mount, dispose on unmount
   useEffect(() => {
@@ -513,7 +514,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     worker.postMessage({ type: 'renderOptions', options } satisfies ImageRenderWorkerRequest);
   }, [backgroundColor, flipHorizontal, flipVertical, rotation, smoothing, fitMode]);
 
-  const statusText = getStatusText(status, formatMessage);
+  const statusText = getStatusText(status, formatMessage, readError);
 
   return (
     <div
@@ -548,10 +549,21 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
           className="w-full h-full block"
           data-testid="image-panel-canvas"
         />
-        {showStatusText && statusText && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-white/40 italic text-xs">
+        {readError ? (
+          <div
+            className="absolute inset-0 flex items-center justify-center px-4 text-center pointer-events-none text-red-300 text-xs"
+            role="alert"
+            data-testid="image-panel-read-error"
+          >
             {statusText}
           </div>
+        ) : (
+          showStatusText &&
+          statusText && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-white/40 italic text-xs">
+              {statusText}
+            </div>
+          )
         )}
         {showStatusText && status.phase === 'ready' && status.width && status.height && (
           <div

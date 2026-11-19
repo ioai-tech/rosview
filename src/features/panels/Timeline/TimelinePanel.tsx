@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PanelReadError } from '@/features/panels/common/PanelReadError';
 import { useIntl } from 'react-intl';
 import { useShallow } from 'zustand/react/shallow';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
@@ -71,6 +72,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
     })),
   );
   const [samplesByTopic, setSamplesByTopic] = useState<Map<string, TopicSample>>(new Map());
+  const [readError, setReadError] = useState<string | null>(null);
   const markerRef = useRef<HTMLDivElement | null>(null);
   const markerContainerRef = useRef<HTMLDivElement | null>(null);
   const rangeRef = useRef<{ startNs: bigint; totalNs: bigint } | undefined>(undefined);
@@ -84,6 +86,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
         setSamplesByTopic(new Map());
         return;
       }
+      setReadError(null);
       try {
         const messages = await player.getMessagesInTimeRange({
           start: startTime,
@@ -101,6 +104,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
         if (!controller.signal.aborted) {
           console.warn('TimelinePanel: failed to read topic time bounds', error);
           setSamplesByTopic(new Map());
+          setReadError(error instanceof Error ? error.message : String(error));
         }
       }
     }
@@ -237,6 +241,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
 
   return (
     <div className="h-full overflow-auto p-2">
+      {readError && <PanelReadError reason={readError} className="mb-2" />}
       <div className="relative space-y-2">
         <div
           ref={markerContainerRef}
