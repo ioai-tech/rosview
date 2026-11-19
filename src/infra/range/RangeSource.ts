@@ -215,6 +215,7 @@ export class RangeSource implements RenewableUrl {
       const store = this.#store;
       // Another version cached under the same key is never served (a changed size is another store).
       if (this.#etag && store.etag && store.etag !== this.#etag) this.#cache.dropStore(store);
+      if (this.#etag) this.#store.etag ??= this.#etag;
       return this.#size;
     }
     const run: Run = { first: 0, last: 0, kind: 'demand', controller, deferreds: new Map() };
