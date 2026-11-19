@@ -267,7 +267,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
   const showResetZoom = hasManualPlotViewport(viewportState);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div className="flex h-full min-h-0 flex-col bg-background" data-testid="plot-panel">
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted px-2 py-1">
         <div className="min-w-0 flex-1 max-w-xs">
           <TopicQuickPicker
@@ -314,6 +314,9 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
         )}
         <div
           ref={containerRef}
+          data-testid="plot-chart"
+          data-point-count={dataset.pointCount}
+          data-loading={loading}
           className="min-h-0 flex-1 w-full overflow-hidden"
           onPointerDown={(event) => {
             pointerDownRef.current = { x: event.clientX, y: event.clientY };
