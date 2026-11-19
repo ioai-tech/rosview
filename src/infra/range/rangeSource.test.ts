@@ -70,6 +70,23 @@ describe('RangeSource', () => {
     second.dispose();
   });
 
+  it('a reopen without a known size revalidates with one byte instead of downloading the first block again', async () => {
+    const server = fakeServer(16 * B, { etag: '"v1"' });
+    server.validUrls.add('https://x/a').add('https://x/b');
+    const cache = new RangeBlockCache();
+    const first = new RangeSource({ url: 'https://x/a', sourceKey: 'rec-1', cache, fetchImpl: server.fetchImpl });
+    await first.read(0, 64);
+    await first.read(3 * B, 2 * B);
+    first.dispose();
+    const before = server.requests.length;
+    const second = new RangeSource({ url: 'https://x/b', sourceKey: 'rec-1', cache, fetchImpl: server.fetchImpl });
+    expect(same(await second.read(0, 64), server.data.slice(0, 64))).toBe(true);
+    expect(same(await second.read(3 * B, 2 * B), server.data.slice(3 * B, 5 * B))).toBe(true);
+    const reopen = server.requests.slice(before);
+    expect(reopen).toEqual([{ url: 'https://x/b', start: 0, end: 0 }]);
+    second.dispose();
+  });
+
   it('does not share blocks without a sourceKey and frees them on dispose', async () => {
     const server = fakeServer(8 * B);
     server.validUrls.add('https://x/a');

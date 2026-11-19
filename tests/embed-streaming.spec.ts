@@ -41,6 +41,19 @@ async function serveRanged(
   });
 }
 
+/** Waits until no request reached the server for `quietMs`. */
+async function settled(page: Page, log: RangeLog, quietMs = 2_000): Promise<void> {
+  let last = log.length;
+  let quietSince = Date.now();
+  while (Date.now() - quietSince < quietMs) {
+    await page.waitForTimeout(200);
+    if (log.length !== last) {
+      last = log.length;
+      quietSince = Date.now();
+    }
+  }
+}
+
 async function firstImage(page: Page): Promise<void> {
   await expect(page.getByTestId('image-panel-status').first()).toHaveText(/^\d+x\d+/, { timeout: 60_000 });
 }
@@ -81,7 +94,8 @@ test.describe('embedding: streaming and URL renewal', () => {
     await page.goto(`/?url=${encodeURIComponent('/stream/big.mcap')}&sourceKey=rec-1`);
     await waitForRosviewReady(page);
     await firstImage(page);
-    const firstOpenRequested = log.reduce((n, r) => n + (r.end - r.start + 1), 0);
+    // Let the first open finish what it reads (its frame and the plot windows).
+    await settled(page, log);
 
     // Leave the viewer and open the same recording again, without reloading the page.
     await page.evaluate(() => {
@@ -90,15 +104,17 @@ test.describe('embedding: streaming and URL renewal', () => {
     });
     await page.waitForTimeout(500);
     log.length = 0;
+    const reopened = Date.now();
     await page.evaluate((u) => {
       history.pushState({}, '', u);
       window.dispatchEvent(new PopStateEvent('popstate'));
     }, `/?url=${encodeURIComponent('/stream/big.mcap')}&sourceKey=rec-1`);
     await firstImage(page);
-    const requested = log.reduce((n, r) => n + (r.end - r.start + 1), 0);
-    // The index and first chunks come from the in-tab cache; only the size probe and read-ahead hit the network.
-    expect(requested).toBeLessThan(firstOpenRequested);
-    expect(log.filter((r) => r.start === 0).length).toBeLessThanOrEqual(1);
+    const reopenS = (Date.now() - reopened) / 1000;
+    await settled(page, log);
+    // Everything is cached: one 1-byte request checks the size and version, nothing is downloaded again.
+    expect(log.map((r) => [r.start, r.end])).toEqual([[0, 0]]);
+    expect(reopenS).toBeLessThan(2);
   });
 
   test('keeps no recording bytes in IndexedDB, Cache Storage or OPFS', async ({ page }) => {
