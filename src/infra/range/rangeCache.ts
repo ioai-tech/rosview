@@ -117,6 +117,19 @@ export class RangeBlockCache {
     return store;
   }
 
+  /**
+   * Size of a recording this page already holds the first block of, by its source key (store keys
+   * are `<sourceKey>|<size>`); undefined when there is none.
+   */
+  cachedSize(sourceKey: string): number | undefined {
+    const prefix = `${sourceKey}|`;
+    let size: number | undefined;
+    for (const store of this.#stores.values()) {
+      if (store.key.startsWith(prefix) && store.has(0)) size = store.size;
+    }
+    return size;
+  }
+
   dropStore(store: RangeStore): void {
     for (const [k, entry] of this.#lru) {
       if (entry.store === store) {

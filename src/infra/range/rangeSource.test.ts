@@ -12,9 +12,11 @@ const urlOf = (input: RequestInfo | URL): string => (typeof input === 'string' ?
 const same = (a: Uint8Array, b: Uint8Array): boolean => Buffer.from(a).equals(Buffer.from(b));
 
 /** Fake range server: `validUrls` decides which URLs answer; every request is recorded. */
-function fakeServer(size: number, options: { etag?: string; honourRange?: boolean } = {}) {
+function fakeServer(size: number, options: { etag?: string; honourRange?: boolean; seed?: number } = {}) {
+  // `seed` gives another version of the recording different bytes.
+  const seed = options.seed ?? 0;
   const data = new Uint8Array(size);
-  for (let i = 0; i < size; i++) data[i] = (i * 31 + (i >> 8)) & 0xff;
+  for (let i = 0; i < size; i++) data[i] = (i * 31 + (i >> 8) + seed * 97) & 0xff;
   const validUrls = new Set<string>();
   const requests: Array<{ url: string; start: number; end: number }> = [];
   const fetchImpl: typeof fetch = (input, init) => {
@@ -70,6 +72,23 @@ describe('RangeSource', () => {
     second.dispose();
   });
 
+  it('a reopen without a known size revalidates with one byte instead of downloading the first block again', async () => {
+    const server = fakeServer(16 * B, { etag: '"v1"' });
+    server.validUrls.add('https://x/a').add('https://x/b');
+    const cache = new RangeBlockCache();
+    const first = new RangeSource({ url: 'https://x/a', sourceKey: 'rec-1', cache, fetchImpl: server.fetchImpl });
+    await first.read(0, 64);
+    await first.read(3 * B, 2 * B);
+    first.dispose();
+    const before = server.requests.length;
+    const second = new RangeSource({ url: 'https://x/b', sourceKey: 'rec-1', cache, fetchImpl: server.fetchImpl });
+    expect(same(await second.read(0, 64), server.data.slice(0, 64))).toBe(true);
+    expect(same(await second.read(3 * B, 2 * B), server.data.slice(3 * B, 5 * B))).toBe(true);
+    const reopen = server.requests.slice(before);
+    expect(reopen).toEqual([{ url: 'https://x/b', start: 0, end: 0 }]);
+    second.dispose();
+  });
+
   it('does not share blocks without a sourceKey and frees them on dispose', async () => {
     const server = fakeServer(8 * B);
     server.validUrls.add('https://x/a');
@@ -118,13 +137,32 @@ describe('RangeSource', () => {
     const cache = new RangeBlockCache();
     const source = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: server.fetchImpl });
     await source.read(0, B);
-    const changed = fakeServer(8 * B, { etag: '"v2"' });
+    const changed = fakeServer(8 * B, { etag: '"v2"', seed: 2 });
     changed.validUrls.add('https://x/a');
     const source2 = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: changed.fetchImpl });
     // Different ETag means a different store key: no stale bytes are served.
-    expect(await source2.read(0, 16)).toEqual(changed.data.slice(0, 16));
+    expect(same(await source2.read(0, 16), changed.data.slice(0, 16))).toBe(true);
+    expect(same(changed.data.slice(0, 16), server.data.slice(0, 16))).toBe(false);
     source.dispose();
     source2.dispose();
+  });
+
+  it('a reopen whose one-byte revalidation sees another version drops the cached blocks', async () => {
+    const v1 = fakeServer(8 * B, { etag: '"v1"', seed: 1 });
+    v1.validUrls.add('https://x/a');
+    const cache = new RangeBlockCache();
+    const first = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: v1.fetchImpl });
+    await first.read(0, 4 * B);
+    first.dispose();
+
+    const v2 = fakeServer(8 * B, { etag: '"v2"', seed: 2 });
+    v2.validUrls.add('https://x/a');
+    const second = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: v2.fetchImpl });
+    const out = await second.read(B, B);
+    expect(v2.requests[0]).toMatchObject({ start: 0, end: 0 });
+    expect(same(out, v2.data.slice(B, 2 * B))).toBe(true);
+    expect(same(out, v1.data.slice(B, 2 * B))).toBe(false);
+    second.dispose();
   });
 
   it('supports servers that ignore Range when the file fits the budget', async () => {

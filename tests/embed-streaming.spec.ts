@@ -104,14 +104,17 @@ test.describe('embedding: streaming and URL renewal', () => {
     });
     await page.waitForTimeout(500);
     log.length = 0;
+    const reopened = Date.now();
     await page.evaluate((u) => {
       history.pushState({}, '', u);
       window.dispatchEvent(new PopStateEvent('popstate'));
     }, `/?url=${encodeURIComponent('/stream/big.mcap')}&sourceKey=rec-1`);
     await firstImage(page);
+    const reopenS = (Date.now() - reopened) / 1000;
     await settled(page, log);
-    // Everything is cached; only the size probe (the first block) goes to the server again.
-    expect(log.map((r) => [r.start, r.end])).toEqual([[0, 512 * 1024 - 1]]);
+    // Everything is cached: one 1-byte request checks the size and version, nothing is downloaded again.
+    expect(log.map((r) => [r.start, r.end])).toEqual([[0, 0]]);
+    expect(reopenS).toBeLessThan(2);
   });
 
   test('keeps no recording bytes in IndexedDB, Cache Storage or OPFS', async ({ page }) => {
