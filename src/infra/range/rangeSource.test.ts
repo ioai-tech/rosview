@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RangeSource, RangeHttpError, RangeMismatchError } from './RangeSource';
+import { RangeSource, RangeHttpError, RangeMismatchError, RangeStallError } from './RangeSource';
 import { rangeBlockCache } from './rangeCache';
 import { clearMemoryIndexes } from './rangeHandle';
 import { RangeBlockCache, RANGE_BLOCK_BYTES as B } from './rangeCache';
@@ -453,6 +453,98 @@ describe('whole-file mode on a server without Range ends with the download', () 
     const before = server.requests.length;
     await Promise.all([0, 4, 8, 12, 16, 20].map((i) => source.read(i * B, B)));
     expect(server.requests.length - before).toBe(1);
+    source.dispose();
+  });
+});
+
+describe('stalled requests', () => {
+  type Mode = 'ok' | 'stall-body' | 'stall-headers';
+
+  /** Answers range requests in order of `modes` (then 'ok'); a stalled one honours only its abort signal. */
+  function stallingServer(size: number, modes: Mode[]) {
+    const data = new Uint8Array(size);
+    for (let i = 0; i < size; i++) data[i] = (i * 13) & 0xff;
+    const requests: Array<{ start: number; end: number; mode: Mode }> = [];
+    const fetchImpl: typeof fetch = (_input, init) => {
+      const range = /bytes=(\d+)-(\d+)/.exec(new Headers(init?.headers).get('Range') ?? '')!;
+      const start = Number(range[1]);
+      const end = Math.min(size - 1, Number(range[2]));
+      const mode = modes[requests.length] ?? 'ok';
+      requests.push({ start, end, mode });
+      const signal = init?.signal;
+      const headers = { 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${size}` };
+      if (mode === 'stall-headers') {
+        return new Promise((_, reject) => signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
+      }
+      const body = data.slice(start, end + 1);
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (mode === 'ok') {
+            controller.enqueue(body);
+            controller.close();
+          } else {
+            controller.enqueue(body.slice(0, B)); // one block, then nothing
+          }
+        },
+      });
+      return Promise.resolve(new Response(stream, { status: 206, headers }));
+    };
+    return { data, requests, fetchImpl };
+  }
+
+  it('a body that stops is asked for again once, and the read completes', async () => {
+    const server = stallingServer(16 * B, ['ok', 'stall-body']);
+    const source = new RangeSource({ url: 'https://x/a', cache: new RangeBlockCache(), fetchImpl: server.fetchImpl, stallTimeoutMs: 30 });
+    const out = await source.read(4 * B, 3 * B);
+    expect(same(out, server.data.slice(4 * B, 7 * B))).toBe(true);
+    // The probe, the stalled request (one block arrived and is kept), the retry for the rest.
+    expect(server.requests.map((r) => [r.start / B, r.mode])).toEqual([
+      [0, 'ok'],
+      [4, 'stall-body'],
+      [5, 'ok'],
+    ]);
+    source.dispose();
+  });
+
+  it('fails with RangeStallError after one retry instead of waiting forever', async () => {
+    const server = stallingServer(16 * B, ['ok', 'stall-body', 'stall-headers']);
+    const source = new RangeSource({ url: 'https://x/a', cache: new RangeBlockCache(), fetchImpl: server.fetchImpl, stallTimeoutMs: 30 });
+    const read = source.read(4 * B, 3 * B);
+    await expect(read).rejects.toBeInstanceOf(RangeStallError);
+    await expect(read).rejects.toThrow(/No data arrived from the server for 0 s .*also after a retry/);
+    expect(server.requests).toHaveLength(3);
+    source.dispose();
+  });
+
+  it('a read whose bytes keep arriving slowly is not a stall', async () => {
+    const size = 4 * B;
+    const data = new Uint8Array(size).fill(7);
+    let requests = 0;
+    const fetchImpl: typeof fetch = (_input, init) => {
+      requests++;
+      const range = /bytes=(\d+)-(\d+)/.exec(new Headers(init?.headers).get('Range') ?? '')!;
+      const start = Number(range[1]);
+      const end = Math.min(size - 1, Number(range[2]));
+      const body = data.slice(start, end + 1);
+      let at = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          await new Promise((resolve) => setTimeout(resolve, 10)); // 10 ms between pieces, stall timeout 30 ms
+          controller.enqueue(body.slice(at, at + 64 * 1024));
+          at += 64 * 1024;
+          if (at >= body.byteLength) controller.close();
+        },
+      });
+      return Promise.resolve(
+        new Response(stream, {
+          status: 206,
+          headers: { 'Content-Length': String(body.byteLength), 'Content-Range': `bytes ${start}-${end}/${size}` },
+        }),
+      );
+    };
+    const source = new RangeSource({ url: 'https://x/a', cache: new RangeBlockCache(), fetchImpl, stallTimeoutMs: 30 });
+    expect((await source.read(B, 3 * B)).byteLength).toBe(3 * B);
+    expect(requests).toBe(2); // the probe and one request: no retry
     source.dispose();
   });
 });

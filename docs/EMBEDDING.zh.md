@@ -170,6 +170,7 @@ clearCache();
 - `refreshUrls(expired)`：请求收到 401/403，或在 `urlExpiresAt` 前 60 秒内发起请求时，每批最多调用一次，参数为所有打开的远程源的当前 URL，按相同顺序返回新 URL。失败的请求重试一次；位置、布局与面板保持不变。新 URL 仍失败则显示原有的数据源错误，并在 30 秒内不再续期。若宿主改用更换 `url` 属性，查看器会重启，请使用 `refreshUrls`。
 - 桶 / 服务器的 CORS 规则必须同样作用于**错误响应**（包括 403），并暴露 `Content-Range`、`Content-Length`、`ETag`、`Accept-Ranges`。403 没有 CORS 头时浏览器只报网络错误，RosView 无法区分 URL 过期与网络故障，此时仅在 `urlExpiresAt` 已过（或 60 秒内）时续期。
 - `refreshUrls` 收到的 URL 字符串与你传给 `url` / `urls` 的完全一致（不会被补全为绝对地址）。
+- Range 请求若 20 秒内没有收到任何字节（等待响应时为 60 秒）即视为停滞：RosView 中止该请求，并对仍缺少的字节再请求一次。若再次停滞，读取以 `RangeStallError`（“No data arrived from the server for 20 s …”）失败；Plot 显示该信息而不是一直加载，播放则报告数据源错误。
 - `clearCache()` 清空页面上所有查看器的缓存字节并中止进行中的 Range 请求。
 - 无索引 MCAP 通过同一缓存扫描一次（嵌入时扫描结果仅保存在内存）。ROS 1 `.bag` 同样按 Range 读取；ROS 2 `.db3`（SQLite）仍需整体下载，遇到 401/403 会续期一次。
 
