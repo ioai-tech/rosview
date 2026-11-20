@@ -129,6 +129,8 @@ export const AlignPanel: React.FC<AlignPanelProps> = (props) => {
     if (activeTopics.length === 0 || !player.getMessagesInTimeRange) {
       lastRangeFetchKeyRef.current = '';
       setPoints([]);
+      // Nothing is read for no topics: an error of an earlier window no longer applies.
+      setReadError(null);
       return;
     }
     const center = centerTimeRef.current;
