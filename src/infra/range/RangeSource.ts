@@ -31,6 +31,17 @@ export class RangeMismatchError extends Error {
   }
 }
 
+/**
+ * The server accepted a range request and then sent nothing for too long (a stalled body or no
+ * response at all), also on one retry. Reads fail with this instead of waiting forever.
+ */
+export class RangeStallError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RangeStallError';
+  }
+}
+
 export type RangeProgress = { loadedBytes: number; totalBytes: number; transferredBytes: number };
 
 export interface RangeSourceOptions {
@@ -44,6 +55,12 @@ export interface RangeSourceOptions {
   renewal?: UrlRenewal;
   cache?: RangeBlockCache;
   fetchImpl?: typeof fetch;
+  /**
+   * A request that receives no bytes for this long is stalled: it is aborted and asked again once,
+   * then the read fails with `RangeStallError`. Waiting for the response headers may take three
+   * times as long (the browser may queue the request for a connection). Default 20 s.
+   */
+  stallTimeoutMs?: number;
 }
 
 const MAX_RUN_BLOCKS = 8; // 4 MiB per request
@@ -53,7 +70,16 @@ const PREFETCH_RUN_BLOCKS = 4; // 2 MiB: bounds what an abort wastes
 /** Read-ahead waits this long after the last demand read, so a seek owns the link. */
 const PREFETCH_QUIET_MS = 120;
 const MAX_ATTEMPTS = 4;
+const DEFAULT_STALL_TIMEOUT_MS = 20_000;
+const HEADER_STALL_FACTOR = 3;
+const STALL_RETRIES = 1;
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
+
+/** Lets a request attempt see bytes arrive, and end the body when it stalls. */
+interface BodyWatch {
+  onBytes: () => void;
+  signal: AbortSignal;
+}
 
 interface Deferred {
   promise: Promise<void>;
@@ -125,6 +151,7 @@ export class RangeSource implements RenewableUrl {
   #renewal?: UrlRenewal;
   #cache: RangeBlockCache;
   #fetch: typeof fetch;
+  #stallMs: number;
   #anonId = `anon:${++anonymousCounter}`;
 
   #size = 0;
@@ -162,6 +189,10 @@ export class RangeSource implements RenewableUrl {
     this.#renewal = options.renewal;
     this.#cache = options.cache ?? rangeBlockCache;
     this.#fetch = options.fetchImpl ?? ((...a) => fetch(...a));
+    this.#stallMs =
+      typeof options.stallTimeoutMs === 'number' && options.stallTimeoutMs > 0
+        ? options.stallTimeoutMs
+        : DEFAULT_STALL_TIMEOUT_MS;
     this.#unregister = this.#renewal?.register(this);
     this.#unlistenClear = this.#cache.onClear(() => this.#abortAll());
   }
@@ -459,16 +490,32 @@ export class RangeSource implements RenewableUrl {
   async #execute(run: Run): Promise<void> {
     let next = run.first;
     let attempt = 0;
+    let stalls = 0;
     try {
       for (;;) {
+        const watch = this.#watch(run.controller.signal);
         try {
           const end = Math.min(this.#size, (run.last + 1) * B) - 1;
-          const res = await this.#request(next * B, end, run.controller.signal);
-          next = await this.#consume(res, run, next);
+          const res = await this.#request(next * B, end, watch.signal);
+          watch.touch();
+          next = await this.#consume(res, run, next, { onBytes: watch.touch, signal: watch.signal });
           if (next > run.last) break;
           throw new Error('Short read from the range server');
         } catch (err) {
           if (run.controller.signal.aborted) throw abortError();
+          if (watch.stalled) {
+            // What arrived before the stall is kept; ask for the rest.
+            while (next <= run.last && this.#store.has(next)) next++;
+            if (next > run.last) break;
+            if (++stalls > STALL_RETRIES) {
+              throw new RangeStallError(
+                `No data arrived from the server for ${Math.round(this.#stallMs / 1000)} s while reading ` +
+                  `${this.#describe()} (bytes ${next * B}–${Math.min(this.#size, (run.last + 1) * B) - 1}), ` +
+                  'also after a retry.',
+              );
+            }
+            continue;
+          }
           if (err instanceof RangeMismatchError) throw err; // wrong bytes are never retried
           if (err instanceof WholeFileInFlight) {
             await this.#wholeFile?.promise.catch(() => undefined);
@@ -488,6 +535,8 @@ export class RangeSource implements RenewableUrl {
           // resume from the first block not yet committed
           while (next <= run.last && this.#store.has(next)) next++;
           if (next > run.last) break;
+        } finally {
+          watch.dispose();
         }
       }
     } catch (err) {
@@ -497,6 +546,37 @@ export class RangeSource implements RenewableUrl {
       this.#dropRun(run, new Error('Range request ended early'));
       this.#pump();
     }
+  }
+
+  /**
+   * Aborts one request attempt when it receives nothing for too long. Until `touch()` (headers or
+   * bytes arrived) it allows `HEADER_STALL_FACTOR` times the stall timeout; afterwards each
+   * `touch()` restarts the stall timeout. Aborting `parent` aborts the attempt.
+   */
+  #watch(parent: AbortSignal): { signal: AbortSignal; stalled: boolean; touch: () => void; dispose: () => void } {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = (ms: number): void => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        watch.stalled = true;
+        controller.abort();
+      }, ms);
+    };
+    const onParentAbort = (): void => controller.abort();
+    parent.addEventListener('abort', onParentAbort, { once: true });
+    const watch = {
+      signal: controller.signal,
+      stalled: false,
+      touch: () => arm(this.#stallMs),
+      dispose: () => {
+        clearTimeout(timer);
+        parent.removeEventListener('abort', onParentAbort);
+      },
+    };
+    if (parent.aborted) controller.abort();
+    else arm(this.#stallMs * HEADER_STALL_FACTOR);
+    return watch;
   }
 
   /**
@@ -586,7 +666,7 @@ export class RangeSource implements RenewableUrl {
   }
 
   /** Streams a response into the cache block by block; returns the next uncommitted block index. */
-  async #consume(res: Response, run: Run, firstBlock: number): Promise<number> {
+  async #consume(res: Response, run: Run, firstBlock: number, body?: BodyWatch): Promise<number> {
     const etag = res.headers.get('ETag') ?? undefined;
     if (etag) {
       if (this.#etag && etag !== this.#etag) {
@@ -605,7 +685,7 @@ export class RangeSource implements RenewableUrl {
     const whole = res.status === 200;
     if (whole) {
       try {
-        return await this.#consumeBody(res, run, firstBlock, whole);
+        return await this.#consumeBody(res, run, firstBlock, whole, body);
       } catch (err) {
         this.#wholeFile?.reject(err);
         throw err;
@@ -620,10 +700,16 @@ export class RangeSource implements RenewableUrl {
         }
       }
     }
-    return await this.#consumeBody(res, run, firstBlock, whole);
+    return await this.#consumeBody(res, run, firstBlock, whole, body);
   }
 
-  async #consumeBody(res: Response, run: Run, firstBlock: number, whole: boolean): Promise<number> {
+  async #consumeBody(
+    res: Response,
+    run: Run,
+    firstBlock: number,
+    whole: boolean,
+    watch?: BodyWatch,
+  ): Promise<number> {
     if (whole && this.#size > this.#cache.maxBytes) {
       await res.body?.cancel().catch(() => undefined);
       throw new Error('The server ignored the Range header and the recording is larger than the cache budget.');
@@ -660,10 +746,14 @@ export class RangeSource implements RenewableUrl {
       return blockIndex;
     }
     const reader = body.getReader();
+    // A stalled attempt ends its body here too (a fetch abort does that in browsers, not every stream).
+    const onAbort = (): void => void reader.cancel().catch(() => undefined);
+    watch?.signal.addEventListener('abort', onAbort, { once: true });
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
+        watch?.onBytes();
         this.#transferred += value.byteLength;
         push(value);
         if (blockIndex > limitBlock) {
@@ -672,6 +762,7 @@ export class RangeSource implements RenewableUrl {
         }
       }
     } finally {
+      watch?.signal.removeEventListener('abort', onAbort);
       reader.releaseLock();
     }
     return blockIndex;

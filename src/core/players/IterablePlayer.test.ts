@@ -1748,3 +1748,51 @@ describe('IterablePlayer paused frame', () => {
     }
   });
 });
+
+describe('IterablePlayer range scans', () => {
+  it('a range scan waits for data, and fails with the source error instead of waiting forever', async () => {
+    const source = makeSource([]);
+    const stall = Object.assign(new Error('No data arrived from the server for 20 s'), { name: 'RangeStallError' });
+    const cursor = { nextBatch: vi.fn(async () => Promise.reject(stall)), end: vi.fn(async () => undefined) };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      // Callers without an abort signal (a topic sample, CSV export) finish with the error.
+      await expect(
+        player.getMessagesInTimeRange({ start: { sec: 0, nsec: 0 }, end: { sec: 1, nsec: 0 }, topics: [TOPIC] }),
+      ).rejects.toMatchObject({ name: 'RangeStallError' });
+      expect(cursor.nextBatch).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ waitForData: true }));
+      expect(cursor.end).toHaveBeenCalled();
+    } finally {
+      player.close();
+    }
+  });
+
+  it('an abort ends a range scan whose batch is still waiting for data', async () => {
+    const source = makeSource([]);
+    const ended = deferred<MessageEvent[]>();
+    const cursor = {
+      nextBatch: vi.fn(async () => await ended.promise),
+      end: vi.fn(async () => ended.resolve([])),
+    };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      const controller = new AbortController();
+      const scan = player.getMessagesInTimeRange({
+        start: { sec: 0, nsec: 0 },
+        end: { sec: 1, nsec: 0 },
+        topics: [TOPIC],
+        signal: controller.signal,
+      });
+      await flushAsyncWork();
+      controller.abort();
+      await expect(scan).resolves.toEqual([]);
+      expect(cursor.end).toHaveBeenCalled();
+    } finally {
+      player.close();
+    }
+  });
+});
