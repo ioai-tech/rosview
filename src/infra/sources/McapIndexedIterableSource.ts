@@ -9,11 +9,18 @@ import type {
   TopicStats,
 } from '@/core/types/ros';
 import type { GetAdjacentMessageArgs, IIterableSource } from "./IIterableSource";
-import type { MessageIteratorArgs, GetBackfillMessagesArgs } from '@/infra/workers/types';
+import type { BackfillTopicCallback, MessageIteratorArgs, GetBackfillMessagesArgs } from '@/infra/workers/types';
 import { parseChannel } from "./parseChannel";
 import type { ParsedChannel } from "./parseChannel";
 import { fromNano, toNano } from '@/shared/utils/time';
 import { workerPerf } from '@/infra/workers/workerPerf';
+
+/**
+ * How many backfill topics are read at once. Each holds at most one decompressed chunk (a few MB,
+ * up to tens of MB for a map), so the worker's memory stays bounded however many topics a layout
+ * subscribes to, while a slow topic does not block the others.
+ */
+const BACKFILL_CONCURRENCY = 4;
 
 /** One record from `McapIndexedReader#readMessages` iterators. */
 interface McapReadMessage {
@@ -210,51 +217,72 @@ export class McapIndexedIterableSource implements IIterableSource {
     }
   }
 
-  async getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
+  /**
+   * The latest message of each topic at `time`. Topics are read at most
+   * `BACKFILL_CONCURRENCY` at a time, in the order given (callers put the frame they wait for
+   * first), so a topic whose message is in a large or distant chunk does not hold back the next
+   * ones, while the worker holds only a few decompressed chunks at once. With `onTopic`, each
+   * topic is handed over as soon as it is read, and no further topic is started once it returns
+   * false.
+   */
+  async getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback): Promise<MessageEvent[]> {
     const time = toNano(args.time);
-    const messages: MessageEvent[] = [];
-
-    for (const topic of args.topics) {
-      // First try: look backwards from current time for the most recent message.
-      const backIterator = this._reader.readMessages({
-        endTime: time,
-        topics: [topic],
-        reverse: true,
-      });
-      let raw = await workerPerf.timeAsync("mcap.backfill.readNext", () => backIterator.next());
-
-      // If no message exists at or before this time (e.g. seeking near the start),
-      // fall forward to find the first available message for this topic.
-      if (raw.done && this._end != null) {
-        const fwdIterator = this._reader.readMessages({
-          startTime: time,
-          topics: [topic],
-        });
-        raw = await workerPerf.timeAsync("mcap.backfill.readNext", () => fwdIterator.next());
-      }
-
-      if (!raw.done) {
-        const message = raw.value as McapReadMessage;
-        const channel = this._reader.channelsById.get(message.channelId);
-        const parsedChannel = this._channelsById.get(message.channelId);
-
-        if (channel && parsedChannel) {
-          messages.push({
-            topic: channel.topic,
-            receiveTime: fromNano(message.logTime),
-            publishTime: fromNano(message.publishTime),
-            message: workerPerf.time(
-              "mcap.backfill.deserialize",
-              () => parsedChannel.deserialize(message.data),
-              message.data.byteLength,
-            ),
-            schemaName: channel.schemaId !== 0 ? this._reader.schemasById.get(channel.schemaId)?.name ?? "" : "",
-          });
+    const found: (MessageEvent | undefined)[] = [];
+    let next = 0;
+    let stopped = false;
+    const lane = async (): Promise<void> => {
+      while (!stopped && next < args.topics.length) {
+        const index = next++;
+        const topic = args.topics[index];
+        const event = await this._latestMessageAt(topic, time);
+        if (!onTopic) {
+          found[index] = event;
+        } else if (!stopped && !(await onTopic(topic, event ? [event] : []))) {
+          stopped = true;
         }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(BACKFILL_CONCURRENCY, args.topics.length) }, lane));
+    return found.filter((event): event is MessageEvent => event != undefined);
+  }
 
-    return messages;
+  private async _latestMessageAt(topic: string, time: bigint): Promise<MessageEvent | undefined> {
+    // First try: look backwards from current time for the most recent message.
+    const backIterator = this._reader.readMessages({
+      endTime: time,
+      topics: [topic],
+      reverse: true,
+    });
+    let raw = await workerPerf.timeAsync("mcap.backfill.readNext", () => backIterator.next());
+    void backIterator.return?.(undefined);
+
+    // If no message exists at or before this time (e.g. seeking near the start),
+    // fall forward to find the first available message for this topic.
+    if (raw.done && this._end != null) {
+      const fwdIterator = this._reader.readMessages({
+        startTime: time,
+        topics: [topic],
+      });
+      raw = await workerPerf.timeAsync("mcap.backfill.readNext", () => fwdIterator.next());
+      void fwdIterator.return?.(undefined);
+    }
+    if (raw.done) return undefined;
+
+    const message = raw.value as McapReadMessage;
+    const channel = this._reader.channelsById.get(message.channelId);
+    const parsedChannel = this._channelsById.get(message.channelId);
+    if (!channel || !parsedChannel) return undefined;
+    return {
+      topic: channel.topic,
+      receiveTime: fromNano(message.logTime),
+      publishTime: fromNano(message.publishTime),
+      message: workerPerf.time(
+        "mcap.backfill.deserialize",
+        () => parsedChannel.deserialize(message.data),
+        message.data.byteLength,
+      ),
+      schemaName: channel.schemaId !== 0 ? this._reader.schemasById.get(channel.schemaId)?.name ?? "" : "",
+    };
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {

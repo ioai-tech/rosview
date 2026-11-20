@@ -395,27 +395,74 @@ export class IterablePlayer implements Player {
   }
 
   private async _backfillCurrentTime(): Promise<void> {
-    const epoch = this._playbackEpoch;
-    const referenceTime = this._currentTime;
     const topics = this._currentTopics();
     if (topics.length === 0) return;
-    try {
-      const messages = await this._withSourceTimeout(
-        this._source.getBackfillMessages({
-          time: referenceTime,
-          topics,
-        }),
-        "playback backfill timed out",
-      );
-      if (!this._isPlaybackEpochCurrent(epoch)) {
-        return;
+    await this._backfillTopics(this._playbackEpoch, this._currentTime, topics);
+  }
+
+  /**
+   * Delivers the latest message of each topic at `time` (the frame a paused or seeking viewer
+   * shows), in one source call. The frame a user waits for (Image, 3D) is asked for first, and
+   * each topic is delivered as soon as the source has read it, so it never waits on another
+   * panel's lookback or a large distant chunk. The call stops reading once `epoch` moves on.
+   * The RPC deadline guards against a hung worker, not a slow link: what arrives after it is
+   * still delivered while paused and `epoch` is current, since nothing else re-requests the frame
+   * while paused; while playing, playback fills the panels by then and a late frame would be stale.
+   */
+  private async _backfillTopics(
+    epoch: number,
+    time: Time,
+    topics: readonly string[],
+    onFramesDelivered?: () => void,
+  ): Promise<void> {
+    if (topics.length === 0) return;
+    const isFrame = (topic: string): boolean => this._highFrequencyConsumersByTopic.has(topic);
+    const ordered = [...topics.filter(isFrame), ...topics.filter((topic) => !isFrame(topic))];
+    const pendingFrames = new Set(ordered.filter(isFrame));
+    let framesDelivered = pendingFrames.size > 0 ? onFramesDelivered : undefined;
+    const delivered = new Set<string>();
+    let late = false;
+    const deliver = (done: readonly string[], messages: MessageEvent[]): boolean => {
+      if (!this._isPlaybackEpochCurrent(epoch) || (late && this._isPlaying)) return false;
+      for (const topic of done) {
+        delivered.add(topic);
+        pendingFrames.delete(topic);
       }
       this._noteSourceSuccess();
-      this._distributeMessages(messages, referenceTime);
-      this._lastPipelineEmitMs = 0;
-      this._emitState();
+      if (messages.length > 0) {
+        this._distributeMessages(messages, time);
+        this._lastPipelineEmitMs = 0;
+        this._emitState();
+      }
+      if (framesDelivered && pendingFrames.size === 0) {
+        framesDelivered();
+        framesDelivered = undefined;
+      }
+      return true;
+    };
+    // A source that does not hand topics over one by one returns them all at the end.
+    const deliverRest = (messages: MessageEvent[]): void => {
+      deliver(
+        ordered.filter((topic) => !delivered.has(topic)),
+        messages.filter((message) => !delivered.has(message.topic)),
+      );
+    };
+    try {
+      deliverRest(
+        await this._withSourceTimeout(
+          this._source.getBackfillMessages({ time, topics: ordered }, (topic, messages) => deliver([topic], messages)),
+          "playback backfill timed out",
+          deliverRest,
+        ),
+      );
     } catch (err) {
-      console.warn("IterablePlayer: backfill failed", err);
+      late = true;
+      if (!this._isPlaybackEpochCurrent(epoch)) return;
+      if (isTimeoutError(err)) {
+        console.info("IterablePlayer: backfill is slow; each topic is shown when it arrives");
+      } else {
+        console.warn("IterablePlayer: backfill failed", err);
+      }
     }
   }
 
@@ -582,7 +629,8 @@ export class IterablePlayer implements Player {
     this._topicLastMessageNs.clear();
     this._notifyTimeSubscribers(seekTime);
     this._lastPipelineEmitMs = 0;
-    void this._preparePlaybackBuffer();
+    // A paused seek reads only the frame at the new time; read-ahead belongs to playback.
+    if (this._isPlaying) void this._preparePlaybackBuffer();
     this._emitState();
 
     try {
@@ -592,24 +640,12 @@ export class IterablePlayer implements Player {
       }
       const topics = this._currentTopics();
       if (topics.length > 0) {
-        // Video / image consumers first: their frames are what the user is waiting for, and the
-        // other panels' backfill (often a lookback into earlier chunks for sparse topics) must not
-        // hold them back on a slow link. Both phases are delivered as soon as they arrive.
-        const frameTopics = topics.filter((topic) => this._highFrequencyConsumersByTopic.has(topic));
-        const otherTopics = topics.filter((topic) => !this._highFrequencyConsumersByTopic.has(topic));
-        const phases = frameTopics.length > 0 && otherTopics.length > 0 ? [frameTopics, otherTopics] : [topics];
-        for (const [phaseIndex, phaseTopics] of phases.entries()) {
-          const messages = await this._withSourceTimeout(
-            this._source.getBackfillMessages({ time: seekTime, topics: phaseTopics }),
-            "playback backfill timed out",
-          );
-          if (!this._isPlaybackEpochCurrent(epoch)) {
-            return;
-          }
-          this._noteSourceSuccess();
-          this._distributeMessages(messages, seekTime);
-          // User-timing entries (click to frames delivered, click to everything delivered) for budgets and tests.
-          if (phases.length > 1 && phaseIndex === 0) performance.measure("rosview:seek:frames", { start: now });
+        // User-timing entries (click to frames delivered, click to everything delivered) for budgets and tests.
+        await this._backfillTopics(epoch, seekTime, topics, () => {
+          performance.measure("rosview:seek:frames", { start: now });
+        });
+        if (!this._isPlaybackEpochCurrent(epoch)) {
+          return;
         }
         performance.measure("rosview:seek", { start: now });
       }

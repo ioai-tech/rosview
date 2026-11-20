@@ -1,5 +1,6 @@
 import type { DataQualityReport, Initialization, MessageEvent } from '@/core/types/ros';
 import type {
+  BackfillTopicCallback,
   GetAdjacentMessageArgs,
   GetBackfillMessagesArgs,
   IMessageCursor,
@@ -31,7 +32,7 @@ export interface ISourceHandle {
     onProgress?: SourceInitProgressCallback,
   ): Promise<Initialization>;
   getMessageCursor(args: MessageIteratorArgs): Promise<IMessageCursor<unknown>>;
-  getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]>;
+  getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback): Promise<MessageEvent[]>;
   getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null>;
   preparePlaybackBuffer(args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus>;
   getLoadProgress(): Promise<LoadProgress>;

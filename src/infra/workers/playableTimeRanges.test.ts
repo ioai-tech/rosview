@@ -99,3 +99,24 @@ describe('getPlayableTimeRanges', () => {
     expect(toNano(ranges[0].end)).toBe(2_000_000_000n);
   });
 });
+
+describe('getPlayableTimeRanges with a chunk that spans the recording', () => {
+  // Chunks 0-2 in time order, then a last chunk written at the end but stamped from 0 s (a map).
+  const chunks = [chunk(0, 0, 100, 110), chunk(0, 1, 0, 10), chunk(1, 2, 10, 20), chunk(2, 3, 20, 30)].map((c, i) =>
+    i === 0 ? { ...c, endNs: 3_000_000_000n, timeRange: { start: { sec: 0, nsec: 0 }, end: { sec: 3, nsec: 0 } } } : c,
+  );
+
+  it('does not report the whole recording playable when only the spanning chunk and the first are cached', () => {
+    const ranges = getPlayableTimeRanges(chunks, [{ start: 0, end: 10 }, { start: 100, end: 110 }], GAP_NS);
+    expect(ranges.map((r) => [toNano(r.start), toNano(r.end)])).toEqual([[0n, 1_000_000_000n]]);
+  });
+
+  it('reports nothing playable while the spanning chunk is remote', () => {
+    expect(getPlayableTimeRanges(chunks, [{ start: 0, end: 30 }], GAP_NS)).toEqual([]);
+  });
+
+  it('reports everything once every chunk is cached', () => {
+    const ranges = getPlayableTimeRanges(chunks, [{ start: 0, end: 30 }, { start: 100, end: 110 }], GAP_NS);
+    expect(ranges.map((r) => [toNano(r.start), toNano(r.end)])).toEqual([[0n, 3_000_000_000n]]);
+  });
+});

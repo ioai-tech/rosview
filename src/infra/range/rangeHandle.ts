@@ -11,7 +11,7 @@ import type { McapIndexCache, SerializedMcapIndex } from '@/infra/sources/McapUn
 export interface RangeHandleApi {
   open(): Promise<number>;
   read(offset: number, length: number): Promise<Uint8Array>;
-  prefetch(offset: number, length: number, replace: boolean): Promise<void>;
+  prefetch(ranges: Range[], replace: boolean): Promise<void>;
   ranges(): Promise<Range[]>;
   cachedBytes(): Promise<number>;
   setProgressListener(listener: (p: RangeProgress) => void): Promise<void>;
@@ -49,8 +49,8 @@ export function exposeRangeSource(
       const data = await source.read(offset, length);
       return Comlink.transfer(data, [data.buffer]);
     },
-    prefetch: (offset, length, replace) => {
-      source.prefetch(offset, length, { replace });
+    prefetch: (ranges, replace) => {
+      source.prefetch(ranges, { replace });
       return Promise.resolve();
     },
     ranges: () => Promise.resolve(source.downloadedRanges()),
@@ -108,8 +108,8 @@ export class RemoteRangeFile {
     return data;
   }
 
-  prefetch(offset: number, length: number, options?: { replace?: boolean }): void {
-    void this.#remote.prefetch(offset, length, options?.replace === true).then(() => this.refreshRanges(true));
+  prefetch(ranges: Range[], options?: { replace?: boolean }): void {
+    void this.#remote.prefetch(ranges, options?.replace === true).then(() => this.refreshRanges(true));
   }
 
   /** Last known cached ranges (refreshed in the background; call `refreshRanges(true)` for a fresh view). */

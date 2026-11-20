@@ -39,7 +39,8 @@ export type ThreeCanvasRenderer = Pick<
   | 'toneMapping'
   | 'outputColorSpace'
   | 'renderLists'
->;
+> &
+  Partial<Pick<THREE.WebGLRenderer, 'info'>>;
 
 export type ThreeCanvasRuntimeOptions = {
   canvas: HTMLCanvasElement;
@@ -216,6 +217,10 @@ export function createThreeCanvasRuntime(options: ThreeCanvasRuntimeOptions): Th
     gizmo.update(dt);
 
     renderer.render(scene, camera);
+    // Points drawn in the last frame of the scene (not the gizmo): a cheap readout for
+    // diagnostics and browser tests ("did the cloud reach the screen").
+    const points = renderer.info?.render.points;
+    if (points != undefined) renderer.domElement.dataset.renderedPoints = String(points);
     gizmo.render(renderer);
 
     pendingFrames = Math.max(0, pendingFrames - 1);

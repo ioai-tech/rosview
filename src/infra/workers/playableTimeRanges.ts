@@ -17,6 +17,10 @@ export function isByteRangeCovered(query: Range, downloaded: readonly Range[]): 
  * Map currently-downloaded byte ranges onto chunk time coverage.
  * Returns every contiguous playable segment (not only a prefix from file start),
  * so LRU eviction of early chunks does not collapse the buffer bar to empty.
+ *
+ * A time is playable only when every chunk whose time range covers it is cached: a cached chunk
+ * that spans the whole recording (a map written at the end but stamped at the start) does not
+ * make the recording playable while the chunks in between are still remote.
  */
 export function getPlayableTimeRanges(
   chunkCoverage: readonly ChunkCoverage[],
@@ -27,47 +31,37 @@ export function getPlayableTimeRanges(
     return [];
   }
 
-  const ranges: TimeRange[] = [];
-  let segmentStart: TimeRange['start'] | undefined;
-  let segmentEndNs: bigint | undefined;
-
-  const flush = () => {
-    if (segmentStart == undefined || segmentEndNs == undefined) {
-      return;
-    }
-    ranges.push({
-      start: { ...segmentStart },
-      end: fromNano(segmentEndNs),
-    });
-    segmentStart = undefined;
-    segmentEndNs = undefined;
-  };
+  const segments: Array<{ startNs: bigint; endNs: bigint }> = [];
+  const missing: Array<{ startNs: bigint; endNs: bigint }> = [];
+  let current: { startNs: bigint; endNs: bigint } | undefined;
 
   for (const chunk of chunkCoverage) {
-    const covered = isByteRangeCovered(chunk.byteRange, downloadedByteRanges);
-    if (!covered) {
-      flush();
+    if (!isByteRangeCovered(chunk.byteRange, downloadedByteRanges)) {
+      missing.push({ startNs: chunk.startNs, endNs: chunk.endNs });
+      current = undefined;
       continue;
     }
-
-    if (segmentStart == undefined || segmentEndNs == undefined) {
-      segmentStart = chunk.timeRange.start;
-      segmentEndNs = chunk.endNs;
-      continue;
-    }
-
-    if (chunk.startNs > segmentEndNs + maxContiguousGapNs) {
-      flush();
-      segmentStart = chunk.timeRange.start;
-      segmentEndNs = chunk.endNs;
-      continue;
-    }
-
-    if (chunk.endNs > segmentEndNs) {
-      segmentEndNs = chunk.endNs;
+    if (current == undefined || chunk.startNs > current.endNs + maxContiguousGapNs) {
+      current = { startNs: chunk.startNs, endNs: chunk.endNs };
+      segments.push(current);
+    } else if (chunk.endNs > current.endNs) {
+      current.endNs = chunk.endNs;
     }
   }
 
-  flush();
+  // Remove the interior of every chunk that is not cached (touching boundaries stay playable).
+  missing.sort((a, b) => (a.startNs < b.startNs ? -1 : a.startNs > b.startNs ? 1 : 0));
+  const ranges: TimeRange[] = [];
+  for (const segment of segments) {
+    let startNs = segment.startNs;
+    for (const gap of missing) {
+      if (gap.startNs >= segment.endNs) break;
+      if (gap.endNs <= startNs) continue;
+      if (gap.startNs > startNs) ranges.push({ start: fromNano(startNs), end: fromNano(gap.startNs) });
+      startNs = gap.endNs;
+      if (startNs >= segment.endNs) break;
+    }
+    if (startNs < segment.endNs || startNs === segment.startNs) ranges.push({ start: fromNano(startNs), end: fromNano(segment.endNs) });
+  }
   return ranges;
 }

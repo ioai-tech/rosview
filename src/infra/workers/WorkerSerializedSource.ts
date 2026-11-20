@@ -1,6 +1,7 @@
 import * as Comlink from "comlink";
 import type { DataQualityReport, Initialization, MessageEvent } from '@/core/types/ros';
 import type {
+  BackfillTopicCallback,
   IWorkerSerializedSourceWorker,
   MessageIteratorArgs,
   GetBackfillMessagesArgs,
@@ -186,8 +187,10 @@ export class WorkerSerializedSource implements ISourceHandle {
     return this._wrapCursor(cursor);
   }
 
-  async getBackfillMessages(args: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
-    return await this._raceWorkerFailure(this._remote.getBackfillMessages(args));
+  async getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback): Promise<MessageEvent[]> {
+    return await this._raceWorkerFailure(
+      this._remote.getBackfillMessages(args, onTopic ? Comlink.proxy(onTopic) : undefined),
+    );
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {
