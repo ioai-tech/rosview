@@ -142,6 +142,18 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     [rawDataset, config.series, topicByName],
   );
 
+  // How evenly the points cover the x range: the widest stretch without a point, as a fraction of
+  // the range (1: nothing plotted). Shown as `data-x-gap` for the streaming tests.
+  const xGap = useMemo(() => {
+    const xs = dataset.data[0] as ArrayLike<number> | undefined;
+    if (!xRange || !xs || xs.length === 0) return 1;
+    const span = xRange.max - xRange.min;
+    if (!(span > 0)) return 0;
+    let gap = Math.max(0, xs[0] - xRange.min, xRange.max - xs[xs.length - 1]);
+    for (let i = 1; i < xs.length; i++) gap = Math.max(gap, xs[i] - xs[i - 1]);
+    return Math.min(1, gap / span);
+  }, [dataset.data, xRange]);
+
   const hiddenSeries = useMemo(
     () => hiddenSeriesIndices(dataset.series, config.hiddenLegendKeys),
     [config.hiddenLegendKeys, dataset.series],
@@ -317,6 +329,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
           ref={containerRef}
           data-testid="plot-chart"
           data-point-count={dataset.pointCount}
+          data-x-gap={xGap.toFixed(3)}
           data-loading={loading}
           className="min-h-0 flex-1 w-full overflow-hidden"
           onPointerDown={(event) => {
