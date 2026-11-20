@@ -525,6 +525,11 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       className="flex flex-col h-full overflow-hidden relative"
       style={{ background: backgroundColor }}
       data-testid="image-panel"
+      data-frame-time={
+        status.phase === 'ready' && status.receiveTime
+          ? `${status.receiveTime.sec}.${String(status.receiveTime.nsec).padStart(9, '0')}`
+          : undefined
+      }
       data-h264-pressure={metrics?.pressureMode}
       data-h264-queue-frames={metrics?.queueFrames}
       data-h264-dropped-frames={metrics?.droppedFrames}
