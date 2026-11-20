@@ -653,6 +653,7 @@ const LivePointCloudLayer = ({
     let cachedFields: PointCloudFieldWire[] | null = null;
     player.registerHighFrequencyConsumer(consumerId, {
       topic,
+      panelId,
       lane: 'pointcloud',
       mode: 'latest',
       onLatestMessage: (msg) => {

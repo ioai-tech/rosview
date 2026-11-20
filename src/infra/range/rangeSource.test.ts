@@ -496,7 +496,7 @@ describe('whole-file mode on a server without Range ends with the download', () 
 });
 
 describe('stalled requests', () => {
-  type Mode = 'ok' | 'stall-body' | 'stall-headers';
+  type Mode = 'ok' | 'stall-body' | 'stall-headers' | 'short';
 
   /** Answers range requests in order of `modes` (then 'ok'); a stalled one honours only its abort signal. */
   function stallingServer(size: number, modes: Mode[]) {
@@ -519,6 +519,9 @@ describe('stalled requests', () => {
         start(controller) {
           if (mode === 'ok') {
             controller.enqueue(body);
+            controller.close();
+          } else if (mode === 'short') {
+            controller.enqueue(body.slice(0, 100)); // the response ends early
             controller.close();
           } else {
             controller.enqueue(body.slice(0, B)); // one block, then nothing
@@ -552,6 +555,53 @@ describe('stalled requests', () => {
     await expect(read).rejects.toThrow(/No data arrived from the server for 0 s .*also after a retry/);
     expect(server.requests).toHaveLength(3);
     source.dispose();
+  });
+
+  it('a size probe that gets no answer is asked again once, then fails with RangeStallError', async () => {
+    const server = stallingServer(16 * B, ['stall-headers', 'stall-headers']);
+    const source = new RangeSource({ url: 'https://x/a', cache: new RangeBlockCache(), fetchImpl: server.fetchImpl, stallTimeoutMs: 30 });
+    await expect(source.read(0, 16)).rejects.toThrow(/No data arrived from the server for 0 s while opening the recording URL, also after a retry/);
+    expect(server.requests.map((r) => r.mode)).toEqual(['stall-headers', 'stall-headers']);
+    source.dispose();
+  });
+
+  it('a size probe that stalls once is asked again and the recording opens', async () => {
+    const server = stallingServer(16 * B, ['stall-headers']);
+    const source = new RangeSource({ url: 'https://x/a', cache: new RangeBlockCache(), fetchImpl: server.fetchImpl, stallTimeoutMs: 30 });
+    expect(same(await source.read(B, 16), server.data.slice(B, B + 16))).toBe(true);
+    source.dispose();
+  });
+
+  it('a size probe whose response ends early is asked again once, then fails', async () => {
+    const once = stallingServer(16 * B, ['short']);
+    const a = new RangeSource({ url: 'https://x/a', cache: new RangeBlockCache(), fetchImpl: once.fetchImpl, stallTimeoutMs: 30 });
+    expect(same(await a.read(B, 16), once.data.slice(B, B + 16))).toBe(true);
+    expect(once.requests.slice(0, 2).map((r) => [r.start, r.mode])).toEqual([
+      [0, 'short'],
+      [0, 'ok'],
+    ]);
+    a.dispose();
+    const twice = stallingServer(16 * B, ['short', 'short']);
+    const b = new RangeSource({ url: 'https://x/a', cache: new RangeBlockCache(), fetchImpl: twice.fetchImpl, stallTimeoutMs: 30 });
+    await expect(b.read(B, 16)).rejects.toThrow('Short read from the range server');
+    expect(twice.requests).toHaveLength(2);
+    b.dispose();
+  });
+
+  it('the one-byte revalidation of a reopen has the same stall detection', async () => {
+    const cache = new RangeBlockCache();
+    const first = stallingServer(16 * B, []);
+    const a = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: first.fetchImpl, stallTimeoutMs: 30 });
+    await a.read(0, 16);
+    a.dispose();
+    const dead = stallingServer(16 * B, ['stall-headers', 'stall-headers']);
+    const b = new RangeSource({ url: 'https://x/a', sourceKey: 'k', cache, fetchImpl: dead.fetchImpl, stallTimeoutMs: 30 });
+    await expect(b.read(0, 16)).rejects.toBeInstanceOf(RangeStallError);
+    expect(dead.requests.map((r) => [r.start, r.end])).toEqual([
+      [0, 0],
+      [0, 0],
+    ]);
+    b.dispose();
   });
 
   it('a read whose bytes keep arriving slowly is not a stall', async () => {

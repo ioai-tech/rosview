@@ -45,4 +45,40 @@ describe('withTimeout', () => {
       vi.useRealTimers();
     }
   });
+
+  it('an error before the timeout rejects the call and never reaches onLateError', async () => {
+    const onLateError = vi.fn();
+    const failure = new Error('refused');
+    await expect(withTimeout(Promise.reject(failure), 100, 'read timed out', undefined, onLateError)).rejects.toBe(failure);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(onLateError).not.toHaveBeenCalled();
+  });
+
+  it('hands an error that comes after the timeout to onLateError instead of dropping it', async () => {
+    vi.useFakeTimers();
+    try {
+      let rejectLate!: (error: Error) => void;
+      const onLateError = vi.fn();
+      const pending = withTimeout(
+        new Promise<string>((_, reject) => {
+          rejectLate = reject;
+        }),
+        100,
+        'read timed out',
+        undefined,
+        onLateError,
+      );
+      const assertion = expect(pending).rejects.toThrow('read timed out');
+      await vi.advanceTimersByTimeAsync(100);
+      await assertion;
+
+      const stall = Object.assign(new Error('No data arrived from the server for 20 s'), { name: 'RangeStallError' });
+      rejectLate(stall);
+      await vi.runAllTimersAsync();
+
+      expect(onLateError).toHaveBeenCalledWith(stall);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

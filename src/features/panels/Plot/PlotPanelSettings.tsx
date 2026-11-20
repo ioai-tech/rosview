@@ -28,6 +28,7 @@ import {
   type PlotXAxisMode,
 } from './defaults';
 import { exportPlotCsvFromConfig } from './exportCsv';
+import { PlotCsvExportButton } from './PlotCsvExportButton';
 import { isArrayLikePlotPath, splitPlotPathList } from './messagePath';
 import { detectPlotPaths } from './autoDetect';
 import { filterPlottableTopics, isPlottableSchema } from './plottableSchemas';
@@ -407,12 +408,11 @@ export function PlotPanelSettings({
           />
         </SettingsField>
         <SettingsField label={formatMessage({ id: 'panels.plot.settings.field.export' })}>
-          <button
-            type="button"
+          <PlotCsvExportButton
             disabled={!startTime || !endTime}
-            onClick={() => {
+            run={async () => {
               if (!startTime || !endTime) return;
-              void exportPlotCsvFromConfig({
+              await exportPlotCsvFromConfig({
                 player,
                 config,
                 startTime,
@@ -420,10 +420,7 @@ export function PlotPanelSettings({
                 forceDownsample: randomAccessByTopic === false,
               });
             }}
-            className="rounded border border-border bg-background px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
-          >
-            {formatMessage({ id: 'panels.plot.settings.export.download' })}
-          </button>
+          />
         </SettingsField>
       </SettingsSection>
 

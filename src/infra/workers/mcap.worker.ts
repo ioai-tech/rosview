@@ -1,4 +1,5 @@
 import * as Comlink from "comlink";
+import { withBackfillCallback } from './backfillCallback';
 import { BlobReadable } from "@mcap/browser";
 import { McapIndexedReader } from "@mcap/core";
 import type { IReadable } from "@mcap/core";
@@ -242,12 +243,8 @@ export class McapWorkerImpl implements IWorkerSerializedSourceWorker {
     // Backfill serves a frame at `time` (paused, seek, step): it reads what that frame needs, on
     // demand, and starts no read-ahead.
     this._prefetchAnchor = args.time;
-    try {
-      return await this._source.getBackfillMessages(args, onTopic);
-    } finally {
-      // The callback crossed from the main thread as a Comlink proxy, which holds a MessagePort.
-      (onTopic as Partial<Comlink.Remote<BackfillTopicCallback>> | undefined)?.[Comlink.releaseProxy]?.();
-    }
+    const source = this._source;
+    return await withBackfillCallback(onTopic, (callback) => source.getBackfillMessages(args, callback));
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {

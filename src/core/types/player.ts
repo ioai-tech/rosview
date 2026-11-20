@@ -92,11 +92,24 @@ export interface PlayerState {
     isLooping: boolean;
     speed: number;
     problems: PlayerProblem[];
+    /**
+     * Topics whose message for the current frame could not be read, with the reason (for example
+     * a stalled range request). A panel shows it instead of waiting for data that will not come.
+     */
+    topicErrors?: Readonly<Record<string, string>>;
+    /** The same errors by panel (subscriptions and high-frequency consumers), for the panel shell. */
+    panelReadErrors?: Readonly<Record<string, ReadonlyArray<TopicReadError>>>;
     /** Whether the source supports efficient per-topic random access reads. */
     randomAccessByTopic?: boolean;
     /** Remote range-backed source: avoid whole-recording reads. */
     remoteRangeBacked?: boolean;
   };
+}
+
+/** A topic whose frame could not be read, and why. */
+export interface TopicReadError {
+  topic: string;
+  message: string;
 }
 
 export interface Subscription {
@@ -106,6 +119,11 @@ export interface Subscription {
 
 export interface HighFrequencyConsumer {
   topic: string;
+  /**
+   * The panel this consumer belongs to, so the panel shell can show this topic's read errors.
+   * Defaults to the consumer id up to its first `:` (`${panelId}:image-main`).
+   */
+  panelId?: string;
   lane: 'video' | 'pointcloud';
   mode?: 'latest' | 'all';
   onLatestMessage?: (message: MessageEvent) => void;

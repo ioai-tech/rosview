@@ -18,4 +18,9 @@ describe('image panel status text', () => {
     expect(getStatusText({ phase: 'error', message: 'HTTP 404' }, en)).toBe('HTTP 404');
     expect(getStatusText({ phase: 'ready', width: 640, height: 480 }, en)).toBeNull();
   });
+
+  it('does not claim to wait for a frame the player could not read (the panel shell says why)', () => {
+    const reason = 'No data arrived from the server for 20 s while reading rec (bytes 0–1), also after a retry.';
+    expect(getStatusText({ phase: 'idle' }, createRosViewIntl('en').formatMessage, reason)).toBeNull();
+  });
 });

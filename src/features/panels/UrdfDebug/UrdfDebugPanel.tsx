@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePanelTopicReadError } from '@/features/panels/framework/panelReadErrors';
 import { useIntl } from 'react-intl';
 import type { Player } from '@/core/types/player';
 import type { MessagePipelineState } from '@/core/pipeline/store';
@@ -93,6 +94,7 @@ export const UrdfDebugPanel: React.FC<UrdfDebugPanelProps> = ({
     if (config.urdfSourceType !== 'topic') return '';
     return pickRobotDescriptionTopic(topics, config.urdfTopic);
   }, [topics, config.urdfSourceType, config.urdfTopic]);
+  const urdfTopicReadError = usePanelTopicReadError(urdfTopic || undefined);
 
   useEffect(() => {
     const subs: { topic: string; subscriberId: string }[] = [];
@@ -411,7 +413,9 @@ export const UrdfDebugPanel: React.FC<UrdfDebugPanelProps> = ({
                       { id: 'urdfDebug.input.topicLoaded' },
                       { topic: urdfTopic, bytes: topicUrdfContent.length },
                     )
-                  : formatMessage({ id: 'urdfDebug.input.topicWaiting' }, { topic: urdfTopic })}
+                  : urdfTopicReadError
+                    ? null
+                    : formatMessage({ id: 'urdfDebug.input.topicWaiting' }, { topic: urdfTopic })}
               </div>
             ) : (
               <div className="text-[10px] text-muted-foreground italic">

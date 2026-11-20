@@ -24,6 +24,7 @@ import { applyDepthTopicPreset } from './core/depthColorDefaults';
 import type { ImageConfig } from './defaults';
 import { TopicQuickPicker } from '../framework/TopicQuickPicker';
 import { getStatusText } from './core/imageStatusText';
+import { usePanelTopicReadError } from '@/features/panels/framework/panelReadErrors';
 import { PanelTopicBar } from '../framework/PanelTopicBar';
 import ImageRenderWorkerClass from './core/ImageRender.worker.ts?worker&inline';
 
@@ -94,6 +95,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const topicSchema = useMessagePipeline((state) =>
     state.playerState.activeData?.topics.find((entry) => entry.name === topic)?.type ?? '',
   );
+  const readError = usePanelTopicReadError(topic);
 
   // Worker lifecycle: init on mount, dispose on unmount
   useEffect(() => {
@@ -350,6 +352,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
         player.unregisterHighFrequencyConsumer(imageConsumerId);
         player.registerHighFrequencyConsumer(imageConsumerId, {
           topic,
+          panelId,
           lane: 'video',
           mode: 'all',
           onMessageBatch: dispatchHighFrequencyBatch,
@@ -377,6 +380,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     if (consumerModeRef.current === 'all') {
       player.registerHighFrequencyConsumer(imageConsumerId, {
         topic,
+        panelId,
         lane: 'video',
         mode: 'all',
         onMessageBatch: dispatchHighFrequencyBatch,
@@ -388,6 +392,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     } else {
       player.registerHighFrequencyConsumer(imageConsumerId, {
         topic,
+        panelId,
         lane: 'video',
         mode: 'latest',
         onLatestMessage: handleMessage,
@@ -413,7 +418,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       player.unregisterHighFrequencyConsumer(imageConsumerId);
       worker.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
     };
-  }, [imageConsumerId, player, topic, topicSchema]);
+  }, [imageConsumerId, panelId, player, topic, topicSchema]);
 
   useEffect(() => {
     return () => {
@@ -513,7 +518,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     worker.postMessage({ type: 'renderOptions', options } satisfies ImageRenderWorkerRequest);
   }, [backgroundColor, flipHorizontal, flipVertical, rotation, smoothing, fitMode]);
 
-  const statusText = getStatusText(status, formatMessage);
+  const statusText = getStatusText(status, formatMessage, readError);
 
   return (
     <div

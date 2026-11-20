@@ -1329,49 +1329,50 @@ describe('IterablePlayer play before ready', () => {
   });
 });
 
-describe('IterablePlayer playback watchdogs', () => {
-  function installFakePlaybackClock() {
-    let now = 0;
-    let nextRafId = 1;
-    const oldPerformanceNow = performance.now;
-    const oldRequestAnimationFrame = globalThis.requestAnimationFrame;
-    const oldCancelAnimationFrame = globalThis.cancelAnimationFrame;
-    const rafCallbacks = new Map<number, FrameRequestCallback>();
-    Object.defineProperty(performance, 'now', {
-      configurable: true,
-      value: () => now,
-    });
-    globalThis.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
-      const id = nextRafId++;
-      rafCallbacks.set(id, cb);
-      return id;
-    });
-    globalThis.cancelAnimationFrame = vi.fn((id: number) => {
+function installFakePlaybackClock() {
+  let now = 0;
+  let nextRafId = 1;
+  const oldPerformanceNow = performance.now;
+  const oldRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const oldCancelAnimationFrame = globalThis.cancelAnimationFrame;
+  const rafCallbacks = new Map<number, FrameRequestCallback>();
+  Object.defineProperty(performance, 'now', {
+    configurable: true,
+    value: () => now,
+  });
+  globalThis.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
+    const id = nextRafId++;
+    rafCallbacks.set(id, cb);
+    return id;
+  });
+  globalThis.cancelAnimationFrame = vi.fn((id: number) => {
+    rafCallbacks.delete(id);
+  });
+  return {
+    get now() {
+      return now;
+    },
+    set now(value: number) {
+      now = value;
+    },
+    runNextRaf() {
+      const id = Math.min(...rafCallbacks.keys());
+      const callback = rafCallbacks.get(id);
       rafCallbacks.delete(id);
-    });
-    return {
-      get now() {
-        return now;
-      },
-      set now(value: number) {
-        now = value;
-      },
-      runNextRaf() {
-        const id = Math.min(...rafCallbacks.keys());
-        const callback = rafCallbacks.get(id);
-        rafCallbacks.delete(id);
-        callback?.(now);
-      },
-      restore() {
-        Object.defineProperty(performance, 'now', {
-          configurable: true,
-          value: oldPerformanceNow,
-        });
-        globalThis.requestAnimationFrame = oldRequestAnimationFrame;
-        globalThis.cancelAnimationFrame = oldCancelAnimationFrame;
-      },
-    };
-  }
+      callback?.(now);
+    },
+    restore() {
+      Object.defineProperty(performance, 'now', {
+        configurable: true,
+        value: oldPerformanceNow,
+      });
+      globalThis.requestAnimationFrame = oldRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = oldCancelAnimationFrame;
+    },
+  };
+}
+
+describe('IterablePlayer playback watchdogs', () => {
 
   it('keeps scheduling ticks when a current-time subscriber throws', async () => {
     const clock = installFakePlaybackClock();
@@ -1793,6 +1794,220 @@ describe('IterablePlayer range scans', () => {
       expect(cursor.end).toHaveBeenCalled();
     } finally {
       player.close();
+    }
+  });
+});
+
+describe('IterablePlayer honest errors', () => {
+  const MAP_TOPIC = '/scene/map';
+  const stall = (): Error =>
+    Object.assign(new Error('No data arrived from the server for 20 s while reading rec (bytes 0–1), also after a retry.'), {
+      name: 'RangeStallError',
+    });
+
+  it('a topic whose frame cannot be read shows its reason; the other topics are still shown', async () => {
+    const source = makeSource([]);
+    vi.mocked(source.getBackfillMessages).mockImplementation(async ({ topics, time }, onTopic) => {
+      for (const topic of topics) {
+        if (topic === MAP_TOPIC && time.sec === 0) await onTopic?.(topic, [], { name: 'RangeStallError', message: stall().message });
+        else await onTopic?.(topic, [{ ...makeImageMessageAt(time.sec), topic }]);
+      }
+      return [];
+    });
+    const player = new IterablePlayer(source);
+    let state: PlayerState | undefined;
+    const frames: string[] = [];
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      for (const topic of [TOPIC, MAP_TOPIC]) {
+        player.registerHighFrequencyConsumer(`panel:${topic}`, {
+          topic,
+          lane: 'video',
+          onLatestMessage: (message) => frames.push(message.topic),
+        });
+      }
+      await flushAsyncWork();
+      expect(frames).toEqual([TOPIC]);
+      expect(state?.activeData?.topicErrors).toEqual({ [MAP_TOPIC]: stall().message });
+      expect(state?.activeData?.problems).toContainEqual({ severity: 'error', message: `${MAP_TOPIC}: ${stall().message}` });
+
+      // The next frame of that topic clears its error.
+      player.seek({ sec: 2, nsec: 0 });
+      await flushAsyncWork();
+      expect(frames).toContain(MAP_TOPIC);
+      expect(state?.activeData?.topicErrors).toEqual({});
+    } finally {
+      player.close();
+    }
+  });
+
+  it('a backfill error that comes after the RPC deadline still reaches the panels while paused', async () => {
+    const source = makeSource([]);
+    const failing = deferred<MessageEvent[]>();
+    // A source without per-topic delivery: the whole call fails, later than the deadline.
+    vi.mocked(source.getBackfillMessages).mockImplementation(async () => await failing.promise);
+    const player = new IterablePlayer(source, { rpcTimeoutMs: 20 });
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerHighFrequencyConsumer('panel', { topic: TOPIC, lane: 'video', onLatestMessage: vi.fn() });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(state?.activeData?.topicErrors?.[TOPIC]).toBeUndefined();
+      failing.reject(stall());
+      await flushAsyncWork();
+      expect(state?.activeData?.topicErrors?.[TOPIC]).toBe(stall().message);
+    } finally {
+      player.close();
+    }
+  });
+
+  it('playback shows the real error that ends a read the deadline gave up on, not the timeout', async () => {
+    const clock = installFakePlaybackClock();
+    const source = makeSource([]);
+    const batch = deferred<MessageEvent[]>();
+    const cursor = { nextBatch: vi.fn(() => batch.promise), end: vi.fn(async () => undefined) };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source, { rpcTimeoutMs: 20, sourceFailureThreshold: 1 });
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.play();
+      clock.now = 100;
+      clock.runNextRaf();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(state?.progress.playbackError).toMatch(/timed out: no answer within 0 s/);
+
+      batch.reject(stall());
+      await flushAsyncWork();
+      expect(state?.progress.playbackError).toBe(stall().message);
+      expect(state?.activeData?.isPlaying).toBe(false);
+    } finally {
+      player.close();
+      clock.restore();
+    }
+  });
+
+  it('a real playback error is shown at once, without waiting for repeated failures', async () => {
+    const clock = installFakePlaybackClock();
+    const source = makeSource([]);
+    const cursor = { nextBatch: vi.fn(async () => Promise.reject(stall())), end: vi.fn(async () => undefined) };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source, { sourceFailureThreshold: 3 });
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.play();
+      clock.now = 100;
+      clock.runNextRaf();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(state?.progress.playbackError).toBe(stall().message);
+      expect(state?.activeData?.isPlaying).toBe(false);
+    } finally {
+      player.close();
+      clock.restore();
+    }
+  });
+});
+
+describe('IterablePlayer read errors by panel', () => {
+  const MAP_TOPIC = '/scene/map';
+  const reason = 'No data arrived from the server for 20 s while reading rec (bytes 0–1), also after a retry.';
+
+  /** A source whose backfill of `failing` topics fails; others deliver one message. */
+  function failingSource(failing: Set<string>) {
+    const source = makeSource([]);
+    vi.mocked(source.getBackfillMessages).mockImplementation(async ({ topics, time }, onTopic) => {
+      for (const topic of topics) {
+        if (failing.has(topic)) await onTopic?.(topic, [], { name: 'RangeStallError', message: reason });
+        else await onTopic?.(topic, [{ ...makeImageMessageAt(time.sec), topic }]);
+      }
+      return [];
+    });
+    return source;
+  }
+
+  it('lists each panel its failed topics, including those of its high-frequency consumers', async () => {
+    const source = failingSource(new Set([MAP_TOPIC, TOPIC]));
+    const player = new IterablePlayer(source);
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('Raw!1', [{ topic: MAP_TOPIC, subscriberId: 'Raw!1' }]);
+      player.registerSubscriptions('3D!1', [
+        { topic: MAP_TOPIC, subscriberId: '3D!1' },
+        { topic: '/tf', subscriberId: '3D!1' },
+      ]);
+      player.registerHighFrequencyConsumer('Image!1:image-main', { topic: TOPIC, lane: 'video', onLatestMessage: vi.fn() });
+      await flushAsyncWork();
+      expect(state?.activeData?.panelReadErrors).toEqual({
+        'Raw!1': [{ topic: MAP_TOPIC, message: reason }],
+        '3D!1': [{ topic: MAP_TOPIC, message: reason }],
+        'Image!1': [{ topic: TOPIC, message: reason }],
+      });
+    } finally {
+      player.close();
+    }
+  });
+
+  it('drops the error of a topic that no panel reads any more', async () => {
+    const source = failingSource(new Set([MAP_TOPIC]));
+    const player = new IterablePlayer(source);
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('Raw!1', [{ topic: MAP_TOPIC, subscriberId: 'Raw!1' }]);
+      player.registerSubscriptions('Raw!2', [{ topic: TOPIC, subscriberId: 'Raw!2' }]);
+      await flushAsyncWork();
+      expect(state?.activeData?.problems).toContainEqual({ severity: 'error', message: `${MAP_TOPIC}: ${reason}` });
+
+      player.unregisterSubscriptions('Raw!1');
+      await flushAsyncWork();
+      expect(state?.activeData?.topicErrors).toEqual({});
+      expect(state?.activeData?.panelReadErrors).toBeUndefined();
+      expect(state?.activeData?.problems.some((p) => p.message.startsWith(MAP_TOPIC))).toBe(false);
+    } finally {
+      player.close();
+    }
+  });
+
+  it('clears a topic error when playback delivers that topic', async () => {
+    const clock = installFakePlaybackClock();
+    const source = failingSource(new Set([MAP_TOPIC]));
+    const cursor = {
+      nextBatch: vi.fn(async () => [{ ...makeImageMessageAtMs(50), topic: MAP_TOPIC }]),
+      end: vi.fn(async () => undefined),
+    };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source);
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('Raw!1', [{ topic: MAP_TOPIC, subscriberId: 'Raw!1' }]);
+      await flushAsyncWork();
+      expect(state?.activeData?.topicErrors).toEqual({ [MAP_TOPIC]: reason });
+
+      player.play();
+      for (const now of [100, 200, 300]) {
+        clock.now = now;
+        clock.runNextRaf();
+        await flushAsyncWork();
+      }
+      expect(state?.activeData?.topicErrors).toEqual({});
+      expect(state?.activeData?.panelReadErrors).toBeUndefined();
+    } finally {
+      player.close();
+      clock.restore();
     }
   });
 });

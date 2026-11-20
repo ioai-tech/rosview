@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Player } from '@/core/types/player';
 import { useSidebarStore } from '@/shared/hooks/useSidebarStore';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
+import { PanelReadErrorProvider, PanelTopicReadErrors, usePanelReadErrorsFromPlayer } from './panelReadErrors';
 import { registerPanelActions, unregisterPanelActions } from './panelActionRegistry';
 import {
   ensurePanelConfig,
@@ -47,6 +48,7 @@ export function PanelRuntimeShell<TConfig>({
   const config = storeConfig !== undefined ? storeConfig : initialConfig;
 
   const [resetKey, setResetKey] = useState(0);
+  const readErrors = usePanelReadErrorsFromPlayer(panelId);
 
   const setConfig = useCallback<PanelSettingsContext<TConfig>['setConfig']>(
     (next) => {
@@ -144,16 +146,25 @@ export function PanelRuntimeShell<TConfig>({
 
   return (
     <PanelErrorBoundary panelName={definition.type} panelId={panelId} onReset={resetPanel}>
-      <div key={resetKey} className="h-full min-h-0 w-full overflow-hidden">
-        {definition.render({
-          player,
-          panelId,
-          panelTitle,
-          config,
-          setConfig,
-          resetPanel,
-        })}
-      </div>
+      <PanelReadErrorProvider value={readErrors}>
+        <div
+          key={resetKey}
+          className="relative h-full min-h-0 w-full overflow-hidden"
+          data-panel-id={panelId}
+          data-panel-type={definition.type}
+        >
+          {definition.render({
+            player,
+            panelId,
+            panelTitle,
+            config,
+            setConfig,
+            resetPanel,
+          })}
+          {/* Every panel says which of its topics could not be read, and why. */}
+          {readErrors && <PanelTopicReadErrors errors={readErrors} />}
+        </div>
+      </PanelReadErrorProvider>
     </PanelErrorBoundary>
   );
 }

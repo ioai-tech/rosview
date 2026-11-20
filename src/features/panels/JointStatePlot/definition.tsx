@@ -1,4 +1,5 @@
 import React, { lazy, useCallback, useEffect, useState } from 'react';
+import { usePanelTopicReadError } from '@/features/panels/framework/panelReadErrors';
 import { ChevronDown, Check } from 'lucide-react';
 import { useIntl } from 'react-intl';
 import { PanelSuspense } from '../framework/panelSuspense';
@@ -183,6 +184,7 @@ const JointStatePanelWrapper: React.FC<JointStatePanelProps> = ({
   const { formatMessage } = useIntl();
   // Track available joint names from the latest message on the current topic
   const topicSeq = useTopicSeq(config.topic);
+  const readError = usePanelTopicReadError(config.topic);
   const [knownJoints, setKnownJoints] = useState<string[]>(() =>
     readJointNamesFromTopic(config.topic),
   );
@@ -246,7 +248,8 @@ const JointStatePanelWrapper: React.FC<JointStatePanelProps> = ({
         </div>
       ) : noData ? (
         <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground px-4 text-center">
-          {formatMessage({ id: 'panels.jointStatePlot.empty.waitingData' })}
+          {/* The panel shell says why the topic could not be read. */}
+          {readError ? null : formatMessage({ id: 'panels.jointStatePlot.empty.waitingData' })}
         </div>
       ) : (
         <PanelSuspense>

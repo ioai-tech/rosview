@@ -12,14 +12,20 @@ test.describe.configure({ timeout: 120_000 });
 
 type RangeLog = Array<{ url: string; start: number; end: number; status: number }>;
 
-/** Serves `file` at `urlPath` with HTTP Range support; `isValid(url)` decides 200/206 vs 403. */
+/**
+ * Serves `file` at `urlPath` with HTTP Range support; `isValid(url)` decides 200/206 vs 403.
+ * With `bytesPerSecond`, responses share one link of that speed and each is logged when it has
+ * been delivered, as over a real network.
+ */
 async function serveRanged(
   page: Page,
   urlPath: string,
   file: Buffer,
   log: RangeLog,
   isValid: (url: URL) => boolean = () => true,
+  bytesPerSecond?: number,
 ): Promise<void> {
+  let linkFreeAt = 0;
   await page.route(`**${urlPath}*`, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -31,6 +37,11 @@ async function serveRanged(
       log.push({ url: request.url(), start, end, status: 403 });
       await route.fulfill({ status: 403, headers, body: 'expired' });
       return;
+    }
+    if (bytesPerSecond) {
+      const now = Date.now();
+      linkFreeAt = Math.max(linkFreeAt, now) + ((end - start + 1) / bytesPerSecond) * 1000;
+      await new Promise((resolve) => setTimeout(resolve, linkFreeAt - now));
     }
     log.push({ url: request.url(), start, end, status: 206 });
     await route.fulfill({
@@ -78,7 +89,9 @@ test.describe('embedding: streaming and URL renewal', () => {
 
   test('shows the first image after reading a small part of a large indexed MCAP', async ({ page }) => {
     const log: RangeLog = [];
-    await serveRanged(page, '/stream/big.mcap', big, log);
+    // Over a link (2 MB/s here), not an instant route: the plots read their windows at the same
+    // time, and how much of that arrived before the first image must not depend on the host's speed.
+    await serveRanged(page, '/stream/big.mcap', big, log, () => true, 2_000_000);
     await page.goto(`/?url=${encodeURIComponent('/stream/big.mcap')}`);
     await waitForRosviewReady(page);
     await firstImage(page);

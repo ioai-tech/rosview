@@ -20,6 +20,17 @@ import { rangeBlockCache } from '@/infra/range/rangeCache';
 import type { UrlRenewal } from '@/infra/range/urlRenewal';
 import { resolveRemoteCacheBytes } from '@/infra/workers/remoteCacheConfig';
 
+/**
+ * Test seam, compiled in only for `vite build --mode e2e` (production and library builds drop it):
+ * `window.__rosviewStallTimeoutMs` shortens the range reader's stall timeout so stall tests run in
+ * seconds instead of the default 20 s.
+ */
+function e2eStallTimeoutMs(): number | undefined {
+  if (import.meta.env.MODE !== 'e2e' || typeof window === 'undefined') return undefined;
+  const ms = (window as unknown as { __rosviewStallTimeoutMs?: unknown }).__rosviewStallTimeoutMs;
+  return typeof ms === 'number' && ms > 0 ? ms : undefined;
+}
+
 /** Per-viewer settings for how remote recordings are read. */
 export interface RemoteReadOptions {
   renewal?: UrlRenewal;
@@ -153,6 +164,7 @@ export async function prepareSourceMember(
       sourceKey: remoteOptions.sourceKey,
       knownTotalBytes: ds.sizeBytes,
       renewal,
+      stallTimeoutMs: e2eStallTimeoutMs(),
     });
     exposed = exposeRangeSource(rangeSource, {
       indexKey: remoteOptions.sourceKey,
