@@ -9,6 +9,9 @@
  * Stall: PUT /__stall?from=<byte>&to=<byte>&after=<bytes> makes every request whose range overlaps
  * [from, to] send `after` bytes (default 65536) and then hold the response open until the client
  * gives up; DELETE /__stall ends it (held responses stay held). Logged entries get `stalled: true`.
+ * Budget: PUT /__budget?bytes=<n> lets the server deliver n more body bytes in all, then holds
+ * every response (mid-body too) until the budget is raised; DELETE /__budget lifts it. GET
+ * /__budget returns { remaining, sent }.
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -28,15 +31,25 @@ const SLICE = 16 * 1024;
 const log = [];
 /** @type {{ from: number, to: number, after: number } | null} */
 let stall = null;
+let budget = Infinity; // body bytes the server may still send
+let sentTotal = 0;
 let nextFree = 0; // shared link: serialises slices across connections
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function paced(res, stream, onEnd, limit = Infinity) {
   let sent = 0;
   for await (const buf of stream) {
-    for (let o = 0; o < buf.length; o += SLICE) {
+    for (let o = 0; o < buf.length; ) {
       if (sent >= limit) return; // stalled: hold the response open; the client's close ends it
-      const slice = buf.subarray(o, o + Math.min(SLICE, limit - sent));
+      while (budget <= 0) {
+        // Out of budget: hold the response (mid-body too) until it is raised or the client leaves.
+        await sleep(20);
+        if (res.destroyed) return onEnd();
+      }
+      const slice = buf.subarray(o, o + Math.min(SLICE, limit - sent, budget));
+      o += slice.length;
+      budget -= slice.length;
+      sentTotal += slice.length;
       sent += slice.length;
       const now = performance.now();
       nextFree = Math.max(nextFree, now) + slice.length / bytesPerMs;
@@ -57,6 +70,12 @@ http
     res.setHeader('Access-Control-Allow-Headers', 'Range');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
     if (req.method === 'OPTIONS') return res.writeHead(204).end();
+    if (url.pathname === '/__budget') {
+      if (req.method === 'DELETE') budget = Infinity;
+      else if (req.method === 'PUT') budget = Number(url.searchParams.get('bytes') ?? 0);
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify({ remaining: Number.isFinite(budget) ? budget : null, sent: sentTotal }));
+    }
     if (url.pathname === '/__stall') {
       if (req.method === 'DELETE') stall = null;
       else if (req.method === 'PUT') {

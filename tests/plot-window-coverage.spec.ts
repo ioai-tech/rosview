@@ -9,39 +9,57 @@ import { waitForRosviewReady } from './helpers/rosview';
 /**
  * A teleop recording over a link: three cameras and the joints share every chunk, so a Plot's
  * window (+/- 30 s, here the whole recording) costs most of the file. The plots must show the
- * shape of the whole window early, after a small part of the file, not fill it left to right
- * (judged by bytes delivered, so the host's speed does not matter).
+ * shape of the whole window early, after a small part of the file, not fill it left to right.
+ *
+ * The server delivers an exact byte budget and then holds every response; the test waits until
+ * the plots hold all they can from those bytes and judges the data they hold (`data-x-gap`: the
+ * widest stretch of the window without a point, from the plot's dataset). So neither the host's
+ * speed nor when the chart repaints matters.
  */
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SECONDS = 12;
 const JPEG_KIB = 40;
-const MBPS = 80;
-/** By this share of the file delivered, every plot must have points across its whole window. */
-const SHARE = 0.25;
-/** "Across the whole window": no stretch without a point wider than this share of it. */
+/** Two budgets: an eighth of the file, then a quarter. */
+const SHARES = [0.125, 0.25];
+/** After a quarter of the file: no stretch of the window without a point wider than this share. */
 const MAX_GAP = 0.3;
 
 test.describe.configure({ mode: 'serial', timeout: 120_000 });
 
-type LogEntry = { start: number; end: number; t1: number };
+type PlotData = { points: number; gap: number };
 
 let dir: string;
 let server: ChildProcess;
 let origin: string;
 let fileSize: number;
 
-async function delivered(): Promise<number> {
-  const log = (await (await fetch(`${origin}/__log`)).json()) as LogEntry[];
-  return log.filter((r) => r.t1 > 0).reduce((n, r) => n + (r.end - r.start + 1), 0);
-}
-
-async function plots(page: Page): Promise<Array<{ points: number; gap: number }>> {
+async function plots(page: Page): Promise<PlotData[]> {
   return page.evaluate(() =>
     [...document.querySelectorAll('[data-testid="plot-chart"]')].map((el) => ({
       points: Number(el.getAttribute('data-point-count') ?? 0),
       gap: Number(el.getAttribute('data-x-gap') ?? 1),
     })),
   );
+}
+
+/** Lets the server send up to `total` body bytes in all, then waits until the plots stop changing. */
+async function deliverAndSettle(page: Page, total: number): Promise<PlotData[]> {
+  const { sent } = (await (await fetch(`${origin}/__budget`)).json()) as { sent: number };
+  await fetch(`${origin}/__budget?bytes=${Math.max(0, total - sent)}`, { method: 'PUT' });
+  let last = '';
+  let quietSince = Date.now();
+  for (;;) {
+    await page.waitForTimeout(250);
+    const budget = (await (await fetch(`${origin}/__budget`)).json()) as { remaining: number };
+    const now = await plots(page);
+    const key = JSON.stringify(now);
+    if (key !== last || budget.remaining > 0) {
+      last = key;
+      quietSince = Date.now();
+    } else if (Date.now() - quietSince >= 2_000) {
+      return now;
+    }
+  }
 }
 
 test.beforeAll(async () => {
@@ -51,7 +69,7 @@ test.beforeAll(async () => {
     stdio: 'ignore',
   });
   fileSize = statSync(file).size;
-  server = spawn('node', [path.join(here, '../scripts/throttled-range-server.mjs'), dir, '--port', '0', '--mbps', String(MBPS)], {
+  server = spawn('node', [path.join(here, '../scripts/throttled-range-server.mjs'), dir, '--port', '0', '--mbps', '400'], {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   origin = await new Promise<string>((resolve, reject) => {
@@ -69,35 +87,30 @@ test.afterAll(() => {
 });
 
 test('remote plots show their whole window after a quarter of the file, and fill in from there', async ({ page }) => {
-  await fetch(`${origin}/__log`, { method: 'DELETE' });
+  await fetch(`${origin}/__budget?bytes=${Math.round(fileSize * SHARES[0])}`, { method: 'PUT' });
   await page.goto(`/?url=${encodeURIComponent(`${origin}/robot.mcap`)}`);
   await waitForRosviewReady(page);
-  await expect(page.getByTestId('plot-window-hint').first()).toBeVisible({ timeout: 30_000 });
+  // The auto layout's plots (two JointState topics and the Imu) read remote windows.
+  await expect.poll(() => page.getByTestId('plot-chart').count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(2);
+  await expect(page.getByTestId('plot-window-hint')).toHaveCount(await page.getByTestId('plot-chart').count());
 
-  const counts: number[] = [];
-  let atShare: Array<{ points: number; gap: number }> | undefined;
-  let bytesAtShare = 0;
-  const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline) {
-    const bytes = await delivered();
-    const now = await plots(page);
-    counts.push(now.reduce((n, p) => n + p.points, 0));
-    if (bytes >= fileSize * SHARE) {
-      atShare = now;
-      bytesAtShare = bytes;
-      break;
-    }
-    await page.waitForTimeout(100);
-  }
-  expect(atShare, 'a quarter of the file was delivered').toBeDefined();
+  const stages: PlotData[][] = [];
+  for (const share of SHARES) stages.push(await deliverAndSettle(page, Math.round(fileSize * share)));
+  await fetch(`${origin}/__budget`, { method: 'DELETE' });
   console.log(
-    `at ${(bytesAtShare / 1e6).toFixed(1)} of ${(fileSize / 1e6).toFixed(1)} MB: widest gaps ${atShare!.map((p) => p.gap.toFixed(2)).join(', ')}; points ${atShare!.map((p) => p.points).join(', ')}`,
+    stages
+      .map((plotsAt, i) => `${SHARES[i] * 100}% of ${(fileSize / 1e6).toFixed(1)} MB: gaps ${plotsAt.map((p) => p.gap.toFixed(2)).join(', ')}; points ${plotsAt.map((p) => p.points).join(', ')}`)
+      .join('\n'),
   );
-  expect(atShare!.length).toBeGreaterThanOrEqual(2);
-  for (const plot of atShare!) {
-    expect(plot.points).toBeGreaterThan(0);
+
+  const [first, second] = stages;
+  expect(second.length).toBeGreaterThanOrEqual(2);
+  expect(first.length).toBe(second.length);
+  second.forEach((plot, i) => {
+    // Progressive: points after an eighth, more after a quarter.
+    expect(first[i].points).toBeGreaterThan(0);
+    expect(plot.points).toBeGreaterThan(first[i].points);
+    // Spread: after a quarter of the file the points span the whole window.
     expect(plot.gap).toBeLessThanOrEqual(MAX_GAP);
-  }
-  // The points arrived in steps on the way there, not all at once.
-  expect(new Set(counts.filter((c) => c > 0)).size).toBeGreaterThanOrEqual(3);
+  });
 });
