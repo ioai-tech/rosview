@@ -1,7 +1,8 @@
 /**
  * Large synthetic indexed MCAP for streaming / Range measurements (not committed output).
  * Shape: 3 CompressedImage cameras at 30 Hz with ~100 KiB JPEGs, a 100 Hz and a 200 Hz
- * JointState topic, uncompressed ~800 KiB chunks, a summary section.
+ * JointState topic, a 120 Hz Imu, uncompressed ~800 KiB chunks, a summary section (the shape of a
+ * teleop robot recording: at 100 KiB a chunk holds ~0.1 s, as in the real ones).
  *
  *   node scripts/gen-test-mcap-stream-3cam.mjs <out.mcap> [seconds=20.5] [jpegKiB=100]
  */
@@ -40,6 +41,39 @@ int32 sec
 uint32 nanosec
 `;
 const jointWriter = new MessageWriter(parseMessageDefinition(JOINT_STATE, { ros2: true }));
+
+const IMU = `std_msgs/Header header
+geometry_msgs/Quaternion orientation
+float64[9] orientation_covariance
+geometry_msgs/Vector3 angular_velocity
+float64[9] angular_velocity_covariance
+geometry_msgs/Vector3 linear_acceleration
+float64[9] linear_acceleration_covariance
+
+================================================================================
+MSG: std_msgs/Header
+builtin_interfaces/Time stamp
+string frame_id
+
+================================================================================
+MSG: builtin_interfaces/Time
+int32 sec
+uint32 nanosec
+
+================================================================================
+MSG: geometry_msgs/Quaternion
+float64 x
+float64 y
+float64 z
+float64 w
+
+================================================================================
+MSG: geometry_msgs/Vector3
+float64 x
+float64 y
+float64 z
+`;
+const imuWriter = new MessageWriter(parseMessageDefinition(IMU, { ros2: true }));
 
 /** Valid JPEG: the 1x1 fixture with COM segments of deterministic pseudo-random bytes. */
 function paddedJpeg(seed) {
@@ -110,6 +144,12 @@ const cams = [
   await reg(imgSchema, '/camera/right/color/image_raw/compressed'),
 ];
 const joints = [await reg(jointSchema, '/joint_states'), await reg(jointSchema, '/joint_cmd')];
+const imuSchema = await writer.registerSchema({
+  name: 'sensor_msgs/msg/Imu',
+  encoding: 'ros2msg',
+  data: new TextEncoder().encode(IMU),
+});
+const imu = await reg(imuSchema, '/imu/data');
 const names = Array.from({ length: 14 }, (_, i) => `joint${i + 1}`);
 
 const jpegs = Array.from({ length: 8 }, (_, i) => paddedJpeg(i + 1));
@@ -135,6 +175,21 @@ for (let ms = 0n; ms < total; ms++) {
   });
   if (ms % 10n === 0n) msgs.push([joints[0], jointWriter.writeMessage(joint(0))]);
   if (ms % 5n === 0n) msgs.push([joints[1], jointWriter.writeMessage(joint(0.2))]);
+  if ((ms * 120n) / 1000n !== ((ms + 1n) * 120n) / 1000n) {
+    const zero9 = Array(9).fill(0);
+    msgs.push([
+      imu,
+      imuWriter.writeMessage({
+        header: { stamp, frame_id: 'imu' },
+        orientation: { x: 0, y: 0, z: 0, w: 1 },
+        orientation_covariance: zero9,
+        angular_velocity: { x: Math.sin(phase), y: Math.cos(phase), z: 0.1 },
+        angular_velocity_covariance: zero9,
+        linear_acceleration: { x: 0, y: 0, z: 9.81 + Math.sin(phase * 3) },
+        linear_acceleration_covariance: zero9,
+      }),
+    ]);
+  }
   for (const [channelId, data] of msgs) {
     await writer.addMessage({ channelId, sequence: seq++, logTime: t, publishTime: t, data });
   }

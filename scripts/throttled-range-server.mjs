@@ -2,7 +2,7 @@
  * Static file server with HTTP Range support and a shared bandwidth / latency throttle,
  * for streaming measurements and the expiring-URL tests.
  *
- *   node scripts/throttled-range-server.mjs <dir> [--port 4180] [--mbps 20] [--latency-ms 20]
+ *   node scripts/throttled-range-server.mjs <dir> [--port 4180 (0: any free port)] [--mbps 20] [--latency-ms 20]
  *
  * Request log: GET /__log returns JSON [{ path, start, end, t0, t1, status }], DELETE /__log clears it.
  * `?exp=<epochMs>` on a data URL answers 403 after that time (simulates an expired presigned URL).
@@ -87,6 +87,7 @@ http
     req.on('close', () => (entry.t1 ||= Date.now()));
     await paced(res, fs.createReadStream(file, { start, end, highWaterMark: 256 * 1024 }), () => (entry.t1 ||= Date.now()));
   })
-  .listen(port, '127.0.0.1', () =>
-    console.log(`throttled range server on :${port} (${opt('mbps', 20)} Mbps, ${latencyMs} ms) root=${root}`),
-  );
+  .listen(port, '127.0.0.1', function () {
+    // `--port 0` picks a free port; the line below names it (tests parse it).
+    console.log(`throttled range server on :${this.address().port} (${opt('mbps', 20)} Mbps, ${latencyMs} ms) root=${root}`);
+  });
