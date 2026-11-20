@@ -2011,3 +2011,69 @@ describe('IterablePlayer read errors by panel', () => {
     }
   });
 });
+
+describe('IterablePlayer background range scans', () => {
+  /** A cursor whose batches wait until the test releases them. */
+  function gatedCursors() {
+    const pending: Array<() => void> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const cursor = () => {
+      let batches = 1;
+      return {
+        nextBatch: vi.fn(async () => {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise<void>((resolve) => pending.push(resolve));
+          inFlight--;
+          return batches-- > 0 ? [makeImageMessageAt(1)] : [];
+        }),
+        end: vi.fn(async () => undefined),
+      };
+    };
+    return { cursor, pending, inFlight: () => inFlight, maxInFlight: () => maxInFlight };
+  }
+
+  async function drain(iterable: AsyncIterable<MessageEvent[]>): Promise<number> {
+    let n = 0;
+    for await (const batch of iterable) n += batch.length;
+    return n;
+  }
+
+  it('does not read a window while the frame at the playhead is read, and runs at most two scan batches at once', async () => {
+    const source = makeSource([]);
+    const gates = gatedCursors();
+    vi.mocked(source.getMessageCursor).mockImplementation(async () => gates.cursor() as never);
+    const frameReads: Array<() => void> = [];
+    const releaseFrame = (): void => frameReads.splice(0).forEach((resolve) => resolve());
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      vi.mocked(source.getBackfillMessages).mockImplementation(
+        () => new Promise((resolve) => frameReads.push(() => resolve([]))),
+      );
+      // A seek: its frame is being read.
+      player.registerSubscriptions('Image!1', [{ topic: TOPIC, subscriberId: 'Image!1' }]);
+      player.seek({ sec: 1, nsec: 0 });
+      await flushAsyncWork();
+
+      const range = { start: { sec: 0, nsec: 0 }, end: { sec: 5, nsec: 0 }, topics: [TOPIC] };
+      const scans = [0, 1, 2].map(() => drain(player.streamMessagesInTimeRange(range)));
+      await flushAsyncWork();
+      expect(gates.inFlight()).toBe(0);
+
+      releaseFrame();
+      await flushAsyncWork();
+      expect(gates.inFlight()).toBe(2);
+
+      while (gates.pending.length > 0 || gates.inFlight() > 0) {
+        gates.pending.splice(0).forEach((resolve) => resolve());
+        await flushAsyncWork();
+      }
+      expect(await Promise.all(scans)).toEqual([1, 1, 1]);
+      expect(gates.maxInFlight()).toBe(2);
+    } finally {
+      player.close();
+    }
+  });
+});
