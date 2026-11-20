@@ -46,6 +46,14 @@ describe('withTimeout', () => {
     }
   });
 
+  it('an error before the timeout rejects the call and never reaches onLateError', async () => {
+    const onLateError = vi.fn();
+    const failure = new Error('refused');
+    await expect(withTimeout(Promise.reject(failure), 100, 'read timed out', undefined, onLateError)).rejects.toBe(failure);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(onLateError).not.toHaveBeenCalled();
+  });
+
   it('hands an error that comes after the timeout to onLateError instead of dropping it', async () => {
     vi.useFakeTimers();
     try {
