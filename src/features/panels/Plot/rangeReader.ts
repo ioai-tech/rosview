@@ -114,25 +114,39 @@ async function readSpread(
   const order = spreadReadOrder(pieces.length, focusIndex);
   let next = 0;
   let completed = 0;
+  // One lane failing (or the caller aborting) stops the other at once, its read in flight too.
+  const stop = new AbortController();
+  const onAbort = (): void => stop.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) stop.abort();
   const full = (): boolean => messageLimit != null && deduped.size >= messageLimit;
   const lane = async (): Promise<void> => {
-    while (next < order.length && !full()) {
-      assertNotAborted(signal);
-      const piece = pieces[order[next++]];
-      for await (const messages of player.streamMessagesInTimeRange!({ ...piece, topics: args.topics, signal })) {
-        assertNotAborted(signal);
-        const added = appendNewMessages(deduped, messages, messageLimit);
-        if (added.length > 0) {
-          onBatch?.({ messages: added, progress: { completed, total: pieces.length, messages: deduped.size } });
+    try {
+      while (next < order.length && !full() && !stop.signal.aborted) {
+        const piece = pieces[order[next++]];
+        for await (const messages of player.streamMessagesInTimeRange!({ ...piece, topics: args.topics, signal: stop.signal })) {
+          if (stop.signal.aborted) break;
+          const added = appendNewMessages(deduped, messages, messageLimit);
+          if (added.length > 0) {
+            onBatch?.({ messages: added, progress: { completed, total: pieces.length, messages: deduped.size } });
+          }
+          if (full()) break;
         }
-        if (full()) break;
+        if (stop.signal.aborted) break;
+        completed++;
+        onProgress?.({ completed, total: pieces.length, messages: deduped.size });
+        await yieldToEventLoop();
       }
-      completed++;
-      onProgress?.({ completed, total: pieces.length, messages: deduped.size });
-      await yieldToEventLoop();
+    } catch (err) {
+      stop.abort();
+      throw err;
     }
   };
-  await Promise.all(Array.from({ length: Math.min(SPREAD_CONCURRENCY, order.length) }, lane));
+  try {
+    await Promise.all(Array.from({ length: Math.min(SPREAD_CONCURRENCY, order.length) }, lane));
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
   assertNotAborted(signal);
   return sortMessages([...deduped.values()]);
 }

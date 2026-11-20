@@ -160,3 +160,68 @@ describe('readPlotRangeIncremental with a focus', () => {
     expect(reads).toEqual([0]);
   });
 });
+
+describe('readPlotRangeIncremental with a focus: pieces and failures', () => {
+  const ns = (t: { sec: number; nsec: number }) => BigInt(t.sec) * 1_000_000_000n + BigInt(t.nsec);
+
+  it('cuts the range into pieces that meet without overlapping: each ends 1 ns before the next starts', async () => {
+    const pieces: Array<{ start: bigint; end: bigint }> = [];
+    const player = {
+      getReadBoundaries: vi.fn(async () => [0, 1, 2, 3].map((sec) => ({ sec, nsec: 0 }))),
+      streamMessagesInTimeRange: async function* ({ start, end }: { start: { sec: number; nsec: number }; end: { sec: number; nsec: number } }) {
+        pieces.push({ start: ns(start), end: ns(end) });
+        yield [];
+      },
+      getMessagesInTimeRange: vi.fn(),
+    } as unknown as Player;
+    await readPlotRangeIncremental({
+      player,
+      start: { sec: 0, nsec: 0 },
+      end: { sec: 4, nsec: 0 },
+      topics: ['/value'],
+      focus: { sec: 0, nsec: 0 },
+    });
+    pieces.sort((a, b) => (a.start < b.start ? -1 : 1));
+    expect(pieces.map((p) => [p.start, p.end])).toEqual([
+      [0n, 999_999_999n],
+      [1_000_000_000n, 1_999_999_999n],
+      [2_000_000_000n, 2_999_999_999n],
+      [3_000_000_000n, 4_000_000_000n],
+    ]);
+  });
+
+  it('stops the other read when one piece fails, its read in flight too, and starts no more', async () => {
+    let started = 0;
+    let otherAborted = false;
+    const failure = new Error('No data arrived from the server for 20 s');
+    const player = {
+      getReadBoundaries: vi.fn(async () => Array.from({ length: 32 }, (_, sec) => ({ sec, nsec: 0 }))),
+      streamMessagesInTimeRange: async function* ({ signal }: { signal?: AbortSignal }) {
+        started++;
+        if (started === 1) {
+          // The first piece waits for data until it is stopped.
+          await new Promise<void>((resolve) => signal!.addEventListener('abort', () => resolve(), { once: true }));
+          otherAborted = true;
+          throw new DOMException('aborted', 'AbortError');
+        }
+        await Promise.resolve();
+        throw failure;
+        // eslint-disable-next-line no-unreachable
+        yield [];
+      },
+      getMessagesInTimeRange: vi.fn(),
+    } as unknown as Player;
+    await expect(
+      readPlotRangeIncremental({
+        player,
+        start: { sec: 0, nsec: 0 },
+        end: { sec: 31, nsec: 0 },
+        topics: ['/value'],
+        focus: { sec: 0, nsec: 0 },
+      }),
+    ).rejects.toBe(failure);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(otherAborted).toBe(true);
+    expect(started).toBe(2);
+  });
+});
