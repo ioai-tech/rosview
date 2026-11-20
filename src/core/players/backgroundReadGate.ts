@@ -1,8 +1,9 @@
 /**
- * Orders the player's reads on a shared link: background range scans (Plot, Align and Timeline
- * windows, CSV export) run at most `slots` batches at once and none while a foreground read (the
- * frame at the playhead, after an open or a seek) is in progress. A scan's batch reads a chunk or
- * so; without this, every panel's scans queue ahead of the frame the user is waiting for.
+ * Orders the player's reads on a shared link: at most `slots` background range scans (Plot, Align
+ * and Timeline windows, CSV export) read at once, and none starts while a foreground read (the
+ * frame at the playhead after an open or a seek, or a frame-priority read such as an H.264
+ * keyframe repair) is in progress. Without this, every panel's scans queue ahead of the frame the
+ * user is waiting for.
  */
 export class BackgroundReadGate {
   private _active = 0;

@@ -2171,6 +2171,21 @@ describe('IterablePlayer frame-priority reads and the window gate', () => {
     }
   });
 
+  it('does not open the cursor of a window read that waits for a slot (a worker cursor reads from the moment it is made)', async () => {
+    const source = makeSource([]);
+    vi.mocked(source.getMessageCursor).mockImplementation(async () => hangingCursor() as never);
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      const range = { start: { sec: 0, nsec: 0 }, end: { sec: 5, nsec: 0 }, topics: [TOPIC] };
+      for (let i = 0; i < 4; i++) void first(player.streamMessagesInTimeRange(range));
+      await flushAsyncWork();
+      expect(source.getMessageCursor).toHaveBeenCalledTimes(2);
+    } finally {
+      player.close();
+    }
+  });
+
   it('lets window reads go once the playhead\'s images are delivered, while a large map is still read', async () => {
     const source = makeSource([]);
     let windowBatches = 0;
