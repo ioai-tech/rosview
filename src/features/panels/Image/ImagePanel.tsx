@@ -319,6 +319,8 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
           h264BootstrapInFlightRef.current = false;
           h264BufferedLiveRef.current = [];
         }
+        // The repair is over (done or given up): nothing it started may keep reading.
+        controller.abort();
         if (h264SeekRepairAbortRef.current === controller) {
           h264SeekRepairAbortRef.current = null;
         }
@@ -474,6 +476,8 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
                 h264BootstrapInFlightRef.current = false;
                 h264BufferedLiveRef.current = [];
               }
+              // The repair is over (done or given up): nothing it started may keep reading.
+              controller.abort();
               if (h264SeekRepairAbortRef.current === controller) {
                 h264SeekRepairAbortRef.current = null;
               }

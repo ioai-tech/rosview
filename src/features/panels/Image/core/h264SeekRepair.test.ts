@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Player } from '@/core/types/player';
 import type { MessageEvent as RosMessageEvent } from '@/core/types/ros';
 import {
+  H264_BOOTSTRAP_WINDOW_TIMEOUT_MS,
   H264_SEEK_MAX_FRAMES,
   dedupeH264MessageEventsByReceiveTime,
   executeH264Bootstrap,
@@ -311,5 +312,58 @@ describe('fetchH264BootstrapFrames', () => {
     const frames = await fetchH264BootstrapFrames(player, '/camera/video', { sec: 2, nsec: 0 });
     expect(frames.length).toBeGreaterThan(0);
     expect(calls.map((c) => c.priority)).toEqual(['frame']);
+  });
+
+  it('aborts a window read when its timeout fires, before any larger window starts', async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: AbortSignal[] = [];
+      const player = {
+        getMessagesInTimeRange: (args: { signal?: AbortSignal }) => {
+          signals.push(args.signal!);
+          return new Promise<never>(() => {});
+        },
+      } as unknown as Player;
+      const repair = fetchH264BootstrapFrames(player, '/camera/video', { sec: 20, nsec: 0 });
+      const failed = expect(repair).rejects.toThrow('H.264 bootstrap range read timed out');
+      await vi.advanceTimersByTimeAsync(H264_BOOTSTRAP_WINDOW_TIMEOUT_MS);
+      await failed;
+      expect(signals).toHaveLength(1);
+      expect(signals[0].aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts the window read when the repair is aborted', async () => {
+    const signals: AbortSignal[] = [];
+    const player = {
+      getMessagesInTimeRange: (args: { signal?: AbortSignal }) => {
+        signals.push(args.signal!);
+        return new Promise<never>(() => {});
+      },
+    } as unknown as Player;
+    const panel = new AbortController();
+    void fetchH264BootstrapFrames(player, '/camera/video', { sec: 20, nsec: 0 }, { signal: panel.signal }).catch(
+      () => undefined,
+    );
+    await Promise.resolve();
+    expect(signals[0].aborted).toBe(false);
+    panel.abort();
+    expect(signals[0].aborted).toBe(true);
+  });
+
+  it('ends each window read before the next, larger window starts', async () => {
+    const signals: AbortSignal[] = [];
+    const player = {
+      getMessagesInTimeRange: async (args: { signal?: AbortSignal }) => {
+        expect(signals.every((s) => s.aborted)).toBe(true);
+        signals.push(args.signal!);
+        return [];
+      },
+    } as unknown as Player;
+    await expect(fetchH264BootstrapFrames(player, '/camera/video', { sec: 100, nsec: 0 })).resolves.toEqual([]);
+    expect(signals).toHaveLength(4);
+    expect(signals.every((s) => s.aborted)).toBe(true);
   });
 });

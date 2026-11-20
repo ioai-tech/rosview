@@ -212,18 +212,30 @@ export async function fetchH264BootstrapFrames(
     }
     const start = addMs(targetTime, -windowMs);
     const remainingMs = Math.max(1, deadline - Date.now());
-    const messages = await withTimeout(
-      player.getMessagesInTimeRange({
-        start,
-        end: queryEnd,
-        topics: [topic],
-        signal: options.signal,
-        // The image on screen waits for this keyframe: it goes ahead of panels' window reads.
-        priority: 'frame',
-      }),
-      Math.min(H264_BOOTSTRAP_WINDOW_TIMEOUT_MS, remainingMs),
-      'H.264 bootstrap range read timed out',
-    );
+    // Each window's read has its own abort: a read the repair stopped waiting for (timeout,
+    // abort, error) must stop too. As a frame-priority read it holds back every panel's
+    // window reads, and the next, larger window would otherwise run beside it.
+    const windowRead = new AbortController();
+    const stopWindowRead = (): void => windowRead.abort();
+    options.signal?.addEventListener('abort', stopWindowRead, { once: true });
+    let messages: RosMessageEvent[];
+    try {
+      messages = await withTimeout(
+        player.getMessagesInTimeRange({
+          start,
+          end: queryEnd,
+          topics: [topic],
+          signal: windowRead.signal,
+          // The image on screen waits for this keyframe: it goes ahead of panels' window reads.
+          priority: 'frame',
+        }),
+        Math.min(H264_BOOTSTRAP_WINDOW_TIMEOUT_MS, remainingMs),
+        'H.264 bootstrap range read timed out',
+      );
+    } finally {
+      options.signal?.removeEventListener('abort', stopWindowRead);
+      windowRead.abort();
+    }
     if (options.signal?.aborted) {
       return [];
     }
