@@ -206,7 +206,6 @@ describe('readPlotRangeIncremental with a focus: pieces and failures', () => {
         }
         await Promise.resolve();
         throw failure;
-        // eslint-disable-next-line no-unreachable
         yield [];
       },
       getMessagesInTimeRange: vi.fn(),
