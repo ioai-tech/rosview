@@ -431,22 +431,29 @@ export class IterablePlayer implements Player {
     if (topics.length === 0) return;
     const endForeground = this._backgroundReads.beginForeground();
     try {
-      await this._backfillTopicsNow(epoch, time, topics, onFramesDelivered);
+      await this._backfillTopicsNow(epoch, time, topics, onFramesDelivered, endForeground);
     } finally {
       endForeground();
     }
   }
 
+  /**
+   * `endFramesRead` ends the frame's hold on window scans: once the playhead's images (and point
+   * clouds) are delivered, or at the end when the panels read none. A large map or a latched topic
+   * read after them does not hold the plots.
+   */
   private async _backfillTopicsNow(
     epoch: number,
     time: Time,
     topics: readonly string[],
     onFramesDelivered?: () => void,
+    endFramesRead?: () => void,
   ): Promise<void> {
     const isFrame = (topic: string): boolean => this._highFrequencyConsumersByTopic.has(topic);
     const ordered = [...topics.filter(isFrame), ...topics.filter((topic) => !isFrame(topic))];
     const pendingFrames = new Set(ordered.filter(isFrame));
     let framesDelivered = pendingFrames.size > 0 ? onFramesDelivered : undefined;
+    const framesRead = pendingFrames.size > 0 ? endFramesRead : undefined;
     const delivered = new Set<string>();
     let late = false;
     // A new attempt at these topics' frame: their previous read errors no longer apply.
@@ -457,6 +464,7 @@ export class IterablePlayer implements Player {
         delivered.add(topic);
         pendingFrames.delete(topic);
       }
+      if (pendingFrames.size === 0) framesRead?.();
       if (error) {
         // The panels of these topics show why their frame is missing instead of waiting forever.
         for (const topic of done) this._topicReadErrors.set(topic, error.message);
@@ -1775,6 +1783,8 @@ export class IterablePlayer implements Player {
     let emitted = 0;
     let ended: Promise<void> | undefined;
     const endCursor = (): Promise<void> => (ended ??= cursor.end());
+    const frame = args.priority === 'frame';
+    const endFrameRead = frame ? this._backgroundReads.beginForeground() : undefined;
     // An abort ends the cursor, which releases a batch still waiting for data.
     const onAbort = (): void => void endCursor();
     args.signal?.addEventListener("abort", onAbort, { once: true });
@@ -1783,9 +1793,9 @@ export class IterablePlayer implements Player {
         if (args.signal?.aborted || emitted >= maxMessages) {
           break;
         }
-        // A background scan: it yields to the frame at the playhead and shares the link with at
-        // most one other scan batch.
-        const release = await this._backgroundReads.acquire(args.signal);
+        // A window scan yields to the frame at the playhead and shares the link with at most one
+        // other scan batch; a frame-priority read goes at once (it holds window scans instead).
+        const release = frame ? () => undefined : await this._backgroundReads.acquire(args.signal);
         if (!release) break;
         let batch: MessageEvent[];
         try {
@@ -1820,6 +1830,7 @@ export class IterablePlayer implements Player {
         }
       }
     } finally {
+      endFrameRead?.();
       args.signal?.removeEventListener("abort", onAbort);
       await endCursor();
     }

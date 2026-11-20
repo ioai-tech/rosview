@@ -218,6 +218,8 @@ export async function fetchH264BootstrapFrames(
         end: queryEnd,
         topics: [topic],
         signal: options.signal,
+        // The image on screen waits for this keyframe: it goes ahead of panels' window reads.
+        priority: 'frame',
       }),
       Math.min(H264_BOOTSTRAP_WINDOW_TIMEOUT_MS, remainingMs),
       'H.264 bootstrap range read timed out',
