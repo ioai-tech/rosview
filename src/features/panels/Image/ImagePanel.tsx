@@ -543,6 +543,16 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
           className="min-w-0 flex-1"
           triggerClassName="border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-900 hover:text-zinc-50"
         />
+        {/* Frame details sit in the bar, never over the picture. */}
+        {showStatusText && status.phase === 'ready' && status.width && status.height && (
+          <span
+            className="min-w-0 max-w-[45%] shrink truncate font-mono text-[10px] text-zinc-400"
+            title={`${status.width}x${status.height} ${status.encoding ?? ''}`.trim()}
+            data-testid="image-panel-status"
+          >
+            {status.width}x{status.height} {status.encoding ?? ''}
+          </span>
+        )}
       </PanelTopicBar>
       <div
         ref={viewportRef}
@@ -556,14 +566,6 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
         {showStatusText && statusText && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-white/40 italic text-xs">
             {statusText}
-          </div>
-        )}
-        {showStatusText && status.phase === 'ready' && status.width && status.height && (
-          <div
-            className="absolute bottom-0 left-0 right-0 px-2 py-1 text-white/30 text-[10px] font-mono truncate pointer-events-none"
-            data-testid="image-panel-status"
-          >
-            {status.width}x{status.height} {status.encoding ?? ''}
           </div>
         )}
       </div>
