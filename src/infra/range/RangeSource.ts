@@ -195,7 +195,10 @@ export class RangeSource implements RenewableUrl {
     const controller = new AbortController();
     this.#probe = controller;
     if (this.#disposed) controller.abort();
-    const res = await this.#request(0, B - 1, controller.signal);
+    // A reopen of a recording whose first block this page still holds asks for one byte: enough to
+    // learn the size and the version (ETag) without downloading the block again.
+    const revalidate = this.#sourceKey != undefined && this.#cache.cachedSize(this.#sourceKey) != undefined;
+    const res = await this.#request(0, revalidate ? 0 : B - 1, controller.signal);
     const total = this.#parseTotal(res);
     if (!(total > 0)) {
       await res.body?.cancel().catch(() => undefined);
@@ -206,6 +209,15 @@ export class RangeSource implements RenewableUrl {
     }
     this.#etag = res.headers.get('ETag') ?? undefined;
     this.#attachStore(total);
+    if (revalidate && res.status === 206) {
+      await res.body?.cancel().catch(() => undefined);
+      this.#probe = undefined;
+      const store = this.#store;
+      // Another version cached under the same key is never served (a changed size is another store).
+      if (this.#etag && store.etag && store.etag !== this.#etag) this.#cache.dropStore(store);
+      if (this.#etag) this.#store.etag ??= this.#etag;
+      return this.#size;
+    }
     const run: Run = { first: 0, last: 0, kind: 'demand', controller, deferreds: new Map() };
     try {
       await this.#consume(res, run, 0);
