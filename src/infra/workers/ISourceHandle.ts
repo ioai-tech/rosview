@@ -1,8 +1,9 @@
-import type { DataQualityReport, Initialization, MessageEvent } from '@/core/types/ros';
+import type { DataQualityReport, Initialization, MessageEvent, Time } from '@/core/types/ros';
 import type {
   BackfillTopicCallback,
   GetAdjacentMessageArgs,
   GetBackfillMessagesArgs,
+  ReadBoundariesArgs,
   IMessageCursor,
   LoadProgress,
   MessageIteratorArgs,
@@ -34,6 +35,8 @@ export interface ISourceHandle {
   getMessageCursor(args: MessageIteratorArgs): Promise<IMessageCursor<unknown>>;
   getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback): Promise<MessageEvent[]>;
   getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null>;
+  /** See `IIterableSource.getReadBoundaries`. */
+  getReadBoundaries(args: ReadBoundariesArgs): Promise<Time[] | undefined>;
   preparePlaybackBuffer(args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus>;
   getLoadProgress(): Promise<LoadProgress>;
   startDataQualityScan(): Promise<void>;

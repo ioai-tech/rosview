@@ -1,11 +1,12 @@
 import * as Comlink from "comlink";
-import type { DataQualityReport, Initialization, MessageEvent } from '@/core/types/ros';
+import type { DataQualityReport, Initialization, MessageEvent, Time } from '@/core/types/ros';
 import type {
   BackfillTopicCallback,
   IWorkerSerializedSourceWorker,
   MessageIteratorArgs,
   GetBackfillMessagesArgs,
   GetAdjacentMessageArgs,
+  ReadBoundariesArgs,
   IMessageCursor,
   LoadProgress,
   PlaybackBufferStatus,
@@ -195,6 +196,10 @@ export class WorkerSerializedSource implements ISourceHandle {
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {
     return await this._remote.getAdjacentMessage(args);
+  }
+
+  async getReadBoundaries(args: ReadBoundariesArgs): Promise<Time[] | undefined> {
+    return await this._raceWorkerFailure(this._remote.getReadBoundaries(args));
   }
 
   async preparePlaybackBuffer(args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus> {

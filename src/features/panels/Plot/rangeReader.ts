@@ -27,6 +27,128 @@ export interface PlotRangeReadArgs {
 
 export interface PlotRangeIncrementalReadArgs extends PlotRangeReadArgs {
   onBatch?: (batch: PlotRangeReadBatch) => void;
+  /**
+   * Read the range coarse to fine around this time, when the source can say where it is stored
+   * apart (`Player.getReadBoundaries`): the plot shows the shape of the whole range after a
+   * fraction of its bytes, and the detail near `focus` first, instead of filling it left to right.
+   */
+  focus?: Time;
+}
+
+/** At most this many pieces: finer adds per-read overhead without showing more of the range. */
+const MAX_SPREAD_PIECES = 512;
+/** Spread reads per read near the focus: the whole range takes shape first, the playhead keeps detail. */
+const SPREAD_PER_NEAR = 3;
+/** Pieces read at once (each a short cursor; two keep the link busy between them). */
+const SPREAD_CONCURRENCY = 2;
+
+function bitReverse(i: number, bits: number): number {
+  let r = 0;
+  for (let b = 0; b < bits; b++) r = (r << 1) | ((i >> b) & 1);
+  return r;
+}
+
+/**
+ * The order to read `count` pieces in: the piece at `focusIndex`, then {@link SPREAD_PER_NEAR} pieces
+ * of an even spread over the whole range (bit-reversed order: after any prefix the pieces read are
+ * about evenly spaced) for each next piece outward from the focus (detail where the playhead is).
+ * Each piece once.
+ */
+export function spreadReadOrder(count: number, focusIndex: number): number[] {
+  if (count <= 0) return [];
+  const focus = Math.min(count - 1, Math.max(0, focusIndex));
+  const seen = new Uint8Array(count);
+  const order: number[] = [];
+  const take = (i: number): boolean => {
+    if (i < 0 || i >= count || seen[i]) return false;
+    seen[i] = 1;
+    order.push(i);
+    return true;
+  };
+  let bits = 0;
+  while (1 << bits < count) bits++;
+  const spreadTotal = 1 << bits;
+  let spreadNext = 0;
+  let near = 0; // 0, +1, -1, +2, -2, ... from the focus
+  const nextNear = (): void => {
+    while (near <= 2 * count) {
+      const step = near === 0 ? 0 : near % 2 === 1 ? (near + 1) / 2 : -near / 2;
+      near++;
+      if (take(focus + step)) return;
+    }
+  };
+  const nextSpread = (): void => {
+    while (spreadNext < spreadTotal) {
+      const i = Math.floor((bitReverse(spreadNext++, bits) / spreadTotal) * count);
+      if (take(i)) return;
+    }
+  };
+  while (order.length < count) {
+    nextNear();
+    for (let i = 0; i < SPREAD_PER_NEAR && order.length < count; i++) nextSpread();
+  }
+  return order;
+}
+
+/** Pieces `[b_i, b_{i+1})` of `[start, end]`, at most {@link MAX_SPREAD_PIECES}. */
+function piecesFromBoundaries(boundaries: Time[], end: Time): Array<{ start: Time; end: Time }> {
+  const stride = Math.ceil(boundaries.length / MAX_SPREAD_PIECES);
+  const starts = boundaries.filter((_, i) => i % stride === 0).map(toNano);
+  const endNs = toNano(end);
+  return starts.map((s, i) => ({
+    start: fromNano(s),
+    end: fromNano(i + 1 < starts.length ? starts[i + 1] - 1n : endNs),
+  }));
+}
+
+async function readSpread(
+  args: PlotRangeIncrementalReadArgs & { topics: string[] },
+  pieces: Array<{ start: Time; end: Time }>,
+  focus: Time,
+): Promise<MessageEvent[]> {
+  const { player, signal, onProgress, onBatch, maxMessages } = args;
+  const deduped = new Map<string, MessageEvent>();
+  const messageLimit = maxMessages != null && maxMessages > 0 ? maxMessages : undefined;
+  const focusNs = toNano(focus);
+  const focusIndex = Math.max(0, pieces.findIndex((p) => toNano(p.end) >= focusNs));
+  const order = spreadReadOrder(pieces.length, focusIndex);
+  let next = 0;
+  let completed = 0;
+  // One lane failing (or the caller aborting) stops the other at once, its read in flight too.
+  const stop = new AbortController();
+  const onAbort = (): void => stop.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) stop.abort();
+  const full = (): boolean => messageLimit != null && deduped.size >= messageLimit;
+  const lane = async (): Promise<void> => {
+    try {
+      while (next < order.length && !full() && !stop.signal.aborted) {
+        const piece = pieces[order[next++]];
+        for await (const messages of player.streamMessagesInTimeRange!({ ...piece, topics: args.topics, signal: stop.signal })) {
+          if (stop.signal.aborted) break;
+          const added = appendNewMessages(deduped, messages, messageLimit);
+          if (added.length > 0) {
+            onBatch?.({ messages: added, progress: { completed, total: pieces.length, messages: deduped.size } });
+          }
+          if (full()) break;
+        }
+        if (stop.signal.aborted) break;
+        completed++;
+        onProgress?.({ completed, total: pieces.length, messages: deduped.size });
+        await yieldToEventLoop();
+      }
+    } catch (err) {
+      stop.abort();
+      throw err;
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: Math.min(SPREAD_CONCURRENCY, order.length) }, lane));
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+  assertNotAborted(signal);
+  return sortMessages([...deduped.values()]);
 }
 
 const DEFAULT_SEGMENTS = 24;
@@ -151,9 +273,21 @@ export async function readPlotRangeIncremental({
   onProgress,
   onBatch,
   maxMessages,
+  focus,
 }: PlotRangeIncrementalReadArgs): Promise<MessageEvent[]> {
   if (topics.length === 0 || (!player.getMessagesInTimeRange && !player.streamMessagesInTimeRange)) return [];
   const uniqueTopics = Array.from(new Set(topics)).sort();
+  if (focus && player.streamMessagesInTimeRange && player.getReadBoundaries) {
+    const boundaries = await player.getReadBoundaries({ start, end, topics: uniqueTopics });
+    assertNotAborted(signal);
+    if (boundaries && boundaries.length >= 3) {
+      return readSpread(
+        { player, start, end, topics: uniqueTopics, signal, onProgress, onBatch, maxMessages },
+        piecesFromBoundaries(boundaries, end),
+        focus,
+      );
+    }
+  }
   const segments = makeSegments(start, end);
   const deduped = new Map<string, MessageEvent>();
   const messageLimit = maxMessages != null && maxMessages > 0 ? maxMessages : undefined;

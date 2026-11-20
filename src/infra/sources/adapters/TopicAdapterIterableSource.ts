@@ -1,6 +1,11 @@
-import type { Initialization, MessageEvent, TopicInfo } from '@/core/types/ros';
+import type { Initialization, MessageEvent, Time, TopicInfo } from '@/core/types/ros';
 import type { GetAdjacentMessageArgs, IIterableSource } from '../IIterableSource';
-import type { BackfillTopicCallback, MessageIteratorArgs, GetBackfillMessagesArgs } from '@/infra/workers/types';
+import type {
+  BackfillTopicCallback,
+  MessageIteratorArgs,
+  GetBackfillMessagesArgs,
+  ReadBoundariesArgs,
+} from '@/infra/workers/types';
 import { findUnsafeIntegerFields } from './unsafeIntegers';
 import type { DerivedTopic, TopicAdapter, TopicAdapterPlan } from './types';
 
@@ -110,6 +115,10 @@ export class TopicAdapterIterableSource implements IIterableSource {
     }
     const event = await this._inner.getAdjacentMessage({ ...args, topics: this._toInnerTopics(args.topics) });
     return event ? (this._expand(event, new Set(args.topics))[0] ?? null) : null;
+  }
+
+  async getReadBoundaries(args: ReadBoundariesArgs): Promise<Time[] | undefined> {
+    return await this._inner.getReadBoundaries?.({ ...args, topics: this._toInnerTopics(args.topics) });
   }
 
   private _toInnerTopics(topics: readonly string[]): string[] {

@@ -1,9 +1,10 @@
 import * as Comlink from "comlink";
 import { withBackfillCallback } from './backfillCallback';
 import type { BackfillTopicCallback } from './types';
-import type { Initialization } from "@/core/types/ros";
+import type { Initialization, Time } from "@/core/types/ros";
 import type {
   GetAdjacentMessageArgs,
+  ReadBoundariesArgs,
   GetBackfillMessagesArgs,
   IMessageCursor,
   IWorkerSerializedSourceWorker,
@@ -90,6 +91,11 @@ export class BvhWorkerImpl implements IWorkerSerializedSourceWorker {
   async getAdjacentMessage(args: GetAdjacentMessageArgs) {
     if (!this._source) throw new Error("BvhWorker: not initialized");
     return (await this._source.getAdjacentMessage?.(args)) ?? null;
+  }
+
+  /** A BVH file is read whole: no storage units to read apart. */
+  getReadBoundaries(_args: ReadBoundariesArgs): Promise<Time[] | undefined> {
+    return Promise.resolve(undefined);
   }
 
   preparePlaybackBuffer(_args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus> {

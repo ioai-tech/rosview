@@ -11,6 +11,7 @@ import { MAX_PLAYBACK_SPEED } from '@/core/types/player';
 import type { DataQualityReport, Initialization, MessageEvent, PlayerProblem, Time, TimeRange } from '@/core/types/ros';
 import { messageBus } from '@/core/pipeline/messageBus';
 import { useMessagePipelineStore } from '@/core/pipeline/store';
+import { BackgroundReadGate } from './backgroundReadGate';
 import type { ISourceHandle } from '@/infra/workers/ISourceHandle';
 import type { IMessageCursor, SourceInitProgress } from '@/infra/workers/types';
 import { isTimeoutError, withTimeout } from '@/shared/utils/asyncTimeout';
@@ -36,6 +37,8 @@ const STALE_TOPIC_REFRESH_COOLDOWN_MS = 500;
 const SLOW_DISTRIBUTION_MS = 16;
 const RANGE_READ_MAX_MESSAGES = 80_000;
 const RANGE_READ_BATCH_MESSAGES = 2048;
+/** Background range-scan batches (Plot, Align, Timeline windows) in flight at once, all panels together. */
+const BACKGROUND_READ_SLOTS = 2;
 const RANGE_READ_BATCH_WALL_MS = 16;
 const PLAYBACK_PREFETCH_AHEAD_MS = 250;
 const PLAYBACK_PREFETCH_MAX_MESSAGES = 512;
@@ -202,6 +205,7 @@ export class IterablePlayer implements Player {
   private _playbackProblems: PlayerProblem[] = [];
   /** Topics whose frame could not be read, with the reason (cleared when the topic delivers). */
   private _topicReadErrors = new Map<string, string>();
+  private _backgroundReads = new BackgroundReadGate(BACKGROUND_READ_SLOTS);
   private _playbackProblemIsTimeout = false;
   private _rpcTimeoutMs = PLAYBACK_RPC_TIMEOUT_MS;
   private _cursorCloseTimeoutMs = PLAYBACK_CURSOR_CLOSE_TIMEOUT_MS;
@@ -417,6 +421,7 @@ export class IterablePlayer implements Player {
    * still delivered while paused and `epoch` is current, since nothing else re-requests the frame
    * while paused; while playing, playback fills the panels by then and a late frame would be stale.
    */
+  /** The frame at the playhead is read first: panels' window scans wait while it is read. */
   private async _backfillTopics(
     epoch: number,
     time: Time,
@@ -424,6 +429,20 @@ export class IterablePlayer implements Player {
     onFramesDelivered?: () => void,
   ): Promise<void> {
     if (topics.length === 0) return;
+    const endForeground = this._backgroundReads.beginForeground();
+    try {
+      await this._backfillTopicsNow(epoch, time, topics, onFramesDelivered);
+    } finally {
+      endForeground();
+    }
+  }
+
+  private async _backfillTopicsNow(
+    epoch: number,
+    time: Time,
+    topics: readonly string[],
+    onFramesDelivered?: () => void,
+  ): Promise<void> {
     const isFrame = (topic: string): boolean => this._highFrequencyConsumersByTopic.has(topic);
     const ordered = [...topics.filter(isFrame), ...topics.filter((topic) => !isFrame(topic))];
     const pendingFrames = new Set(ordered.filter(isFrame));
@@ -1764,13 +1783,22 @@ export class IterablePlayer implements Player {
         if (args.signal?.aborted || emitted >= maxMessages) {
           break;
         }
-        // Waits for data: over a remote link the first chunk takes longer than a playback tick's
-        // wait, and an empty batch must mean the range is exhausted, not "not read yet".
-        const batch = await cursor.nextBatch(86_400_000, {
-          maxMessages: Math.min(batchSize, maxMessages - emitted),
-          maxWallTimeMs: batchWallTimeMs,
-          waitForData: true,
-        });
+        // A background scan: it yields to the frame at the playhead and shares the link with at
+        // most one other scan batch.
+        const release = await this._backgroundReads.acquire(args.signal);
+        if (!release) break;
+        let batch: MessageEvent[];
+        try {
+          // Waits for data: over a remote link the first chunk takes longer than a playback tick's
+          // wait, and an empty batch must mean the range is exhausted, not "not read yet".
+          batch = await cursor.nextBatch(86_400_000, {
+            maxMessages: Math.min(batchSize, maxMessages - emitted),
+            maxWallTimeMs: batchWallTimeMs,
+            waitForData: true,
+          });
+        } finally {
+          release();
+        }
         if (batch.length === 0) {
           break;
         }
@@ -1795,6 +1823,14 @@ export class IterablePlayer implements Player {
       args.signal?.removeEventListener("abort", onAbort);
       await endCursor();
     }
+  }
+
+  async getReadBoundaries(args: { start: Time; end: Time; topics: string[] }): Promise<Time[] | undefined> {
+    if (!this._initialization || args.topics.length === 0) return undefined;
+    const start = this._clampToRange(args.start);
+    const end = this._clampToRange(args.end);
+    if (toNano(start) > toNano(end)) return undefined;
+    return await this._source.getReadBoundaries({ start, end, topics: args.topics });
   }
 
   /**

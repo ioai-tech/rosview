@@ -4,11 +4,13 @@ import type {
   Initialization,
   MessageEvent,
   PlayerProblem,
+  Time,
 } from '@/core/types/ros';
 import { fromNano, toNano } from '@/shared/utils/time';
 import type { ISourceHandle, ResolveHighFrequencyLaneOptions } from './ISourceHandle';
 import type {
   GetAdjacentMessageArgs,
+  ReadBoundariesArgs,
   GetBackfillMessagesArgs,
   IMessageCursor,
   LoadProgress,
@@ -192,6 +194,13 @@ export class CombinedSourceProxy implements ISourceHandle {
       }
     }
     return Array.from(byTopic.values());
+  }
+
+  /** One member holds the topics: its boundaries. Several: none (their pieces would interleave). */
+  async getReadBoundaries(args: ReadBoundariesArgs): Promise<Time[] | undefined> {
+    const relevant = this._relevantMemberIndices(args.topics);
+    if (relevant.length !== 1) return undefined;
+    return await this._members[relevant[0]].source.getReadBoundaries(args);
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {

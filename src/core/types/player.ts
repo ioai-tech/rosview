@@ -161,6 +161,12 @@ export interface Player {
    * as the source cursor produces them so callers can render partial results.
    */
   streamMessagesInTimeRange?(args: StreamMessagesInTimeRangeArgs): AsyncIterable<MessageEvent[]>;
+  /**
+   * Where `[start, end]` can be cut so that the pieces are stored apart (MCAP chunks holding
+   * `topics`): reading the pieces in any order decodes each stored unit about once. The first
+   * boundary is `start`. Undefined when the source has no such units.
+   */
+  getReadBoundaries?(args: { start: Time; end: Time; topics: string[] }): Promise<Time[] | undefined>;
   startDataQualityScan?(): void;
   setSpeed(speed: number): void;
   setSamplingFps(fps: number): void;

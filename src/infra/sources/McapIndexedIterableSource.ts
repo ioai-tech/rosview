@@ -14,6 +14,7 @@ import type {
   BackfillTopicError,
   MessageIteratorArgs,
   GetBackfillMessagesArgs,
+  ReadBoundariesArgs,
 } from '@/infra/workers/types';
 import { parseChannel } from "./parseChannel";
 import type { ParsedChannel } from "./parseChannel";
@@ -305,6 +306,34 @@ export class McapIndexedIterableSource implements IIterableSource {
       ),
       schemaName: channel.schemaId !== 0 ? this._reader.schemasById.get(channel.schemaId)?.name ?? "" : "",
     };
+  }
+
+  getReadBoundaries({ start, end, topics }: ReadBoundariesArgs): Promise<Time[] | undefined> {
+    const startNs = toNano(start);
+    const endNs = toNano(end);
+    if (endNs < startNs || topics.length === 0) return Promise.resolve(undefined);
+    const wanted = new Set(topics);
+    const channelIds = new Set<number>();
+    for (const [id, channel] of this._reader.channelsById) if (wanted.has(channel.topic)) channelIds.add(id);
+    const spans: Array<[bigint, bigint]> = [];
+    for (const chunk of this._reader.chunkIndexes) {
+      if (chunk.messageEndTime < startNs || chunk.messageStartTime > endNs) continue;
+      if (![...chunk.messageIndexOffsets.keys()].some((id) => channelIds.has(id))) continue;
+      spans.push([chunk.messageStartTime, chunk.messageEndTime]);
+    }
+    spans.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    // A boundary is a chunk start that no earlier chunk passes: overlapping chunks stay one piece.
+    // A chunk that starts where the previous one ends (several messages at one time, split by
+    // size) is cut there; the previous chunk is then decoded again for that time only.
+    const boundaries: Time[] = [start];
+    let reach = -1n;
+    for (const [s, e] of spans) {
+      if (s >= reach && s > startNs && (boundaries.length === 1 || s > toNano(boundaries[boundaries.length - 1]))) {
+        boundaries.push(fromNano(s));
+      }
+      if (e > reach) reach = e;
+    }
+    return Promise.resolve(boundaries);
   }
 
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {
