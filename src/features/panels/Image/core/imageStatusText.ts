@@ -3,8 +3,8 @@ import type { ImageSurfaceStatus } from './imageTypes';
 
 /**
  * Overlay text for an image panel, in the viewer's UI language. Null when a frame is on screen.
- * `readError` (the player could not read this topic's frame) wins: the panel says why it has no
- * frame instead of waiting for one that will not come.
+ * With `readError` (the player could not read this topic's frame) it is null too: the panel shell
+ * says why, and the panel does not claim to be waiting for a frame that will not come.
  */
 export function getStatusText(
   status: ImageSurfaceStatus,
@@ -12,7 +12,7 @@ export function getStatusText(
   readError?: string,
 ): string | null {
   if (readError) {
-    return formatMessage({ id: 'panels.image.status.readFailed' }, { reason: readError });
+    return null;
   }
   if (status.phase === 'idle') {
     return formatMessage({ id: 'panels.image.status.waiting' });

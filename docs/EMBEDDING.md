@@ -171,7 +171,7 @@ clearCache();
 - The bucket / server CORS rules must apply to **error responses too** (403 included) and expose `Content-Range`, `Content-Length`, `ETag` and `Accept-Ranges`. Without CORS headers on a 403 the browser reports a network error and RosView cannot tell an expired URL from an outage; it then renews only when `urlExpiresAt` has passed (or is within 60 s).
 - `refreshUrls` receives the URL strings exactly as you passed them to `url` / `urls` (never made absolute).
 - A range request that receives no bytes for 20 s (60 s while waiting for the response) is stalled: RosView aborts it and asks once more for the bytes still missing. This includes the first request (the size probe, or the 1-byte check on a reopen). If that stalls too, the read fails with `RangeStallError` ("No data arrived from the server for 20 s …"). The viewer says so where the data is missing, instead of waiting forever:
-  - an Image or 3D panel whose frame could not be read shows the reason; the panel's other topics are still shown;
+  - every panel that reads a topic whose frame could not be read names the topic and the reason, and stops saying it is waiting for it; the panel's other topics are still shown. The error goes when the topic is read again (a seek, or a message during playback) or when no panel reads it any more;
   - Plot, Align and Timeline show it over their window;
   - playback stops with it (a read that only timed out first shows "Reading the recording timed out …", replaced by the real reason when it arrives);
   - CSV export shows it under the button.

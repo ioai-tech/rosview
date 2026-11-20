@@ -24,6 +24,7 @@ import { applyDepthTopicPreset } from './core/depthColorDefaults';
 import type { ImageConfig } from './defaults';
 import { TopicQuickPicker } from '../framework/TopicQuickPicker';
 import { getStatusText } from './core/imageStatusText';
+import { usePanelTopicReadError } from '@/features/panels/framework/panelReadErrors';
 import { PanelTopicBar } from '../framework/PanelTopicBar';
 import ImageRenderWorkerClass from './core/ImageRender.worker.ts?worker&inline';
 
@@ -94,7 +95,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const topicSchema = useMessagePipeline((state) =>
     state.playerState.activeData?.topics.find((entry) => entry.name === topic)?.type ?? '',
   );
-  const readError = useMessagePipeline((state) => state.playerState.activeData?.topicErrors?.[topic]);
+  const readError = usePanelTopicReadError(topic);
 
   // Worker lifecycle: init on mount, dispose on unmount
   useEffect(() => {
@@ -351,6 +352,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
         player.unregisterHighFrequencyConsumer(imageConsumerId);
         player.registerHighFrequencyConsumer(imageConsumerId, {
           topic,
+          panelId,
           lane: 'video',
           mode: 'all',
           onMessageBatch: dispatchHighFrequencyBatch,
@@ -378,6 +380,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     if (consumerModeRef.current === 'all') {
       player.registerHighFrequencyConsumer(imageConsumerId, {
         topic,
+        panelId,
         lane: 'video',
         mode: 'all',
         onMessageBatch: dispatchHighFrequencyBatch,
@@ -389,6 +392,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     } else {
       player.registerHighFrequencyConsumer(imageConsumerId, {
         topic,
+        panelId,
         lane: 'video',
         mode: 'latest',
         onLatestMessage: handleMessage,
@@ -414,7 +418,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       player.unregisterHighFrequencyConsumer(imageConsumerId);
       worker.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
     };
-  }, [imageConsumerId, player, topic, topicSchema]);
+  }, [imageConsumerId, panelId, player, topic, topicSchema]);
 
   useEffect(() => {
     return () => {
@@ -549,21 +553,10 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
           className="w-full h-full block"
           data-testid="image-panel-canvas"
         />
-        {readError ? (
-          <div
-            className="absolute inset-0 flex items-center justify-center px-4 text-center pointer-events-none text-red-300 text-xs"
-            role="alert"
-            data-testid="image-panel-read-error"
-          >
+        {showStatusText && statusText && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-white/40 italic text-xs">
             {statusText}
           </div>
-        ) : (
-          showStatusText &&
-          statusText && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-white/40 italic text-xs">
-              {statusText}
-            </div>
-          )
         )}
         {showStatusText && status.phase === 'ready' && status.width && status.height && (
           <div

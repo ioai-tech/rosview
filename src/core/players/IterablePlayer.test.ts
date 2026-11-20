@@ -1916,3 +1916,98 @@ describe('IterablePlayer honest errors', () => {
     }
   });
 });
+
+describe('IterablePlayer read errors by panel', () => {
+  const MAP_TOPIC = '/scene/map';
+  const reason = 'No data arrived from the server for 20 s while reading rec (bytes 0–1), also after a retry.';
+
+  /** A source whose backfill of `failing` topics fails; others deliver one message. */
+  function failingSource(failing: Set<string>) {
+    const source = makeSource([]);
+    vi.mocked(source.getBackfillMessages).mockImplementation(async ({ topics, time }, onTopic) => {
+      for (const topic of topics) {
+        if (failing.has(topic)) await onTopic?.(topic, [], { name: 'RangeStallError', message: reason });
+        else await onTopic?.(topic, [{ ...makeImageMessageAt(time.sec), topic }]);
+      }
+      return [];
+    });
+    return source;
+  }
+
+  it('lists each panel its failed topics, including those of its high-frequency consumers', async () => {
+    const source = failingSource(new Set([MAP_TOPIC, TOPIC]));
+    const player = new IterablePlayer(source);
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('Raw!1', [{ topic: MAP_TOPIC, subscriberId: 'Raw!1' }]);
+      player.registerSubscriptions('3D!1', [
+        { topic: MAP_TOPIC, subscriberId: '3D!1' },
+        { topic: '/tf', subscriberId: '3D!1' },
+      ]);
+      player.registerHighFrequencyConsumer('Image!1:image-main', { topic: TOPIC, lane: 'video', onLatestMessage: vi.fn() });
+      await flushAsyncWork();
+      expect(state?.activeData?.panelReadErrors).toEqual({
+        'Raw!1': [{ topic: MAP_TOPIC, message: reason }],
+        '3D!1': [{ topic: MAP_TOPIC, message: reason }],
+        'Image!1': [{ topic: TOPIC, message: reason }],
+      });
+    } finally {
+      player.close();
+    }
+  });
+
+  it('drops the error of a topic that no panel reads any more', async () => {
+    const source = failingSource(new Set([MAP_TOPIC]));
+    const player = new IterablePlayer(source);
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('Raw!1', [{ topic: MAP_TOPIC, subscriberId: 'Raw!1' }]);
+      player.registerSubscriptions('Raw!2', [{ topic: TOPIC, subscriberId: 'Raw!2' }]);
+      await flushAsyncWork();
+      expect(state?.activeData?.problems).toContainEqual({ severity: 'error', message: `${MAP_TOPIC}: ${reason}` });
+
+      player.unregisterSubscriptions('Raw!1');
+      await flushAsyncWork();
+      expect(state?.activeData?.topicErrors).toEqual({});
+      expect(state?.activeData?.panelReadErrors).toBeUndefined();
+      expect(state?.activeData?.problems.some((p) => p.message.startsWith(MAP_TOPIC))).toBe(false);
+    } finally {
+      player.close();
+    }
+  });
+
+  it('clears a topic error when playback delivers that topic', async () => {
+    const clock = installFakePlaybackClock();
+    const source = failingSource(new Set([MAP_TOPIC]));
+    const cursor = {
+      nextBatch: vi.fn(async () => [{ ...makeImageMessageAtMs(50), topic: MAP_TOPIC }]),
+      end: vi.fn(async () => undefined),
+    };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source);
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('Raw!1', [{ topic: MAP_TOPIC, subscriberId: 'Raw!1' }]);
+      await flushAsyncWork();
+      expect(state?.activeData?.topicErrors).toEqual({ [MAP_TOPIC]: reason });
+
+      player.play();
+      for (const now of [100, 200, 300]) {
+        clock.now = now;
+        clock.runNextRaf();
+        await flushAsyncWork();
+      }
+      expect(state?.activeData?.topicErrors).toEqual({});
+      expect(state?.activeData?.panelReadErrors).toBeUndefined();
+    } finally {
+      player.close();
+      clock.restore();
+    }
+  });
+});

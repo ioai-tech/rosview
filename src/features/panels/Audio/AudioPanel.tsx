@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { usePanelTopicReadError } from '@/features/panels/framework/panelReadErrors';
 import { useIntl } from 'react-intl';
 import { useShallow } from 'zustand/react/shallow';
 import { timeToNs } from '@/core/analysis/timeSeries';
@@ -254,8 +255,11 @@ export const AudioPanel: React.FC<AudioPanelProps> = (props) => {
     drawWaveform,
   ]);
 
+  const readError = usePanelTopicReadError(config.topic);
   const statusLabel = useMemo(() => {
     if (!config.topic) return formatMessage({ id: 'panels.audio.status.waitingTopic' });
+    // The panel shell says why this topic could not be read; do not claim to wait for it.
+    if (readError && statusKey === 'waiting') return '';
     if (!allowPlayback && isPlaying && !config.mute) {
       if (Math.abs(speed - 1) >= 1e-4) {
         return formatMessage({ id: 'panels.audio.status.mutedNon1x' });
@@ -283,7 +287,7 @@ export const AudioPanel: React.FC<AudioPanelProps> = (props) => {
       default:
         return statusKey;
     }
-  }, [allowPlayback, config.mute, config.topic, formatMessage, isPlaying, speed, statusKey]);
+  }, [allowPlayback, config.mute, config.topic, formatMessage, isPlaying, readError, speed, statusKey]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card" data-testid="audio-panel">

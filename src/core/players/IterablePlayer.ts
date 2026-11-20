@@ -1,6 +1,7 @@
 import type {
   GetMessagesInTimeRangeArgs,
   HighFrequencyConsumer,
+  TopicReadError,
   Player,
   PlayerState,
   StreamMessagesInTimeRangeArgs,
@@ -249,11 +250,13 @@ export class IterablePlayer implements Player {
   registerSubscriptions(panelId: string, subscriptions: Subscription[]): void {
     this._subscriptionsByPanel.set(panelId, subscriptions);
     void this._rebuildSubscriptions();
+    this._onReadersChanged();
   }
 
   unregisterSubscriptions(panelId: string): void {
     this._subscriptionsByPanel.delete(panelId);
     void this._rebuildSubscriptions();
+    this._onReadersChanged();
   }
 
   registerHighFrequencyConsumer(consumerId: string, consumer: HighFrequencyConsumer): void {
@@ -262,6 +265,7 @@ export class IterablePlayer implements Player {
     this._highFrequencyConsumersById.set(consumerId, consumer);
     this._rebuildHighFrequencyConsumerIndex();
     void this._handleHighFrequencyConsumerChange(prevTopics, prevSignature);
+    this._onReadersChanged();
   }
 
   unregisterHighFrequencyConsumer(consumerId: string): void {
@@ -270,6 +274,7 @@ export class IterablePlayer implements Player {
     this._highFrequencyConsumersById.delete(consumerId);
     this._rebuildHighFrequencyConsumerIndex();
     void this._handleHighFrequencyConsumerChange(prevTopics, prevSignature);
+    this._onReadersChanged();
   }
 
   setSubscriptions(subscriptions: Subscription[]): void {
@@ -497,13 +502,55 @@ export class IterablePlayer implements Player {
     return changed;
   }
 
+  /**
+   * Who reads what changed (a panel opened, closed or changed topics): an error of a topic no panel
+   * reads any more is dropped, and the per-panel view of the errors is recomputed.
+   */
+  private _onReadersChanged(): void {
+    if (this._topicReadErrors.size === 0 && !this._state.activeData?.panelReadErrors) return;
+    const current = new Set(this._currentTopics());
+    for (const topic of [...this._topicReadErrors.keys()]) {
+      if (!current.has(topic)) this._topicReadErrors.delete(topic);
+    }
+    this._syncProblems();
+    this._emitState();
+  }
+
+  /** Topics read by each panel: its subscriptions and its high-frequency consumers. */
+  private _topicsByPanel(): Map<string, Set<string>> {
+    const byPanel = new Map<string, Set<string>>();
+    const add = (panelId: string, topic: string): void => {
+      let topics = byPanel.get(panelId);
+      if (!topics) byPanel.set(panelId, (topics = new Set()));
+      topics.add(topic);
+    };
+    for (const [panelId, subscriptions] of this._subscriptionsByPanel) {
+      for (const subscription of subscriptions) add(panelId, subscription.topic);
+    }
+    for (const [consumerId, consumer] of this._highFrequencyConsumersById) {
+      add(consumer.panelId ?? consumerId.split(":")[0], consumer.topic);
+    }
+    return byPanel;
+  }
+
   /** Publishes playback problems and per-topic read errors on the active data. */
   private _syncProblems(): void {
     if (!this._state.activeData) return;
     const topicErrors = Object.fromEntries(this._topicReadErrors);
+    let panelReadErrors: Record<string, TopicReadError[]> | undefined;
+    if (this._topicReadErrors.size > 0) {
+      panelReadErrors = {};
+      for (const [panelId, topics] of this._topicsByPanel()) {
+        const failed = [...topics]
+          .filter((topic) => this._topicReadErrors.has(topic))
+          .map((topic) => ({ topic, message: this._topicReadErrors.get(topic)! }));
+        if (failed.length > 0) panelReadErrors[panelId] = failed;
+      }
+    }
     this._state.activeData = {
       ...this._state.activeData,
       topicErrors,
+      panelReadErrors,
       problems: [
         ...(this._initialization?.problems ?? []),
         ...this._playbackProblems,

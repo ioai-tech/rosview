@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePanelTopicReadError } from '@/features/panels/framework/panelReadErrors';
 import { ChevronRight } from 'lucide-react';
 import { useIntl } from 'react-intl';
 import { toast } from 'sonner';
@@ -348,6 +349,7 @@ export const RawMessagesPanel: React.FC<RawMessagesPanelProps> = ({
   setConfig,
 }) => {
   const { formatMessage } = useIntl();
+  const readError = usePanelTopicReadError(topic);
   const topics = useMessagePipeline((state: MessagePipelineState) => state.sortedTopics);
   const didAutoPickTopicRef = useRef(false);
   const isImageTopic = useMemo(() => {
@@ -738,9 +740,9 @@ export const RawMessagesPanel: React.FC<RawMessagesPanelProps> = ({
               ))}
             </div>
           </div>
-        ) : (
+        ) : readError ? null : (
           <div className="flex h-full items-center justify-center text-xs italic text-muted-foreground">
-            Waiting for messages...
+            {formatMessage({ id: 'panels.rawMessages.waiting' })}
           </div>
         )}
       </div>

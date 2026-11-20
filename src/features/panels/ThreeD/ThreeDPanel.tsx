@@ -53,7 +53,6 @@ import {
 import type { JointStateMsg, TFMessage } from './core/types';
 import { applyMarkerUpdate, headerFrame, markersToPrimitives, type FrameResolver, type MarkerUpdate, type ScenePrimitive } from './core/markers';
 import { TransformTree } from './core/transformTree';
-import { readErrorLines } from './core/readErrors';
 
 import {
   defaultThreeDConfig,
@@ -654,6 +653,7 @@ const LivePointCloudLayer = ({
     let cachedFields: PointCloudFieldWire[] | null = null;
     player.registerHighFrequencyConsumer(consumerId, {
       topic,
+      panelId,
       lane: 'pointcloud',
       mode: 'latest',
       onLatestMessage: (msg) => {
@@ -1523,7 +1523,6 @@ const Scene = ({
   urdf,
   topicSettings,
   onMeshLoadProgressChange,
-  onTopicsChange,
 }: {
   player: Player;
   panelId: string;
@@ -1537,8 +1536,6 @@ const Scene = ({
   urdf: UrdfSource;
   topicSettings: ThreeDTopicSetting[];
   onMeshLoadProgressChange?: (progress: MeshLoadProgress | null) => void;
-  /** The topics this scene subscribes to (to show which of them could not be read). */
-  onTopicsChange?: (topics: string[]) => void;
 }) => {
   const [tracks, setTracks] = useState<Simple3DTrack[]>([]);
   const [markerPrimitives, setMarkerPrimitives] = useState<MarkerPrimitive[]>([]);
@@ -1767,9 +1764,8 @@ const Scene = ({
     if (subs.length > 0) {
       player.registerSubscriptions(panelId, subs);
     }
-    onTopicsChange?.(subs.map((sub) => sub.topic));
     return () => player.unregisterSubscriptions(panelId);
-  }, [player, panelId, urdfTopic, jointsTopic, bvhTopic, enabledTopicSettings, tfTopics, onTopicsChange]);
+  }, [player, panelId, urdfTopic, jointsTopic, bvhTopic, enabledTopicSettings, tfTopics]);
 
   const tfTopicSet = useMemo(() => new Set(tfTopics), [tfTopics]);
   const topicSettingByName = useMemo(
@@ -2039,12 +2035,6 @@ export const ThreeDPanel: React.FC<ThreeDPanelProps> = ({
   const colors = useMemo(() => getScenePanelThemeColors(resolvedTheme), [resolvedTheme]);
   const resolvedUrdf = urdf ?? defaultUrdfSource();
   const [meshLoadProgress, setMeshLoadProgress] = useState<MeshLoadProgress | null>(null);
-  const [sceneTopics, setSceneTopics] = useState<readonly string[]>([]);
-  const topicErrors = useMessagePipeline((state: MessagePipelineState) => state.playerState.activeData?.topicErrors);
-  const readErrors = useMemo(
-    () => readErrorLines(topicErrors, sceneTopics, formatMessage),
-    [topicErrors, sceneTopics, formatMessage],
-  );
   const isMeshLoading =
     meshLoadProgress !== null &&
     meshLoadProgress.total > 0 &&
@@ -2064,19 +2054,6 @@ export const ThreeDPanel: React.FC<ThreeDPanelProps> = ({
           ? `Loading Mesh ${meshLoadProgress.loaded}/${meshLoadProgress.total} (${meshLoadPercent}%)`
           : formatMessage({ id: 'panels.threeD.defaultTitle' })}
       </div>
-      {readErrors.length > 0 && (
-        <div
-          className="absolute top-9 left-2 right-2 z-10 space-y-0.5 rounded px-2 py-1 text-[11px] text-red-300 bg-black/60 pointer-events-none"
-          role="alert"
-          data-testid="three-d-read-error"
-        >
-          {readErrors.map((line) => (
-            <p key={line} className="break-words">
-              {line}
-            </p>
-          ))}
-        </div>
-      )}
       <ThreeCanvas
         shadows
         gl={CANVAS_GL}
@@ -2098,7 +2075,6 @@ export const ThreeDPanel: React.FC<ThreeDPanelProps> = ({
           urdf={resolvedUrdf}
           topicSettings={topicSettings}
           onMeshLoadProgressChange={setMeshLoadProgress}
-          onTopicsChange={setSceneTopics}
         />
       </ThreeCanvas>
     </div>

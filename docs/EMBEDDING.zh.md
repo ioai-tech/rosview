@@ -171,7 +171,7 @@ clearCache();
 - 桶 / 服务器的 CORS 规则必须同样作用于**错误响应**（包括 403），并暴露 `Content-Range`、`Content-Length`、`ETag`、`Accept-Ranges`。403 没有 CORS 头时浏览器只报网络错误，RosView 无法区分 URL 过期与网络故障，此时仅在 `urlExpiresAt` 已过（或 60 秒内）时续期。
 - `refreshUrls` 收到的 URL 字符串与你传给 `url` / `urls` 的完全一致（不会被补全为绝对地址）。
 - Range 请求若 20 秒内没有收到任何字节（等待响应时为 60 秒）即视为停滞：RosView 中止该请求，并对仍缺少的字节再请求一次。第一个请求（读取文件大小的探测，或重新打开时的 1 字节核对）也是如此。若再次停滞，读取以 `RangeStallError`（“No data arrived from the server for 20 s …”）失败。查看器会在缺数据的地方说明原因，而不是一直等待：
-  - 无法读取当前帧的 Image 或 3D 面板显示原因，面板的其他话题照常显示；
+  - 凡是读取了“当前帧无法读取”的话题的面板，都会写明该话题和原因，不再显示“等待中”；面板的其他话题照常显示。该话题重新读取后（跳转，或播放中收到它的消息），或已没有面板读取它时，错误消失；
   - Plot、Align 和 Timeline 在其时间窗口上显示原因；
   - 播放随之停止（读取先超时时显示 “Reading the recording timed out …”，真实原因到达后替换）；
   - CSV 导出在按钮下方显示原因。
