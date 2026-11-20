@@ -6,6 +6,9 @@
  *
  * Request log: GET /__log returns JSON [{ path, start, end, t0, t1, status }], DELETE /__log clears it.
  * `?exp=<epochMs>` on a data URL answers 403 after that time (simulates an expired presigned URL).
+ * Stall: PUT /__stall?from=<byte>&to=<byte>&after=<bytes> makes every request whose range overlaps
+ * [from, to] send `after` bytes (default 65536) and then hold the response open until the client
+ * gives up; DELETE /__stall ends it (held responses stay held). Logged entries get `stalled: true`.
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -23,13 +26,18 @@ const latencyMs = opt('latency-ms', 20);
 const SLICE = 16 * 1024;
 
 const log = [];
+/** @type {{ from: number, to: number, after: number } | null} */
+let stall = null;
 let nextFree = 0; // shared link: serialises slices across connections
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function paced(res, stream, onEnd) {
+async function paced(res, stream, onEnd, limit = Infinity) {
+  let sent = 0;
   for await (const buf of stream) {
     for (let o = 0; o < buf.length; o += SLICE) {
-      const slice = buf.subarray(o, o + SLICE);
+      if (sent >= limit) return; // stalled: hold the response open; the client's close ends it
+      const slice = buf.subarray(o, o + Math.min(SLICE, limit - sent));
+      sent += slice.length;
       const now = performance.now();
       nextFree = Math.max(nextFree, now) + slice.length / bytesPerMs;
       const wait = nextFree - now;
@@ -49,6 +57,15 @@ http
     res.setHeader('Access-Control-Allow-Headers', 'Range');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
     if (req.method === 'OPTIONS') return res.writeHead(204).end();
+    if (url.pathname === '/__stall') {
+      if (req.method === 'DELETE') stall = null;
+      else if (req.method === 'PUT') {
+        const n = (k, d) => (url.searchParams.has(k) ? Number(url.searchParams.get(k)) : d);
+        stall = { from: n('from', 0), to: n('to', Number.MAX_SAFE_INTEGER), after: n('after', 65536) };
+      }
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify(stall));
+    }
     if (url.pathname === '/__log') {
       if (req.method === 'DELETE') log.length = 0;
       res.setHeader('Content-Type', 'application/json');
@@ -74,7 +91,8 @@ http
       }
       if (start >= size) return res.writeHead(416, { 'Content-Range': `bytes */${size}` }).end();
     }
-    const entry = { path: url.pathname, start, end, t0: Date.now(), t1: 0, status };
+    const stalled = stall != null && start <= stall.to && end >= stall.from;
+    const entry = { path: url.pathname, start, end, t0: Date.now(), t1: 0, status, ...(stalled ? { stalled } : {}) };
     log.push(entry);
     await sleep(latencyMs);
     res.writeHead(status, {
@@ -85,7 +103,12 @@ http
     });
     if (req.method === 'HEAD') return res.end();
     req.on('close', () => (entry.t1 ||= Date.now()));
-    await paced(res, fs.createReadStream(file, { start, end, highWaterMark: 256 * 1024 }), () => (entry.t1 ||= Date.now()));
+    await paced(
+      res,
+      fs.createReadStream(file, { start, end, highWaterMark: 256 * 1024 }),
+      () => (entry.t1 ||= Date.now()),
+      stalled ? stall.after : Infinity,
+    );
   })
   .listen(port, '127.0.0.1', function () {
     // `--port 0` picks a free port; the line below names it (tests parse it).
