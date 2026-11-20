@@ -496,7 +496,7 @@ describe('whole-file mode on a server without Range ends with the download', () 
 });
 
 describe('stalled requests', () => {
-  type Mode = 'ok' | 'stall-body' | 'stall-headers';
+  type Mode = 'ok' | 'stall-body' | 'stall-headers' | 'short';
 
   /** Answers range requests in order of `modes` (then 'ok'); a stalled one honours only its abort signal. */
   function stallingServer(size: number, modes: Mode[]) {
@@ -519,6 +519,9 @@ describe('stalled requests', () => {
         start(controller) {
           if (mode === 'ok') {
             controller.enqueue(body);
+            controller.close();
+          } else if (mode === 'short') {
+            controller.enqueue(body.slice(0, 100)); // the response ends early
             controller.close();
           } else {
             controller.enqueue(body.slice(0, B)); // one block, then nothing
@@ -567,6 +570,22 @@ describe('stalled requests', () => {
     const source = new RangeSource({ url: 'https://x/a', cache: new RangeBlockCache(), fetchImpl: server.fetchImpl, stallTimeoutMs: 30 });
     expect(same(await source.read(B, 16), server.data.slice(B, B + 16))).toBe(true);
     source.dispose();
+  });
+
+  it('a size probe whose response ends early is asked again once, then fails', async () => {
+    const once = stallingServer(16 * B, ['short']);
+    const a = new RangeSource({ url: 'https://x/a', cache: new RangeBlockCache(), fetchImpl: once.fetchImpl, stallTimeoutMs: 30 });
+    expect(same(await a.read(B, 16), once.data.slice(B, B + 16))).toBe(true);
+    expect(once.requests.slice(0, 2).map((r) => [r.start, r.mode])).toEqual([
+      [0, 'short'],
+      [0, 'ok'],
+    ]);
+    a.dispose();
+    const twice = stallingServer(16 * B, ['short', 'short']);
+    const b = new RangeSource({ url: 'https://x/a', cache: new RangeBlockCache(), fetchImpl: twice.fetchImpl, stallTimeoutMs: 30 });
+    await expect(b.read(B, 16)).rejects.toThrow('Short read from the range server');
+    expect(twice.requests).toHaveLength(2);
+    b.dispose();
   });
 
   it('the one-byte revalidation of a reopen has the same stall detection', async () => {

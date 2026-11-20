@@ -120,6 +120,14 @@ function deferredVoid(): { promise: Promise<void>; resolve: () => void; reject: 
 /** Another request already runs against a server that ignores Range; wait for its whole-file response. */
 class WholeFileInFlight extends Error {}
 
+/** The server's response ended before the requested bytes. */
+class ShortReadError extends Error {
+  constructor() {
+    super('Short read from the range server');
+    this.name = 'ShortReadError';
+  }
+}
+
 function abortError(): Error {
   const e = new Error('Aborted');
   e.name = 'AbortError';
@@ -238,8 +246,11 @@ export class RangeSource implements RenewableUrl {
         try {
           return await this.#probeOnce(revalidate, controller, watch);
         } catch (err) {
-          if (!watch.stalled) throw err;
-          if (++stalls > STALL_RETRIES) throw this.#stallError(`opening ${this.#describe()}`);
+          // A response that stalls or ends early is asked for once more, like any other read.
+          if (!watch.stalled && !(err instanceof ShortReadError)) throw err;
+          if (++stalls > STALL_RETRIES) {
+            throw watch.stalled ? this.#stallError(`opening ${this.#describe()}`) : err;
+          }
         } finally {
           watch.dispose();
         }
@@ -276,7 +287,7 @@ export class RangeSource implements RenewableUrl {
     }
     const run: Run = { first: 0, last: 0, kind: 'demand', controller, deferreds: new Map() };
     await this.#consume(res, run, 0, { onBytes: watch.touch, signal: watch.signal });
-    if (!this.#store.has(0)) throw new Error('Short read from the range server');
+    if (!this.#store.has(0)) throw new ShortReadError();
     return this.#size;
   }
 
@@ -528,7 +539,7 @@ export class RangeSource implements RenewableUrl {
           watch.touch();
           next = await this.#consume(res, run, next, { onBytes: watch.touch, signal: watch.signal });
           if (next > run.last) break;
-          throw new Error('Short read from the range server');
+          throw new ShortReadError();
         } catch (err) {
           if (run.controller.signal.aborted) throw abortError();
           if (watch.stalled) {
