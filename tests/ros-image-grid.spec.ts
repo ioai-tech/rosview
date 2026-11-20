@@ -35,3 +35,16 @@ test('loads the three-camera compressed image sample without empty decoder paylo
   expect(diagnostics.pageErrors.filter((entry) => /ImageDecoder|No image data provided/i.test(entry))).toEqual([]);
   expect(diagnostics.consoleErrors.filter((entry) => /ImageDecoder|No image data provided/i.test(entry))).toEqual([]);
 });
+
+test('frame details (size, encoding) are shown beside the picture, never drawn over it', async ({ page }) => {
+  await openFixtureByUrl(page, MCAP_3CAM_URL);
+  await expect(page.getByTestId('image-panel-status')).toHaveCount(3, { timeout: 90_000 });
+  const overlaps = await page.getByTestId('image-panel').evaluateAll((panels) =>
+    panels.map((panel) => {
+      const canvas = panel.querySelector('[data-testid="image-panel-canvas"]')!.getBoundingClientRect();
+      const info = panel.querySelector('[data-testid="image-panel-status"]')!.getBoundingClientRect();
+      return info.bottom > canvas.top && info.top < canvas.bottom && info.right > canvas.left && info.left < canvas.right;
+    }),
+  );
+  expect(overlaps).toEqual([false, false, false]);
+});
