@@ -2106,3 +2106,137 @@ describe('IterablePlayer background range scans', () => {
     }
   });
 });
+
+describe('IterablePlayer frame-priority reads and the window gate', () => {
+  function hangingCursor(onBatch?: () => void) {
+    return {
+      nextBatch: vi.fn(() => {
+        onBatch?.();
+        return new Promise<MessageEvent[]>(() => undefined);
+      }),
+      end: vi.fn(async () => undefined),
+    };
+  }
+
+  async function first(iterable: AsyncIterable<MessageEvent[]>): Promise<void> {
+    for await (const batch of iterable) {
+      void batch;
+      return;
+    }
+  }
+
+  it('starts a frame-priority read at once while window reads hold both slots, and holds new window reads while it runs', async () => {
+    const source = makeSource([]);
+    let windowBatches = 0;
+    let frameBatches = 0;
+    let releaseFrame: () => void = () => undefined;
+    vi.mocked(source.getMessageCursor).mockImplementation(async ({ topics }) => {
+      if (topics[0] === '/frame') {
+        return {
+          nextBatch: vi.fn(async () => {
+            frameBatches++;
+            await new Promise<void>((resolve) => (releaseFrame = resolve));
+            return [];
+          }),
+          end: vi.fn(async () => undefined),
+        } as never;
+      }
+      return hangingCursor(() => windowBatches++) as never;
+    });
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      const range = { start: { sec: 0, nsec: 0 }, end: { sec: 5, nsec: 0 } };
+      // Two plots' window reads that never finish (a slow link) hold both slots.
+      void first(player.streamMessagesInTimeRange({ ...range, topics: [TOPIC] }));
+      void first(player.streamMessagesInTimeRange({ ...range, topics: [TOPIC] }));
+      await flushAsyncWork();
+      expect(windowBatches).toBe(2);
+
+      // The H.264 keyframe repair after a seek.
+      const frameRead = first(player.streamMessagesInTimeRange({ ...range, topics: ['/frame'], priority: 'frame' }));
+      await flushAsyncWork();
+      expect(frameBatches).toBe(1);
+
+      // Window reads wait while it runs ...
+      const controller = new AbortController();
+      void first(player.streamMessagesInTimeRange({ ...range, topics: [TOPIC], signal: controller.signal }));
+      await flushAsyncWork();
+      expect(windowBatches).toBe(2);
+      releaseFrame();
+      await frameRead;
+      controller.abort();
+    } finally {
+      player.close();
+    }
+  });
+
+  it('does not open the cursor of a window read that waits for a slot (a worker cursor reads from the moment it is made)', async () => {
+    const source = makeSource([]);
+    vi.mocked(source.getMessageCursor).mockImplementation(async () => hangingCursor() as never);
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      const range = { start: { sec: 0, nsec: 0 }, end: { sec: 5, nsec: 0 }, topics: [TOPIC] };
+      for (let i = 0; i < 4; i++) void first(player.streamMessagesInTimeRange(range));
+      await flushAsyncWork();
+      expect(source.getMessageCursor).toHaveBeenCalledTimes(2);
+    } finally {
+      player.close();
+    }
+  });
+
+  it('lets window reads go once the playhead\'s images are delivered, while a large map is still read', async () => {
+    const source = makeSource([]);
+    let windowBatches = 0;
+    vi.mocked(source.getMessageCursor).mockImplementation(async () => hangingCursor(() => windowBatches++) as never);
+    const MAP = '/scene/map';
+    vi.mocked(source.getBackfillMessages).mockImplementation(async ({ topics, time }, onTopic) => {
+      for (const topic of topics) {
+        if (topic === MAP) await new Promise<void>(() => undefined); // the map never arrives
+        await onTopic?.(topic, [{ ...makeImageMessageAt(time.sec), topic }]);
+      }
+      return [];
+    });
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      player.registerHighFrequencyConsumer('Image!1:image-main', { topic: TOPIC, lane: 'video', onLatestMessage: vi.fn() });
+      player.registerSubscriptions('3D!1', [{ topic: MAP, subscriberId: '3D!1' }]);
+      player.seek({ sec: 1, nsec: 0 });
+      await flushAsyncWork();
+
+      void first(player.streamMessagesInTimeRange({ start: { sec: 0, nsec: 0 }, end: { sec: 5, nsec: 0 }, topics: [TOPIC] }));
+      await flushAsyncWork();
+      expect(windowBatches).toBe(1);
+    } finally {
+      player.close();
+    }
+  });
+
+  it('frees the slot of a window read that fails (a stalled range), so later reads still run', async () => {
+    const source = makeSource([]);
+    let calls = 0;
+    vi.mocked(source.getMessageCursor).mockImplementation(async () => ({
+      nextBatch: vi.fn(async () => {
+        calls++;
+        if (calls <= 2) throw Object.assign(new Error('No data arrived from the server for 20 s'), { name: 'RangeStallError' });
+        return calls === 3 ? [makeImageMessageAt(1)] : [];
+      }),
+      end: vi.fn(async () => undefined),
+    }) as never);
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      const range = { start: { sec: 0, nsec: 0 }, end: { sec: 5, nsec: 0 }, topics: [TOPIC] };
+      for (let i = 0; i < 2; i++) {
+        await expect(first(player.streamMessagesInTimeRange(range))).rejects.toThrow('No data arrived');
+      }
+      let got = 0;
+      for await (const batch of player.streamMessagesInTimeRange(range)) got += batch.length;
+      expect(got).toBe(1);
+    } finally {
+      player.close();
+    }
+  });
+});

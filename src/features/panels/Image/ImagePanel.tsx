@@ -171,6 +171,12 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
         return;
       }
       const nextStatus = data.status;
+      // The time of the frame on the canvas, for browser measurements; set directly, since a new
+      // frame of the same size changes no UI state.
+      const frameTime = nextStatus.phase === 'ready' ? nextStatus.receiveTime : undefined;
+      if (frameTime && viewportRef.current) {
+        viewportRef.current.dataset.frameTime = `${frameTime.sec}.${String(frameTime.nsec).padStart(9, '0')}`;
+      }
       if (isUiStatusEqual(lastUiStatusRef.current, nextStatus)) {
         return;
       }
@@ -534,7 +540,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       data-h264-rendered-frames={metrics?.renderedFrames}
       data-h264-waiting-for-idr={metrics ? String(metrics.waitingForIdr) : undefined}
     >
-      <PanelTopicBar className="border-zinc-800 bg-zinc-950">
+      <PanelTopicBar className="@container/topicbar border-zinc-800 bg-zinc-950">
         <TopicQuickPicker
           value={topic}
           onChange={(nextTopic) => setConfig((prev) => applyDepthTopicPreset(nextTopic, prev))}
@@ -543,10 +549,10 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
           className="min-w-0 flex-1"
           triggerClassName="border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-900 hover:text-zinc-50"
         />
-        {/* Frame details sit in the bar, never over the picture. */}
+        {/* Frame details sit in the bar, never over the picture; a narrow bar keeps its room for the topic. */}
         {showStatusText && status.phase === 'ready' && status.width && status.height && (
           <span
-            className="min-w-0 max-w-[45%] shrink truncate font-mono text-[10px] text-zinc-400"
+            className="min-w-0 max-w-[45%] shrink truncate font-mono text-[10px] text-zinc-400 @max-[220px]/topicbar:hidden"
             title={`${status.width}x${status.height} ${status.encoding ?? ''}`.trim()}
             data-testid="image-panel-status"
           >

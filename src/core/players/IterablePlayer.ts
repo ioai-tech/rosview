@@ -37,7 +37,7 @@ const STALE_TOPIC_REFRESH_COOLDOWN_MS = 500;
 const SLOW_DISTRIBUTION_MS = 16;
 const RANGE_READ_MAX_MESSAGES = 80_000;
 const RANGE_READ_BATCH_MESSAGES = 2048;
-/** Background range-scan batches (Plot, Align, Timeline windows) in flight at once, all panels together. */
+/** Window range scans (Plot, Align, Timeline windows, CSV export) reading at once, all panels together. */
 const BACKGROUND_READ_SLOTS = 2;
 const RANGE_READ_BATCH_WALL_MS = 16;
 const PLAYBACK_PREFETCH_AHEAD_MS = 250;
@@ -431,22 +431,29 @@ export class IterablePlayer implements Player {
     if (topics.length === 0) return;
     const endForeground = this._backgroundReads.beginForeground();
     try {
-      await this._backfillTopicsNow(epoch, time, topics, onFramesDelivered);
+      await this._backfillTopicsNow(epoch, time, topics, onFramesDelivered, endForeground);
     } finally {
       endForeground();
     }
   }
 
+  /**
+   * `endFramesRead` ends the frame's hold on window scans: once the playhead's images (and point
+   * clouds) are delivered, or at the end when the panels read none. A large map or a latched topic
+   * read after them does not hold the plots.
+   */
   private async _backfillTopicsNow(
     epoch: number,
     time: Time,
     topics: readonly string[],
     onFramesDelivered?: () => void,
+    endFramesRead?: () => void,
   ): Promise<void> {
     const isFrame = (topic: string): boolean => this._highFrequencyConsumersByTopic.has(topic);
     const ordered = [...topics.filter(isFrame), ...topics.filter((topic) => !isFrame(topic))];
     const pendingFrames = new Set(ordered.filter(isFrame));
     let framesDelivered = pendingFrames.size > 0 ? onFramesDelivered : undefined;
+    const framesRead = pendingFrames.size > 0 ? endFramesRead : undefined;
     const delivered = new Set<string>();
     let late = false;
     // A new attempt at these topics' frame: their previous read errors no longer apply.
@@ -457,6 +464,7 @@ export class IterablePlayer implements Player {
         delivered.add(topic);
         pendingFrames.delete(topic);
       }
+      if (pendingFrames.size === 0) framesRead?.();
       if (error) {
         // The panels of these topics show why their frame is missing instead of waiting forever.
         for (const topic of done) this._topicReadErrors.set(topic, error.message);
@@ -1755,6 +1763,23 @@ export class IterablePlayer implements Player {
       return;
     }
 
+    // A window scan takes its slot before its cursor exists (a worker cursor reads ahead from the
+    // moment it is made) and keeps it until the cursor ends: at most two window scans read the link
+    // at once, all panels together, and none starts while the frame at the playhead is read. A
+    // frame-priority read (an H.264 keyframe after a seek) goes at once and holds window scans back.
+    const frame = args.priority === 'frame';
+    const release = frame ? this._backgroundReads.beginForeground() : await this._backgroundReads.acquire(args.signal);
+    if (!release) return;
+    try {
+      yield* this._scanRange(args, start, end);
+    } finally {
+      release();
+    }
+  }
+
+  private async *_scanRange(args: StreamMessagesInTimeRangeArgs, start: Time, end: Time): AsyncIterable<MessageEvent[]> {
+    const startNs = toNano(start);
+    const endNs = toNano(end);
     const cursor = await this._source.getMessageCursor({
       startTime: start,
       endTime: end,
@@ -1783,22 +1808,13 @@ export class IterablePlayer implements Player {
         if (args.signal?.aborted || emitted >= maxMessages) {
           break;
         }
-        // A background scan: it yields to the frame at the playhead and shares the link with at
-        // most one other scan batch.
-        const release = await this._backgroundReads.acquire(args.signal);
-        if (!release) break;
-        let batch: MessageEvent[];
-        try {
-          // Waits for data: over a remote link the first chunk takes longer than a playback tick's
-          // wait, and an empty batch must mean the range is exhausted, not "not read yet".
-          batch = await cursor.nextBatch(86_400_000, {
-            maxMessages: Math.min(batchSize, maxMessages - emitted),
-            maxWallTimeMs: batchWallTimeMs,
-            waitForData: true,
-          });
-        } finally {
-          release();
-        }
+        // Waits for data: over a remote link the first chunk takes longer than a playback tick's
+        // wait, and an empty batch must mean the range is exhausted, not "not read yet".
+        const batch = await cursor.nextBatch(86_400_000, {
+          maxMessages: Math.min(batchSize, maxMessages - emitted),
+          maxWallTimeMs: batchWallTimeMs,
+          waitForData: true,
+        });
         if (batch.length === 0) {
           break;
         }

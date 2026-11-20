@@ -7,6 +7,12 @@ export interface GetMessagesInTimeRangeArgs {
   end: Time;
   topics: string[];
   signal?: AbortSignal;
+  /**
+   * `'window'` (default): a panel's window or an export; it waits while the frame at the playhead
+   * is read and shares the link with at most one other such read. `'frame'`: the frame on screen
+   * needs it (an H.264 keyframe after a seek): it starts at once and window reads wait for it.
+   */
+  priority?: 'frame' | 'window';
 }
 
 export interface StreamMessagesInTimeRangeArgs extends GetMessagesInTimeRangeArgs {

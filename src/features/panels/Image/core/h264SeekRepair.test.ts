@@ -5,6 +5,7 @@ import {
   H264_SEEK_MAX_FRAMES,
   dedupeH264MessageEventsByReceiveTime,
   executeH264Bootstrap,
+  fetchH264BootstrapFrames,
   findLatestH264KeyFrameIndex,
   mergeH264BootstrapWithLiveFrames,
   repairH264Seek,
@@ -295,5 +296,20 @@ describe('h264SeekRepair', () => {
     ).resolves.toBe(true);
     expect(posts).toHaveLength(1);
     expect((posts[0] as { frames?: unknown[] }).frames).toHaveLength(2);
+  });
+});
+
+describe('fetchH264BootstrapFrames', () => {
+  it('reads back to the keyframe as a frame-priority read, ahead of panels\' window reads', async () => {
+    const calls: Array<{ priority?: string }> = [];
+    const player = {
+      getMessagesInTimeRange: async (args: { priority?: string }) => {
+        calls.push(args);
+        return [makeEvent(1, keyChunk), makeEvent(2, deltaChunk)];
+      },
+    } as unknown as Player;
+    const frames = await fetchH264BootstrapFrames(player, '/camera/video', { sec: 2, nsec: 0 });
+    expect(frames.length).toBeGreaterThan(0);
+    expect(calls.map((c) => c.priority)).toEqual(['frame']);
   });
 });
