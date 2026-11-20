@@ -478,3 +478,47 @@ describe('McapIndexedIterableSource backfill', () => {
     expect((await done).map((message) => message.topic)).toEqual(['/a', '/b']);
   });
 });
+
+describe('McapIndexedIterableSource read boundaries', () => {
+  /** Chunks as [startSec, endSec, channel ids]; channel 1 is /joints, 2 is /camera. */
+  function sourceWithChunks(chunks: Array<[number, number, number[]]>) {
+    const reader = {
+      chunkIndexes: chunks.map(([start, end, ids]) => ({
+        messageStartTime: BigInt(Math.round(start * 1e9)),
+        messageEndTime: BigInt(Math.round(end * 1e9)),
+        messageIndexOffsets: new Map(ids.map((id) => [id, 0n] as [number, bigint])),
+      })),
+      channelsById: new Map([
+        [1, { id: 1, topic: '/joints', schemaId: 1, messageEncoding: 'cdr', metadata: new Map<string, string>() }],
+        [2, { id: 2, topic: '/camera', schemaId: 1, messageEncoding: 'cdr', metadata: new Map<string, string>() }],
+      ]),
+      schemasById: new Map(),
+      readMessages: async function* () {},
+    };
+    return new McapIndexedIterableSource(reader as never);
+  }
+  const sec = (t: { sec: number; nsec: number }) => t.sec + t.nsec / 1e9;
+
+  it('cuts the range at each chunk that holds the topics, keeps overlapping chunks together and cuts touching ones', async () => {
+    const source = sourceWithChunks([
+      [0, 1, [1, 2]],
+      [1, 2, [1, 2]], // touches the previous one: cut at 1
+      [2.5, 4, [1]],
+      [3, 3.5, [1]], // inside the previous one: no cut
+      [5, 6, [2]], // not /joints
+      [7, 8, [1]],
+    ]);
+    const boundaries = await source.getReadBoundaries({
+      start: { sec: 0, nsec: 500_000_000 },
+      end: { sec: 10, nsec: 0 },
+      topics: ['/joints'],
+    });
+    expect(boundaries?.map(sec)).toEqual([0.5, 1, 2.5, 7]);
+  });
+
+  it('has no boundaries without topics or for an empty range', async () => {
+    const source = sourceWithChunks([[0, 1, [1]]]);
+    expect(await source.getReadBoundaries({ start: { sec: 0, nsec: 0 }, end: { sec: 1, nsec: 0 }, topics: [] })).toBeUndefined();
+    expect(await source.getReadBoundaries({ start: { sec: 2, nsec: 0 }, end: { sec: 1, nsec: 0 }, topics: ['/joints'] })).toBeUndefined();
+  });
+});

@@ -2,9 +2,10 @@ import * as Comlink from 'comlink';
 import { withBackfillCallback } from './backfillCallback';
 import type { BackfillTopicCallback } from './types';
 import { loadHdf5Runtime, openHdf5File } from './hdf5RuntimeLoader';
-import type { Initialization } from '@/core/types/ros';
+import type { Initialization, Time } from '@/core/types/ros';
 import type {
   GetAdjacentMessageArgs,
+  ReadBoundariesArgs,
   GetBackfillMessagesArgs,
   IMessageCursor,
   IWorkerSerializedSourceWorker,
@@ -100,6 +101,11 @@ export class Hdf5WorkerImpl implements IWorkerSerializedSourceWorker {
   async getAdjacentMessage(args: GetAdjacentMessageArgs) {
     if (!this._source) throw new Error('Hdf5Worker: not initialized');
     return (await this._source.getAdjacentMessage?.(args)) ?? null;
+  }
+
+  async getReadBoundaries(args: ReadBoundariesArgs): Promise<Time[] | undefined> {
+    if (!this._source) throw new Error('Hdf5Worker: not initialized');
+    return await this._source.getReadBoundaries?.(args);
   }
 
   preparePlaybackBuffer(_args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus> {

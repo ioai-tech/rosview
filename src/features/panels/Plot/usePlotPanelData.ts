@@ -215,6 +215,10 @@ export function usePlotPanelData({
       signal: controller.signal,
       onProgress,
       maxMessages,
+      // A remote window is read coarse to fine around the playhead: its whole shape shows early.
+      focus: windowed
+        ? (useMessagePipelineStore.getState().playerState.activeData?.currentTime ?? startTime)
+        : undefined,
       onBatch: ({ messages }) => {
         accumulator.append(messages);
         scheduleDatasetFlush();

@@ -1797,6 +1797,14 @@ export class IterablePlayer implements Player {
     }
   }
 
+  async getReadBoundaries(args: { start: Time; end: Time; topics: string[] }): Promise<Time[] | undefined> {
+    if (!this._initialization || args.topics.length === 0) return undefined;
+    const start = this._clampToRange(args.start);
+    const end = this._clampToRange(args.end);
+    if (toNano(start) > toNano(end)) return undefined;
+    return await this._source.getReadBoundaries({ start, end, topics: args.topics });
+  }
+
   /**
    * Independent range scan for diagnostics (Align). Uses a short-lived cursor;
    * does not replace the playback cursor. Drains the iterator until an empty

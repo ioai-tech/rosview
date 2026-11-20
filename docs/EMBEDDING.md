@@ -187,7 +187,7 @@ clearCache();
 - A 3D panel only when there are TF or pose topics (or a BVH skeleton) **and** the browser has WebGL; a Pose panel for pose topics.
 - Raw Messages as a thin strip at the bottom (the only panel when nothing else applies).
 
-Plots draw while messages arrive. For remote range-backed recordings a Plot reads only a window of +/- 30 s around the playhead and recentres it as the playhead moves (its x axis follows the window); it never preloads the whole file. A hint above the chart says so. Local files keep reading the full range; in a merged set that contains any remote source, every Plot uses the window. The embedded root renders a labelled `region`, not a `<main>` landmark.
+Plots draw while messages arrive. For remote range-backed recordings a Plot reads only a window of +/- 30 s around the playhead and recentres it as the playhead moves (its x axis follows the window); it never preloads the whole file. The window is read coarse to fine, one MCAP chunk at a time: first the chunk at the playhead, then chunks spread evenly over the window, then the gaps between them, so the curve's shape over the whole window shows after a small part of its bytes and sharpens as the rest arrives (when cameras and joints share chunks, a window of a high-rate robot recording costs most of the file). A hint above the chart says so. Local files keep reading the full range; in a merged set that contains any remote source, every Plot uses the window. The embedded root renders a labelled `region`, not a `<main>` landmark.
 
 `messages` replaces viewer copy by message id (ICU strings, applied over en / zh / ja; `RosViewMessageKey` lists the ids):
 

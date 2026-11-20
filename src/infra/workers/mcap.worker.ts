@@ -3,13 +3,14 @@ import { withBackfillCallback } from './backfillCallback';
 import { BlobReadable } from "@mcap/browser";
 import { McapIndexedReader } from "@mcap/core";
 import type { IReadable } from "@mcap/core";
-import type { Initialization, MessageEvent, TimeRange } from '@/core/types/ros';
+import type { Initialization, MessageEvent, Time, TimeRange } from '@/core/types/ros';
 import type {
   BackfillTopicCallback,
   IWorkerSerializedSourceWorker,
   MessageIteratorArgs,
   GetBackfillMessagesArgs,
   GetAdjacentMessageArgs,
+  ReadBoundariesArgs,
   IMessageCursor,
   PlaybackBufferStatus,
   PreparePlaybackBufferArgs,
@@ -250,6 +251,11 @@ export class McapWorkerImpl implements IWorkerSerializedSourceWorker {
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {
     if (!this._source) throw new Error("Not initialized");
     return (await this._source.getAdjacentMessage?.(args)) ?? null;
+  }
+
+  async getReadBoundaries(args: ReadBoundariesArgs): Promise<Time[] | undefined> {
+    if (!this._source) throw new Error("Not initialized");
+    return await this._source.getReadBoundaries?.(args);
   }
 
   async preparePlaybackBuffer(args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus> {

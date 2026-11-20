@@ -42,6 +42,13 @@ export interface GetAdjacentMessageArgs {
   direction: AdjacentDirection;
 }
 
+/** A time range and topics whose storage units (MCAP chunks) a reader wants to know. */
+export interface ReadBoundariesArgs {
+  start: Time;
+  end: Time;
+  topics: string[];
+}
+
 export interface PreparePlaybackBufferArgs {
   time: Time;
   topics: string[];
@@ -102,6 +109,8 @@ export interface IWorkerSerializedSourceWorker {
   getMessageCursor(args: MessageIteratorArgs): Promise<IMessageCursor<unknown>>;
   getBackfillMessages(args: GetBackfillMessagesArgs, onTopic?: BackfillTopicCallback): Promise<MessageEvent[]>;
   getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null>;
+  /** See {@link IIterableSource.getReadBoundaries}; undefined when the format has no such units. */
+  getReadBoundaries(args: ReadBoundariesArgs): Promise<Time[] | undefined>;
   preparePlaybackBuffer(args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus>;
   getLoadProgress(): Promise<LoadProgress>;
   getTransportDiagnostics(): Promise<TransportDiagnostics>;

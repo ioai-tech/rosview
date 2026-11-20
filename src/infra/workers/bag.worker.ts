@@ -1,12 +1,13 @@
 import * as Comlink from "comlink";
 import { withBackfillCallback } from './backfillCallback';
 import type { BackfillTopicCallback } from './types';
-import type { Initialization, MessageEvent } from '@/core/types/ros';
+import type { Initialization, MessageEvent, Time } from '@/core/types/ros';
 import type {
   IWorkerSerializedSourceWorker,
   MessageIteratorArgs,
   GetBackfillMessagesArgs,
   GetAdjacentMessageArgs,
+  ReadBoundariesArgs,
   IMessageCursor,
   PlaybackBufferStatus,
   PreparePlaybackBufferArgs,
@@ -107,6 +108,11 @@ export class BagWorker implements IWorkerSerializedSourceWorker {
   async getAdjacentMessage(args: GetAdjacentMessageArgs): Promise<MessageEvent | null> {
     if (!this._source) throw new Error("Not initialized");
     return (await this._source.getAdjacentMessage?.(args)) ?? null;
+  }
+
+  async getReadBoundaries(args: ReadBoundariesArgs): Promise<Time[] | undefined> {
+    if (!this._source) throw new Error("Not initialized");
+    return await this._source.getReadBoundaries?.(args);
   }
 
   preparePlaybackBuffer(_args: PreparePlaybackBufferArgs): Promise<PlaybackBufferStatus> {
