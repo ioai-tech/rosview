@@ -171,6 +171,12 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
         return;
       }
       const nextStatus = data.status;
+      // The time of the frame on the canvas, for browser measurements; set directly, since a new
+      // frame of the same size changes no UI state.
+      const frameTime = nextStatus.phase === 'ready' ? nextStatus.receiveTime : undefined;
+      if (frameTime && viewportRef.current) {
+        viewportRef.current.dataset.frameTime = `${frameTime.sec}.${String(frameTime.nsec).padStart(9, '0')}`;
+      }
       if (isUiStatusEqual(lastUiStatusRef.current, nextStatus)) {
         return;
       }
@@ -525,11 +531,6 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       className="flex flex-col h-full overflow-hidden relative"
       style={{ background: backgroundColor }}
       data-testid="image-panel"
-      data-frame-time={
-        status.phase === 'ready' && status.receiveTime
-          ? `${status.receiveTime.sec}.${String(status.receiveTime.nsec).padStart(9, '0')}`
-          : undefined
-      }
       data-h264-pressure={metrics?.pressureMode}
       data-h264-queue-frames={metrics?.queueFrames}
       data-h264-dropped-frames={metrics?.droppedFrames}
