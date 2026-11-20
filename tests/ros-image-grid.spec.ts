@@ -48,3 +48,18 @@ test('frame details (size, encoding) are shown beside the picture, never drawn o
   );
   expect(overlaps).toEqual([false, false, false]);
 });
+
+test('a narrow image panel gives its bar to the topic and hides the frame details', async ({ page }) => {
+  await openFixtureByUrl(page, MCAP_3CAM_URL);
+  await expect(page.getByTestId('image-panel-status')).toHaveCount(3, { timeout: 90_000 });
+  const panel = page.getByTestId('image-panel').first();
+  await expect(panel.getByTestId('image-panel-status')).toBeVisible();
+  await panel.evaluate((el) => {
+    (el as HTMLElement).style.width = '160px';
+  });
+  await expect(panel.getByTestId('image-panel-status')).toBeHidden();
+  // The topic keeps most of the bar.
+  const bar = await panel.getByTestId('panel-topic-bar').boundingBox();
+  const picker = await panel.getByTestId('panel-topic-bar').locator('button').first().boundingBox();
+  expect(picker!.width).toBeGreaterThan(bar!.width * 0.7);
+});
