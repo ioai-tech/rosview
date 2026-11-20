@@ -1980,6 +1980,35 @@ describe('IterablePlayer read errors by panel', () => {
     }
   });
 
+  it.each([
+    { panel: 'Raw!1', change: 'switches its path', before: [MAP_TOPIC], after: [TOPIC] },
+    { panel: 'Plot!1', change: 'drops a series', before: [MAP_TOPIC, TOPIC], after: [TOPIC] },
+  ])('a panel that $change no longer lists the error of its old topic', async ({ panel, before, after }) => {
+    const source = failingSource(new Set([MAP_TOPIC]));
+    const player = new IterablePlayer(source);
+    let state: PlayerState | undefined;
+    const subscribe = (topics: string[]) =>
+      player.registerSubscriptions(
+        panel,
+        topics.map((topic) => ({ topic, subscriberId: panel })),
+      );
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      subscribe(before);
+      await flushAsyncWork();
+      expect(state?.activeData?.panelReadErrors).toEqual({ [panel]: [{ topic: MAP_TOPIC, message: reason }] });
+
+      // The same panel re-registers with its new topics (a Raw path change, a Plot series change).
+      subscribe(after);
+      await flushAsyncWork();
+      expect(state?.activeData?.panelReadErrors).toBeUndefined();
+      expect(state?.activeData?.topicErrors).toEqual({});
+    } finally {
+      player.close();
+    }
+  });
+
   it('clears a topic error when playback delivers that topic', async () => {
     const clock = installFakePlaybackClock();
     const source = failingSource(new Set([MAP_TOPIC]));
