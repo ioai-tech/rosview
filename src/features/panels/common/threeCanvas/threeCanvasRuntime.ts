@@ -221,6 +221,8 @@ export function createThreeCanvasRuntime(options: ThreeCanvasRuntimeOptions): Th
     // diagnostics and browser tests ("did the cloud reach the screen").
     const points = renderer.info?.render.points;
     if (points != undefined) renderer.domElement.dataset.renderedPoints = String(points);
+    // Camera distance to the orbit target (m): the scale of the current view, for the same readers.
+    renderer.domElement.dataset.cameraDistance = camera.position.distanceTo(controls.target).toFixed(3);
     gizmo.render(renderer);
 
     pendingFrames = Math.max(0, pendingFrames - 1);

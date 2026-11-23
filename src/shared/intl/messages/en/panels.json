@@ -251,7 +251,7 @@
   "panels.threeD.settings.field.showAxes": "Show axes",
   "panels.threeD.settings.field.showPlaceholder": "Show placeholder",
   "panels.threeD.settings.field.pointSize": "Point size: {n}",
-  "panels.threeD.settings.field.pointSize.help": "Size of point-cloud points, in metres.",
+  "panels.threeD.settings.field.pointSize.help": "Largest size of point-cloud points, in metres. A dense scan is drawn at its own point spacing.",
   "panels.threeD.settings.field.followFrame": "Follow frame",
   "panels.threeD.settings.field.followFrame.help": "TF frame the camera follows during playback, e.g. head_left. Empty keeps the camera fixed.",
   "panels.threeD.settings.section.urdf": "URDF",

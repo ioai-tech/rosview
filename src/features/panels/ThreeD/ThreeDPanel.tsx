@@ -32,9 +32,13 @@ import {
   CANVAS_CAMERA,
   CANVAS_GL,
   DEFAULT_GRID_DIVISIONS,
+  BOX_VIEW_FROM_ABOVE,
+  CAMERA_GRID_FILL_RATIO,
   DEFAULT_GRID_SIZE,
+  expandBoxToMinimumSize,
   framePerspectiveCameraToBox,
   framePerspectiveCameraToGrid,
+  SceneCameraFit,
   Z_UP,
 } from '@/features/panels/common/zUpSceneLayout';
 import { extractPathPoints3 } from '@/features/panels/common/poseExtractors';
@@ -53,6 +57,7 @@ import {
 import type { JointStateMsg, TFMessage } from './core/types';
 import { applyMarkerUpdate, headerFrame, markersToPrimitives, type FrameResolver, type MarkerUpdate, type ScenePrimitive } from './core/markers';
 import { TransformTree } from './core/transformTree';
+import { scannedCloudPointSize } from './core/pointCloudSizing';
 
 import {
   defaultThreeDConfig,
@@ -83,6 +88,8 @@ const BVH_AUTOFIT_SAMPLE_INTERVAL = 8;
 /** Initial skeleton framing: largest body extent × margin, never tighter than the minimum (m). */
 const SKELETON_FRAME_MIN_SIZE = 1.7;
 const SKELETON_FRAME_MARGIN = 1.8;
+/** Initial marker framing: never tighter than this (m), so a hand keeps its surroundings in view. */
+const MARKER_FRAME_MIN_SIZE = 1.5;
 
 function toNanoSec(sec: number, nsec: number): bigint {
   return BigInt(sec) * 1_000_000_000n + BigInt(nsec);
@@ -308,6 +315,34 @@ const BvhSceneAutoFit: React.FC<{
   return null;
 };
 
+/**
+ * Frames the default camera on the scene's markers once, when they first appear (see
+ * {@link SceneCameraFit}): their bounding box, never tighter than {@link MARKER_FRAME_MIN_SIZE}.
+ */
+const MarkerSceneAutoFit: React.FC<{
+  primitives: MarkerPrimitive[];
+  cameraFit: SceneCameraFit;
+  enabled: boolean;
+}> = ({ primitives, cameraFit, enabled }) => {
+  const { camera, controls, invalidate } = useThreeCanvas();
+  useEffect(() => {
+    if (!enabled || primitives.length === 0 || cameraFit.by === 'markers') return;
+    if (!(camera instanceof THREE.PerspectiveCamera)) return;
+    const box = computeMarkerPrimitivesBoundingBox(primitives);
+    if (!box || box.isEmpty() || !cameraFit.claim('markers')) return;
+    const target = framePerspectiveCameraToBox(
+      camera,
+      expandBoxToMinimumSize(box, MARKER_FRAME_MIN_SIZE),
+      CAMERA_GRID_FILL_RATIO,
+      BOX_VIEW_FROM_ABOVE,
+    );
+    controls.target.copy(target);
+    controls.update();
+    invalidate();
+  }, [enabled, primitives, cameraFit, camera, controls, invalidate]);
+  return null;
+};
+
 // ── Point cloud ────────────────────────────────────────────────────
 // Geometry/attributes are reused across frames when the point count is
 // unchanged. Rebuilding BufferGeometry every message forced Three.js to
@@ -497,6 +532,7 @@ const LivePointCloudLayer = ({
   size,
   resolveFrame,
   autofit = true,
+  cameraFit,
 }: {
   player: Player;
   panelId: string;
@@ -506,7 +542,13 @@ const LivePointCloudLayer = ({
   /** Places the cloud in the fixed frame through its header frame at its stamp; raw coordinates when unknown. */
   resolveFrame?: FrameResolver;
   autofit?: boolean;
+  /** The scene's camera owner: the cloud frames the camera only while nothing else has. */
+  cameraFit?: SceneCameraFit;
 }) => {
+  const cameraFitRef = useRef(cameraFit);
+  useEffect(() => {
+    cameraFitRef.current = cameraFit;
+  }, [cameraFit]);
   const resolveFrameRef = useRef(resolveFrame);
   useEffect(() => {
     resolveFrameRef.current = resolveFrame;
@@ -533,6 +575,9 @@ const LivePointCloudLayer = ({
     invalidateRef.current = invalidate;
   }, [camera, controls, invalidate]);
 
+  // The cloud's own size cap (see scannedCloudPointSize), from its first message on this topic.
+  const densitySizeRef = useRef<number | null>(null);
+
   useEffect(() => {
     sizeRef.current = size;
     colorRef.current = color;
@@ -543,10 +588,14 @@ const LivePointCloudLayer = ({
   }, [autofit, topic]);
 
   useEffect(() => {
+    densitySizeRef.current = null;
+  }, [topic]);
+
+  useEffect(() => {
     const points = pointsRef.current;
     if (!points) return;
     applyPointsMaterial(points, {
-      size,
+      size: Math.min(size, densitySizeRef.current ?? Infinity),
       color,
       vertexColors: (points.material as THREE.PointsMaterial).vertexColors,
     });
@@ -568,12 +617,13 @@ const LivePointCloudLayer = ({
         geo.getAttribute('position') as THREE.BufferAttribute,
       );
       if (box.isEmpty()) return;
+      didAutofitRef.current = true;
+      if (cameraFitRef.current && !cameraFitRef.current.claim('cloud')) return;
       box.applyMatrix4(placement);
       const target = framePerspectiveCameraToBox(cam, box);
       const oc = controlsRef.current;
       oc.target.copy(target);
       oc.update();
-      didAutofitRef.current = true;
     };
 
     const applyParsed = (
@@ -597,10 +647,12 @@ const LivePointCloudLayer = ({
       const next = applyPointCloudData(gpuRef.current, parsed);
       gpuRef.current = next;
       const vertexColors = next.color != null;
+      densitySizeRef.current ??= scannedCloudPointSize(positions, pointCount, Infinity);
+      const pointSize = Math.min(sizeRef.current, densitySizeRef.current);
       let points = pointsRef.current;
       if (!points) {
         points = createFrustumCulledOffPoints(next.geometry, {
-          size: sizeRef.current,
+          size: pointSize,
           color: colorRef.current,
           vertexColors,
         });
@@ -610,7 +662,7 @@ const LivePointCloudLayer = ({
       } else {
         points.geometry = next.geometry;
         applyPointsMaterial(points, {
-          size: sizeRef.current,
+          size: pointSize,
           color: colorRef.current,
           vertexColors,
         });
@@ -1559,6 +1611,8 @@ const Scene = ({
   }, []);
   const [tfVersion, setTfVersion] = useState(0);
   const [resetVersion, setResetVersion] = useState(0);
+  // One owner of the default camera for this panel's scene: markers win over point clouds.
+  const [cameraFit] = useState(() => new SceneCameraFit());
   const lastPlaybackTimeNsRef = useRef<bigint>(0n);
   const [bvhGroundLayout, setBvhGroundLayout] = useState<BvhGroundLayoutState | null>(null);
   const handleBvhGroundLayout = useCallback((layout: BvhGroundLayoutState) => {
@@ -1970,6 +2024,11 @@ const Scene = ({
         resetVersion={resetVersion}
         onGroundLayout={handleBvhGroundLayout}
       />
+      <MarkerSceneAutoFit
+        primitives={markerPrimitives}
+        cameraFit={cameraFit}
+        enabled={!followFrame && !skeletonFitTopic}
+      />
 
       {pcTopics.map((topic, index) => (
         <LivePointCloudLayer
@@ -1981,6 +2040,7 @@ const Scene = ({
           size={pointSize}
           resolveFrame={resolveFrame}
           autofit={index === 0 && !followFrame}
+          cameraFit={cameraFit}
         />
       ))}
       {followFrame && <FollowFrameController player={player} frameId={followFrame} sceneTfRef={sceneTfRef} />}

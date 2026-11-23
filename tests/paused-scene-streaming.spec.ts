@@ -165,3 +165,23 @@ test('paused seek reads the chunks at the new time only; playback read-ahead is 
   await page.waitForTimeout(3_000);
   expect((await rangeLog()).length).toBe(afterPlayLog.length);
 });
+
+test('the default camera frames the hand markers, not the room-sized map around them (m-9)', async ({ page }) => {
+  await page.goto(`/?url=${encodeURIComponent(`${origin}/ego.mcap`)}`);
+  await waitForRosviewReady(page);
+  await expect.poll(() => renderedPoints(page), { timeout: 60_000 }).toBeGreaterThanOrEqual(MAP_POINTS);
+  const cameraDistance = () =>
+    page.evaluate(() =>
+      Number(document.querySelector('[data-testid="three-canvas"] canvas')?.getAttribute('data-camera-distance') ?? NaN),
+    );
+  // The hand is a 20 cm patch beside the head; the map is 4 m x 4 m x 2 m. Framed on the map the
+  // camera stands about 7 m away and a 1.4 cm joint is under a pixel; framed on the markers (at
+  // least a 1.5 m neighbourhood) it stands about 3 m away.
+  await expect.poll(cameraDistance, { timeout: 30_000 }).toBeLessThan(4);
+  // The map arriving later (it sits in the last chunk) does not take the camera back.
+  await page.waitForTimeout(2_000);
+  const distance = await cameraDistance();
+  console.log(`default camera: ${distance.toFixed(2)} m from its target`);
+  expect(distance).toBeGreaterThan(1);
+  expect(distance).toBeLessThan(4);
+});
