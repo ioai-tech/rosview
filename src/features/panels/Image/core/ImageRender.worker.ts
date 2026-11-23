@@ -16,6 +16,7 @@ import {
   H264_PRESSURED_RENDER_INTERVAL_MS,
   H264_RENDER_INTERVAL_MS,
   decodedFrameLatenessMs,
+  h264StreamPosition,
   initialH264PressureState,
   isH264HardLimitExceeded,
   isH264StreamDiscontinuity,
@@ -518,6 +519,12 @@ class ImageRenderWorkerRuntime {
       this.#enqueueH264Frame(frame, { applyBackpressure: false });
     }
     this.#h264ProtectedQueueCount = this.#pendingH264Frames.length;
+    // The decoder now stands at the batch's last frame: the next live frame is
+    // judged against it (a paused forward seek right after this repair must not
+    // decode its delta on these references).
+    const position = h264StreamPosition(h264Frames.map((frame) => timeToKey(frame.receiveTime)));
+    this.#h264LastEnqueuedTimeNs = position.lastTimeNs;
+    this.#h264FrameIntervalMs = position.frameIntervalMs;
 
     this.#emitMetricsIfDue(true);
     if (!this.#isProcessing) {

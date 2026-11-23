@@ -153,9 +153,12 @@ export function isSupersededH264Output(
  * natural cadence, meaning the reference chain a delta frame depends on was
  * never decoded (forward seek, loop wrap, or a skipped backlog).
  *
- * Returns false while the cadence is still unknown (`frameIntervalMs <= 0`),
- * since a low-rate stream's normal spacing is indistinguishable from a jump
- * until at least one interval has been observed.
+ * Before a cadence is observed (`frameIntervalMs <= 0`, e.g. a paused viewer
+ * that has decoded only the keyframe it opened on), any gap above `minGapMs`
+ * counts as a break. A delta decoded on the wrong references is a corrupted
+ * picture shown as if it were correct; the cost of a false break on a
+ * low-rate stream is one repair read, whose frames then teach the cadence
+ * (see {@link h264StreamPosition}).
  */
 export function isH264StreamDiscontinuity(
   gapMs: number,
@@ -166,7 +169,34 @@ export function isH264StreamDiscontinuity(
     return false;
   }
   if (!Number.isFinite(frameIntervalMs) || frameIntervalMs <= 0) {
-    return false;
+    return gapMs > minGapMs;
   }
   return gapMs > Math.max(minGapMs, frameIntervalMs * H264_DISCONTINUITY_CADENCE_FACTOR);
+}
+
+export interface H264StreamPosition {
+  /** Receive time (ns) of the last frame handed to the decoder; null when there is none. */
+  lastTimeNs: bigint | null;
+  /** Observed frame cadence (EWMA of the positive gaps); 0 when fewer than two distinct times. */
+  frameIntervalMs: number;
+}
+
+/**
+ * Where the stream stands after the decoder is fed `frameTimesNs` in order (a
+ * repair batch: one keyframe and its deltas). The next live frame's continuity
+ * is judged against this, so a forward seek right after a repair is caught
+ * instead of decoding its delta on the repair's references.
+ */
+export function h264StreamPosition(frameTimesNs: readonly bigint[]): H264StreamPosition {
+  let lastTimeNs: bigint | null = null;
+  let frameIntervalMs = 0;
+  for (const timeNs of frameTimesNs) {
+    if (lastTimeNs != null && timeNs > lastTimeNs) {
+      frameIntervalMs = updateDecodeDurationEwma(frameIntervalMs, Number(timeNs - lastTimeNs) / 1_000_000);
+    }
+    if (lastTimeNs == null || timeNs > lastTimeNs) {
+      lastTimeNs = timeNs;
+    }
+  }
+  return { lastTimeNs, frameIntervalMs };
 }
