@@ -18,6 +18,15 @@ describe('SceneCameraFit (m-9: the default camera frames the markers)', () => {
     expect(fit.claim('cloud')).toBe(false);
   });
 
+  it('markers appearing after the user moved the camera do not take it', () => {
+    const fit = new SceneCameraFit();
+    expect(fit.claim('cloud')).toBe(true);
+    fit.yieldToUser();
+    expect(fit.by).toBe('user');
+    expect(fit.claim('markers')).toBe(false);
+    expect(fit.claim('cloud')).toBe(false);
+  });
+
   it('a second cloud does not reframe the first', () => {
     const fit = new SceneCameraFit();
     expect(fit.claim('cloud')).toBe(true);

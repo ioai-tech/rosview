@@ -138,26 +138,32 @@ export function expandBoxToMinimumSize(box: THREE.Box3, minSize: number): THREE.
   return box.setFromCenterAndSize(center, size);
 }
 
-/** What framed the 3D panel's default camera. */
+/** What may frame the 3D panel's default camera. */
 export type SceneCameraFitSource = 'markers' | 'cloud';
 
 /**
  * One owner for the default camera of a 3D scene. Markers are what a recording annotates
  * (trajectories, hands, detections) and point clouds are usually its surroundings (a room-sized
  * map), so markers win: a cloud frames the camera only while nothing has, and markers frame it
- * once even after a cloud did. Each source frames it at most once; after that the camera is the
- * user's.
+ * once even after a cloud did. Each source frames it at most once, and once the user moves the
+ * camera ({@link SceneCameraFit.yieldToUser}) nothing frames it again: markers that first appear
+ * later in the recording never take a camera the user has placed.
  */
 export class SceneCameraFit {
-  #by: SceneCameraFitSource | null = null;
+  #by: SceneCameraFitSource | 'user' | null = null;
 
-  get by(): SceneCameraFitSource | null {
+  get by(): SceneCameraFitSource | 'user' | null {
     return this.#by;
+  }
+
+  /** The user moved the camera: from now on it is theirs. */
+  yieldToUser(): void {
+    this.#by = 'user';
   }
 
   /** True when `source` may frame the camera now; the caller then frames it. */
   claim(source: SceneCameraFitSource): boolean {
-    if (this.#by === 'markers') return false;
+    if (this.#by === 'markers' || this.#by === 'user') return false;
     if (source === 'cloud' && this.#by != null) return false;
     this.#by = source;
     return true;

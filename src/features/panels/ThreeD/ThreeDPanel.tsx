@@ -326,7 +326,7 @@ const MarkerSceneAutoFit: React.FC<{
 }> = ({ primitives, cameraFit, enabled }) => {
   const { camera, controls, invalidate } = useThreeCanvas();
   useEffect(() => {
-    if (!enabled || primitives.length === 0 || cameraFit.by === 'markers') return;
+    if (!enabled || primitives.length === 0 || cameraFit.by === 'markers' || cameraFit.by === 'user') return;
     if (!(camera instanceof THREE.PerspectiveCamera)) return;
     const box = computeMarkerPrimitivesBoundingBox(primitives);
     if (!box || box.isEmpty() || !cameraFit.claim('markers')) return;
@@ -340,6 +340,18 @@ const MarkerSceneAutoFit: React.FC<{
     controls.update();
     invalidate();
   }, [enabled, primitives, cameraFit, camera, controls, invalidate]);
+  return null;
+};
+
+/** Hands the default camera to the user on their first orbit, pan or zoom (see {@link SceneCameraFit}). */
+const SceneCameraFitYieldsToUser: React.FC<{ cameraFit: SceneCameraFit }> = ({ cameraFit }) => {
+  const { controls } = useThreeCanvas();
+  useEffect(() => {
+    // OrbitControls dispatches `start` only for user input, never for a programmatic update().
+    const onStart = () => cameraFit.yieldToUser();
+    controls.addEventListener('start', onStart);
+    return () => controls.removeEventListener('start', onStart);
+  }, [controls, cameraFit]);
   return null;
 };
 
@@ -2024,6 +2036,7 @@ const Scene = ({
         resetVersion={resetVersion}
         onGroundLayout={handleBvhGroundLayout}
       />
+      <SceneCameraFitYieldsToUser cameraFit={cameraFit} />
       <MarkerSceneAutoFit
         primitives={markerPrimitives}
         cameraFit={cameraFit}

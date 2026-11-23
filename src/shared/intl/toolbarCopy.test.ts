@@ -3,7 +3,7 @@ import { getRosViewMessages } from './loadRosViewMessages';
 
 /**
  * Panel toolbars are on screen whenever a panel is; a label left in English there is what a zh / ja
- * user sees first (EmbodiFlow walk m-7: the Plot field chips "Position / Velocity / Effort").
+ * user sees first (walk finding m-7: the Plot field chips "Position / Velocity / Effort").
  */
 describe('panel toolbar copy', () => {
   const en = getRosViewMessages('en');
