@@ -67,15 +67,23 @@ export function framePerspectiveCameraToGrid(
  * along ROS +X (forward), matching a depth/color camera "looking ahead".
  * Returns the box center for OrbitControls.target.
  */
+/** Behind and slightly above, looking toward ROS +X: a depth camera's view of a cloud. */
+export const BOX_VIEW_FROM_BEHIND = new THREE.Vector3(-1, 0, 0.28).normalize();
+/**
+ * Behind and well above (about 55 degrees down), looking toward +X: markers (a head trajectory,
+ * hands over a table) seen over the walls of a room-sized map rather than through them.
+ */
+export const BOX_VIEW_FROM_ABOVE = new THREE.Vector3(-1, 0, 1.4).normalize();
+
 export function framePerspectiveCameraToBox(
   camera: THREE.PerspectiveCamera,
   box: THREE.Box3,
   fillRatio: number = CAMERA_GRID_FILL_RATIO,
+  viewFrom: THREE.Vector3 = BOX_VIEW_FROM_BEHIND,
 ): THREE.Vector3 {
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
-  // Camera sits behind-and-slightly-above the cloud, looking toward +X.
-  const fromCenterToCamera = new THREE.Vector3(-1, 0, 0.28).normalize();
+  const fromCenterToCamera = viewFrom.clone().normalize();
   const forward = fromCenterToCamera.clone().negate();
   const right = new THREE.Vector3().crossVectors(forward, Z_UP).normalize();
   const up = new THREE.Vector3().crossVectors(right, forward).normalize();
@@ -116,4 +124,48 @@ export function framePerspectiveCameraToBox(
   camera.far = Math.max(6000, distance * 80);
   camera.updateProjectionMatrix();
   return center;
+}
+
+/**
+ * Grows `box` about its centre so no side is shorter than `minSize` (m). Framing a few small
+ * markers (a hand, the start of a trajectory) then keeps a human-scale neighbourhood in view
+ * instead of filling the panel with a 10 cm object.
+ */
+export function expandBoxToMinimumSize(box: THREE.Box3, minSize: number): THREE.Box3 {
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  size.set(Math.max(size.x, minSize), Math.max(size.y, minSize), Math.max(size.z, minSize));
+  return box.setFromCenterAndSize(center, size);
+}
+
+/** What may frame the 3D panel's default camera. */
+export type SceneCameraFitSource = 'markers' | 'cloud';
+
+/**
+ * One owner for the default camera of a 3D scene. Markers are what a recording annotates
+ * (trajectories, hands, detections) and point clouds are usually its surroundings (a room-sized
+ * map), so markers win: a cloud frames the camera only while nothing has, and markers frame it
+ * once even after a cloud did. Each source frames it at most once, and once the user moves the
+ * camera ({@link SceneCameraFit.yieldToUser}) nothing frames it again: markers that first appear
+ * later in the recording never take a camera the user has placed.
+ */
+export class SceneCameraFit {
+  #by: SceneCameraFitSource | 'user' | null = null;
+
+  get by(): SceneCameraFitSource | 'user' | null {
+    return this.#by;
+  }
+
+  /** The user moved the camera: from now on it is theirs. */
+  yieldToUser(): void {
+    this.#by = 'user';
+  }
+
+  /** True when `source` may frame the camera now; the caller then frames it. */
+  claim(source: SceneCameraFitSource): boolean {
+    if (this.#by === 'markers' || this.#by === 'user') return false;
+    if (source === 'cloud' && this.#by != null) return false;
+    this.#by = source;
+    return true;
+  }
 }

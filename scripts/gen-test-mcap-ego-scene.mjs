@@ -7,7 +7,8 @@
  *   node scripts/gen-test-mcap-ego-scene.mjs <out.mcap> [seconds=120] [mapMiB=6] [jpegKiB=24]
  *
  * Topics: /camera/head_left/image_rect/compressed (CompressedImage, 10 Hz), /scene/points
- * (PointCloud2, 5 Hz), /tf (30 Hz), /human/head_trajectory (MarkerArray, every 30 s and at the end),
+ * (PointCloud2, 5 Hz), /tf (30 Hz), /human/hands (MarkerArray: a SPHERE_LIST of 1.4 cm joints within
+ * 20 cm, in head_left, 30 Hz), /human/head_trajectory (MarkerArray, every 30 s and at the end),
  * /tf_static and /scene/map (PointCloud2, `mapMiB`) at the first stamp, written last.
  */
 import { McapWriter } from '@mcap/core';
@@ -139,6 +140,7 @@ await channel(IMAGE, 'sensor_msgs/CompressedImage');
 await channel('/scene/points', 'sensor_msgs/PointCloud2');
 await channel('/scene/map', 'sensor_msgs/PointCloud2');
 await channel('/human/head_trajectory', 'visualization_msgs/MarkerArray');
+await channel('/human/hands', 'visualization_msgs/MarkerArray');
 
 /** Valid JPEG: the 1x1 fixture with COM segments of deterministic pseudo-random bytes. */
 function paddedJpeg(seed) {
@@ -228,12 +230,40 @@ function trajectory(ns, upToS) {
   return { markers: [marker(3, []), marker(0, points)] };
 }
 
+/** One hand: 21 joints in a 20 cm patch 30 cm in front of and below the head (head_left). */
+function hands(ns) {
+  const points = [];
+  for (let i = 0; i < 21; i++) points.push({ x: 0.3 + (i % 5) * 0.04, y: -0.1 + Math.floor(i / 5) * 0.04, z: -0.3 });
+  return {
+    markers: [
+      {
+        header: header(ns, 'head_left'),
+        ns: 'right_hand',
+        id: 1,
+        type: 7,
+        action: 0,
+        pose: { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } },
+        scale: { x: 0.0144, y: 0.0144, z: 0.0144 },
+        color: { r: 1, g: 0.8, b: 0.1, a: 1 },
+        lifetime: { sec: 0, nanosec: 0 },
+        frame_locked: false,
+        points,
+        colors: [],
+        text: '',
+        mesh_resource: '',
+        mesh_use_embedded_materials: false,
+      },
+    ],
+  };
+}
+
 const jpegs = Array.from({ length: 6 }, (_, i) => paddedJpeg(i + 1));
 const T0 = 1_700_000_000_000_000_000n;
 const totalMs = Math.round(seconds * 1000);
 for (let ms = 0; ms <= totalMs; ms += 1) {
   const ns = T0 + BigInt(ms) * 1_000_000n;
   if (ms % 33 === 0) await write('/tf', ns, { transforms: [tf(ns, 'world', 'head_left', headAt(ms / 1000))] });
+  if (ms % 33 === 0) await write('/human/hands', ns, hands(ns));
   if (ms % 100 === 0) {
     await write(IMAGE, ns, { header: header(ns, 'head_left_rect'), format: 'jpeg', data: jpegs[(ms / 100) % jpegs.length] });
   }

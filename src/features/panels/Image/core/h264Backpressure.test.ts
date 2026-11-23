@@ -5,6 +5,7 @@ import {
   decodedFrameLatenessMs,
   initialH264PressureState,
   isH264HardLimitExceeded,
+  h264StreamPosition,
   isH264StreamDiscontinuity,
   isSupersededH264Output,
   updateDecodeDurationEwma,
@@ -142,8 +143,25 @@ describe('H.264 adaptive backpressure', () => {
     expect(isH264StreamDiscontinuity(2_100, 500)).toBe(true);
   });
 
-  it('cannot judge continuity before a cadence is observed', () => {
-    expect(isH264StreamDiscontinuity(5_000, 0)).toBe(false);
+  it('before a cadence is observed, a gap above the minimum is a break (m-5: paused seek)', () => {
+    // Opened paused on a keyframe, then seeked forward: one frame decoded, no cadence yet. The
+    // delta at the new playhead references frames the decoder never saw.
+    expect(isH264StreamDiscontinuity(685_000, 0)).toBe(true);
+    expect(isH264StreamDiscontinuity(5_000, 0)).toBe(true);
+    expect(isH264StreamDiscontinuity(33, 0)).toBe(false);
+    expect(isH264StreamDiscontinuity(400, 0)).toBe(false);
     expect(isH264StreamDiscontinuity(0, 33)).toBe(false);
+  });
+
+  it('a repair batch sets where the stream stands and its cadence', () => {
+    expect(h264StreamPosition([])).toEqual({ lastTimeNs: null, frameIntervalMs: 0 });
+    expect(h264StreamPosition([1_000_000_000n])).toEqual({ lastTimeNs: 1_000_000_000n, frameIntervalMs: 0 });
+    // SPS/PPS packets share the keyframe's time; they add no gap.
+    const position = h264StreamPosition([3_000_000_000n, 3_000_000_000n, 3_033_000_000n, 3_066_000_000n, 3_099_000_000n]);
+    expect(position.lastTimeNs).toBe(3_099_000_000n);
+    expect(position.frameIntervalMs).toBeCloseTo(33, 6);
+    // A paused forward seek right after the repair is a break; the next frame in order is not.
+    expect(isH264StreamDiscontinuity(Number(3_132_000_000n - position.lastTimeNs!) / 1e6, position.frameIntervalMs)).toBe(false);
+    expect(isH264StreamDiscontinuity(Number(9_000_000_000n - position.lastTimeNs!) / 1e6, position.frameIntervalMs)).toBe(true);
   });
 });
