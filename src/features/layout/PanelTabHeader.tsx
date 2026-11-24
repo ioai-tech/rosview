@@ -8,11 +8,8 @@ import {
   extractPrimaryTopicFromConfig,
   getPanelConfig,
   getPanelState,
-  getPanelTypeFromId,
-  listPanelStates,
   usePanelActions,
 } from '../panels/framework';
-import { PANEL_TYPE_MESSAGE_SLUG } from '../panels/framework/panelMessageSlug';
 import { PanelTypeIcon } from '../panels/framework/panelIcons';
 import {
   buildRosViewTabContextMenuItems,
@@ -20,56 +17,17 @@ import {
 } from './rosviewTabContextMenu';
 import { WELCOME_PANEL_ID } from './dockviewIds';
 import { openDockviewPanel } from './dockviewController';
-import { getAddablePanelDefinitions, getFoxgloveAdapter, getPanelDefinition, hasFoxgloveAdapter, hasPanelDefinition } from '../panels/registry';
+import { getAddablePanelDefinitions } from '../panels/registry';
+import { usePanelDisplayTitle } from './usePanelDisplayTitle';
 import { PanelTabAddPanelDefinitionsSubmenus } from './PanelTabAddPanelDefinitionsSubmenus';
 import { PanelTabActions } from './PanelTabActions';
 import { PANEL_TAB_EXPANDED_MIN_WIDTH_PX } from './layoutConstants';
-
-/** Tab label uses localized panel titles (`panels.<slug>.defaultTitle`). */
-function resolveTabDefaultTitle(panelId: string, dockviewTitle: string): string {
-  const snapshot = listPanelStates()[panelId];
-  if (snapshot?.type && hasPanelDefinition(snapshot.type)) {
-    return getPanelDefinition(snapshot.type).defaultTitle;
-  }
-  const prefix = getPanelTypeFromId(panelId);
-  if (hasPanelDefinition(prefix)) {
-    return getPanelDefinition(prefix).defaultTitle;
-  }
-  if (hasFoxgloveAdapter(prefix)) {
-    return getPanelDefinition(getFoxgloveAdapter(prefix).internalType).defaultTitle;
-  }
-  return dockviewTitle;
-}
-
-/** Resolves the PanelType for a panel id, returns null for unknown/welcome panels. */
-function resolveTabPanelType(panelId: string): PanelType | null {
-  const snapshot = listPanelStates()[panelId];
-  if (snapshot?.type && hasPanelDefinition(snapshot.type)) {
-    return snapshot.type;
-  }
-  const prefix = getPanelTypeFromId(panelId);
-  if (hasPanelDefinition(prefix)) {
-    return prefix;
-  }
-  if (hasFoxgloveAdapter(prefix)) {
-    return getFoxgloveAdapter(prefix).internalType;
-  }
-  return null;
-}
 
 export const PanelTabHeader: React.FC<IDockviewPanelHeaderProps> = ({ api, containerApi }) => {
   const { formatMessage } = useIntl();
   const panel = containerApi.getPanel(api.id);
   const dockviewTitle = panel?.title ?? api.title ?? 'Panel';
-  const panelType = resolveTabPanelType(api.id);
-  const defaultTitleFallback = resolveTabDefaultTitle(api.id, dockviewTitle);
-  const title = useMemo(() => {
-    if (panelType != null && hasPanelDefinition(panelType)) {
-      const slug = PANEL_TYPE_MESSAGE_SLUG[panelType];
-      return formatMessage({ id: `panels.${slug}.defaultTitle`, defaultMessage: defaultTitleFallback });
-    }
-    return defaultTitleFallback;
-  }, [formatMessage, panelType, defaultTitleFallback]);
+  const { panelType, text: title, tooltip: titleTooltip } = usePanelDisplayTitle(api.id, dockviewTitle);
   const actions = usePanelActions(api.id);
   const isWelcome = api.id === WELCOME_PANEL_ID;
   const tabRowRef = useRef<HTMLDivElement>(null);
@@ -153,7 +111,7 @@ export const PanelTabHeader: React.FC<IDockviewPanelHeaderProps> = ({ api, conta
         {panelType && !isWelcome && (
           <PanelTypeIcon type={panelType} className="h-3 w-3 shrink-0 opacity-60" />
         )}
-        <span className="min-w-0 flex-1 truncate text-sm" title={title}>
+        <span className="min-w-0 flex-1 truncate text-sm" title={titleTooltip} data-testid="panel-tab-title">
           {title}
         </span>
       </div>

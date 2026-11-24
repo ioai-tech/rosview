@@ -14,6 +14,7 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { getTopicMetricLines } from './topicMetrics';
 import { writeTopicDragPayload } from './topicDragPayload';
+import { useTopicLabel } from '@/shared/ros/topicLabels';
 
 async function copyTextToClipboard(text: string): Promise<void> {
   try {
@@ -42,6 +43,7 @@ interface TopicRowProps {
 export const TopicRow: React.FC<TopicRowProps> = ({ topic, isSelected, onSelect }) => {
   const { formatMessage } = useIntl();
   const metrics = getTopicMetricLines(topic);
+  const label = useTopicLabel(topic.name);
 
   const handleCopyTopicName = useCallback(() => {
     void copyTextToClipboard(topic.name);
@@ -52,7 +54,7 @@ export const TopicRow: React.FC<TopicRowProps> = ({ topic, isSelected, onSelect 
   }, [topic.type]);
 
   const rowTitle = (() => {
-    const lines = [topic.name, topic.type];
+    const lines = label ? [label, topic.name, topic.type] : [topic.name, topic.type];
     if (metrics.secondary) {
       lines.push(metrics.secondary);
     }
@@ -72,7 +74,7 @@ export const TopicRow: React.FC<TopicRowProps> = ({ topic, isSelected, onSelect 
         tabIndex={0}
         draggable
         aria-pressed={isSelected}
-        aria-label={topic.name}
+        aria-label={label ? `${label} (${topic.name})` : topic.name}
         title={rowTitle}
         onClick={() => onSelect(topic.name)}
         onFocus={() => onSelect(topic.name)}
@@ -92,7 +94,10 @@ export const TopicRow: React.FC<TopicRowProps> = ({ topic, isSelected, onSelect 
         )}
       >
         <div className="min-w-0 flex-1 flex flex-col gap-1">
-          <div className="truncate text-[12px] font-medium leading-4">{topic.name}</div>
+          <div className="truncate text-[12px] font-medium leading-4" data-testid={label ? 'topic-row-label' : undefined}>
+            {label ?? topic.name}
+          </div>
+          {label ? <div className="truncate text-[10px] leading-4 text-muted-foreground">{topic.name}</div> : null}
           <div className="truncate text-[10px] leading-4 text-muted-foreground">{topic.type}</div>
         </div>
         <div className="flex flex-col justify-end items-end gap-1">

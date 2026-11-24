@@ -15,6 +15,7 @@ import {
 } from '@/shared/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { cn } from '@/shared/lib/utils';
+import { topicLabelOf, useTopicLabels, type TopicLabels } from '@/shared/ros/topicLabels';
 
 function filterTopics(
   topics: ReadonlyArray<TopicInfo>,
@@ -39,8 +40,9 @@ function filterTopics(
   });
 }
 
-function itemSearchValue(topic: TopicInfo): string {
-  return `${topic.name} ${topic.type}`;
+function itemSearchValue(topic: TopicInfo, labels: TopicLabels): string {
+  const label = topicLabelOf(labels, topic.name);
+  return label ? `${label} ${topic.name} ${topic.type}` : `${topic.name} ${topic.type}`;
 }
 
 export interface TopicQuickPickerProps {
@@ -79,6 +81,8 @@ export const TopicQuickPicker: React.FC<TopicQuickPickerProps> = ({
   const searchPlaceholder = searchPlaceholderProp ?? formatMessage({ id: 'panels.framework.topicPicker.searchPlaceholder' });
   const emptyLabel = emptyLabelProp ?? formatMessage({ id: 'panels.framework.topicPicker.empty' });
   const pipelineTopics = useMessagePipeline((s) => s.sortedTopics);
+  const labels = useTopicLabels();
+  const valueLabel = topicLabelOf(labels, value);
   const topics = topicsProp ?? pipelineTopics;
   const filtered = useMemo(
     () => filterTopics(topics, typeIncludes, topicTypeMatches, nameIncludes),
@@ -89,7 +93,7 @@ export const TopicQuickPicker: React.FC<TopicQuickPickerProps> = ({
 
   const resolveTopicName = (selected: string): string | undefined => {
     const lower = selected.toLowerCase();
-    const exact = filtered.find((t) => itemSearchValue(t).toLowerCase() === lower);
+    const exact = filtered.find((t) => itemSearchValue(t, labels).toLowerCase() === lower);
     if (exact) {
       return exact.name;
     }
@@ -105,13 +109,26 @@ export const TopicQuickPicker: React.FC<TopicQuickPickerProps> = ({
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
+          title={valueLabel ? value : undefined}
           className={cn(
             'h-8 min-w-0 w-full justify-between gap-2 px-2 font-mono text-xs font-normal',
             className,
             triggerClassName,
           )}
         >
-          <span className="truncate text-left">{value.length > 0 ? value : placeholder}</span>
+          {valueLabel ? (
+            // The host's name for the stream first; the topic stays readable as secondary text.
+            <span className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
+              <span className="max-w-full shrink-0 truncate font-sans font-medium" data-testid="topic-picker-label">
+                {valueLabel}
+              </span>
+              <span className="min-w-0 shrink-[100] truncate text-[10px] opacity-60" data-testid="topic-picker-topic">
+                {value}
+              </span>
+            </span>
+          ) : (
+            <span className="truncate text-left">{value.length > 0 ? value : placeholder}</span>
+          )}
           <ChevronsUpDown data-icon="inline-end" className="shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
@@ -123,10 +140,11 @@ export const TopicQuickPicker: React.FC<TopicQuickPickerProps> = ({
             <CommandGroup>
               {filtered.map((topic) => {
                 const isCurrent = topic.name === value;
+                const label = topicLabelOf(labels, topic.name);
                 return (
                   <CommandItem
                     key={topic.name}
-                    value={itemSearchValue(topic)}
+                    value={itemSearchValue(topic, labels)}
                     className={cn(isCurrent && 'bg-primary/10')}
                     onSelect={(selected) => {
                       const name = resolveTopicName(selected);
@@ -138,8 +156,13 @@ export const TopicQuickPicker: React.FC<TopicQuickPickerProps> = ({
                   >
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <div className={cn('truncate text-[11px] font-medium leading-4', isCurrent ? 'text-primary' : 'text-foreground')}>
-                        {topic.name}
+                        {label ?? topic.name}
                       </div>
+                      {label ? (
+                        <div className="truncate text-[10px] leading-4 text-muted-foreground" title={topic.name}>
+                          {topic.name}
+                        </div>
+                      ) : null}
                       <div className="truncate text-[10px] leading-4 text-muted-foreground">
                         {topic.type}
                       </div>
