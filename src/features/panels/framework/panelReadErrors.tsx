@@ -2,6 +2,7 @@ import React, { createContext, useContext } from 'react';
 import { useIntl } from 'react-intl';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
 import type { TopicReadError } from '@/core/types/player';
+import { readErrorDetail, readErrorText } from '@/features/panels/common/readErrorText';
 
 /**
  * The read errors of the topics this panel reads (its subscriptions and high-frequency consumers),
@@ -32,9 +33,12 @@ export const PanelTopicReadErrors: React.FC<{ errors: ReadonlyArray<TopicReadErr
       data-testid="panel-topic-read-error"
       className="pointer-events-none absolute inset-x-2 bottom-2 z-30 space-y-0.5 rounded border border-destructive/40 bg-background/95 px-2 py-1 text-[11px] text-destructive shadow-xs"
     >
-      {errors.map(({ topic, message }) => (
-        <p key={topic} className="break-words">
-          {formatMessage({ id: 'panels.framework.topicReadFailed' }, { topic, reason: message })}
+      {errors.map(({ topic, message, kind }) => (
+        <p key={topic} className="break-words" title={readErrorDetail(message, kind)}>
+          {formatMessage(
+            { id: 'panels.framework.topicReadFailed' },
+            { topic, reason: readErrorText(formatMessage, message, kind) },
+          )}
         </p>
       ))}
     </div>

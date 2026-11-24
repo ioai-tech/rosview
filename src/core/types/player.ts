@@ -82,6 +82,18 @@ export interface PlayerState {
     buffering?: boolean;
     /** Retryable playback-time error, distinct from initialization problems. */
     playbackError?: string;
+    /** What kind of failure `playbackError` is, when it is a known read failure (for a localized message). */
+    playbackErrorKind?: ReadErrorKind;
+    /**
+     * The network dropped while reading the remote recording: reads wait and are asked again with a
+     * bounded backoff, and playback resumes by itself when the network is back. Not a failure.
+     */
+    reconnecting?: boolean;
+    /**
+     * How often `Player.retry()` was called. A panel whose own read failed (for example a Plot
+     * window) reads it again when this changes.
+     */
+    retryCount?: number;
     /** Estimated continuous local buffer ahead of the current playback time. */
     bufferedAheadMs?: number;
     /** Background data quality scan report (session-only). */
@@ -112,10 +124,26 @@ export interface PlayerState {
   };
 }
 
+/**
+ * A known kind of read failure, for a localized message (the raw message stays the detail):
+ * `network` the server could not be reached, `stalled` the server stopped sending data,
+ * `refused` the server answered with an error status.
+ */
+export type ReadErrorKind = 'network' | 'stalled' | 'refused';
+
 /** A topic whose frame could not be read, and why. */
 export interface TopicReadError {
   topic: string;
   message: string;
+  /** Set when the failure is of a known kind. */
+  kind?: ReadErrorKind;
+}
+
+/** Whether a viewer's remote reads wait for the network to come back (see `progress.reconnecting`). */
+export interface ConnectionStatus {
+  readonly reconnecting: boolean;
+  /** Called whenever `reconnecting` changes; returns the unsubscribe function. */
+  subscribe(listener: () => void): () => void;
 }
 
 export interface Subscription {
@@ -152,6 +180,11 @@ export interface Player {
   /** Latest playback time. Prefer this or subscribeCurrentTime for real-time playhead reads. */
   getCurrentTime(): Time | undefined;
   play(): void;
+  /**
+   * Tries again what failed: playback (as `play()`), the frame of each topic that could not be
+   * read, and panels' own window reads (`progress.retryCount`). Optional; hosts' players may omit it.
+   */
+  retry?(): void;
   pause(): void;
   seek(time: Time): void;
   stepBy(deltaMs: number): void;

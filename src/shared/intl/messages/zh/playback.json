@@ -16,5 +16,6 @@
   "playback.loop.loop": "循环",
   "playback.loop.once": "单次",
   "playback.buffering": "缓冲中",
-  "playback.retry": "重试"
+  "playback.retry": "重试",
+  "playback.reconnecting": "网络连接已断开，正在重新连接…"
 }

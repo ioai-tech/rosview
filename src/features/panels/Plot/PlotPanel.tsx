@@ -34,6 +34,7 @@ import { hasManualPlotViewport, usePlotChart, type PlotViewportState } from './u
 import { REMOTE_PLOT_WINDOW_SEC, usePlotPanelData } from './usePlotPanelData';
 import { usePlotTopicDetection } from './usePlotTopicDetection';
 import { timeToSec } from '@/core/analysis/timeSeries';
+import { readErrorText } from '@/features/panels/common/readErrorText';
 
 /** Stable empty array for activeTopics when no topics are configured. */
 const EMPTY_TOPICS: string[] = [];
@@ -96,7 +97,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     endTime,
   });
 
-  const { dataset: rawDataset, loading, progress, error, window: dataWindow } = usePlotPanelData({
+  const { dataset: rawDataset, loading, progress, error, errorKind, window: dataWindow } = usePlotPanelData({
     player,
     config,
     activeTopics,
@@ -226,7 +227,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
           )
         : formatMessage({ id: 'panels.plot.status.loading' })
       : error
-        ? error
+        ? readErrorText(formatMessage, error, errorKind)
         : hasSeries && dataset.sampleRatio < 1
           ? formatMessage(
               { id: 'panels.plot.status.sampling' },

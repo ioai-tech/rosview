@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Player } from '@/core/types/player';
+import type { Player, ReadErrorKind } from '@/core/types/player';
+import { readErrorKind } from '@/core/players/readErrorKind';
+import { useReadRetry } from '@/features/panels/common/useReadRetry';
 import type { Time } from '@/core/types/ros';
 import { useMessagePipelineStore } from '@/core/pipeline/store';
 import { fromNano, toNano } from '@/shared/utils/time';
@@ -66,6 +68,8 @@ export interface UsePlotPanelDataResult {
   loading: boolean;
   progress: PlotRangeReadProgress | null;
   error: string | null;
+  /** The known kind of `error`, for a localized message. */
+  errorKind?: ReadErrorKind;
   /** The loaded window when `windowed` (the x axis follows it), else null. */
   window: { start: Time; end: Time } | null;
 }
@@ -83,7 +87,9 @@ export function usePlotPanelData({
   const [dataset, setDataset] = useState<PlotDataset>(EMPTY_DATASET);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<PlotRangeReadProgress | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; kind?: ReadErrorKind } | null>(null);
+  // Retry (`Player.retry()`) reads a failed window again, without a seek.
+  const readAttempt = useReadRetry(error != null);
 
   // Window of the recording that is loaded when `windowed`; recentred when the playhead nears its edge.
   const [windowRange, setWindowRange] = useState<{ start: Time; end: Time } | null>(null);
@@ -231,8 +237,10 @@ export function usePlotPanelData({
       })
       .catch((err: unknown) => {
         if (!isAbortError(err)) {
-          setDataset(EMPTY_DATASET);
-          setError(err instanceof Error ? err.message : String(err));
+          // What was read before the failure stays on the chart; the error says the rest is missing.
+          cancelDatasetFlush();
+          flushDataset();
+          setError({ message: err instanceof Error ? err.message : String(err), kind: readErrorKind(err) });
         }
       })
       .finally(() => {
@@ -265,6 +273,7 @@ export function usePlotPanelData({
     onProgress,
     player,
     randomAccessByTopic,
+    readAttempt,
     startTime,
     windowed,
     windowRange,
@@ -288,5 +297,12 @@ export function usePlotPanelData({
     setDataset(accumulator.buildDataset(enabledSeriesIdsRef.current, configRef.current));
   }, [seriesVisualKey]);
 
-  return { dataset, loading, progress, error, window: windowed ? windowRange : null };
+  return {
+    dataset,
+    loading,
+    progress,
+    error: error?.message ?? null,
+    errorKind: error?.kind,
+    window: windowed ? windowRange : null,
+  };
 }

@@ -5,7 +5,9 @@ import { messageBus } from '@/core/pipeline/messageBus';
 import { useSubscriberSeq } from '@/core/pipeline/useMessageBus';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
 import type { MessagePipelineState } from '@/core/pipeline/store';
-import type { Player } from '@/core/types/player';
+import type { Player, ReadErrorKind } from '@/core/types/player';
+import { readErrorKind } from '@/core/players/readErrorKind';
+import { useReadRetry } from '@/features/panels/common/useReadRetry';
 import type { Time } from '@/core/types/ros';
 import { isRosImageSchema } from '@/shared/ros/rosMessageTypes';
 import { PanelReadError } from '@/features/panels/common/PanelReadError';
@@ -51,7 +53,9 @@ export const AlignPanel: React.FC<AlignPanelProps> = (props) => {
 
   const centerTimeRef = useRef<Time>(player.getCurrentTime() ?? { sec: 0, nsec: 0 });
   const [centerTick, setCenterTick] = useState(0);
-  const [readError, setReadError] = useState<string | null>(null);
+  const [readError, setReadError] = useState<{ message: string; kind?: ReadErrorKind } | null>(null);
+  // Retry (`Player.retry()`) reads the window again after a failure.
+  const readAttempt = useReadRetry(readError != null);
   const isPlaying = useMessagePipeline((state) => state.playerState.activeData?.isPlaying ?? false);
   const fetchAbortRef = useRef<AbortController | null>(null);
 
@@ -162,13 +166,13 @@ export const AlignPanel: React.FC<AlignPanelProps> = (props) => {
         return;
       }
       console.warn('AlignPanel: range read failed', e);
-      setReadError(e instanceof Error ? e.message : String(e));
+      setReadError({ message: e instanceof Error ? e.message : String(e), kind: readErrorKind(e) });
     }
   }, [activeTopics, activeTopicsKey, player, timeMode, windowHalfMs]);
 
   useEffect(() => {
     void fetchRange();
-  }, [fetchRange, centerTick, startTime, endTime]);
+  }, [fetchRange, centerTick, startTime, endTime, readAttempt]);
 
   useEffect(() => {
     if (activeTopics.length === 0) {
@@ -383,7 +387,9 @@ export const AlignPanel: React.FC<AlignPanelProps> = (props) => {
           onPointerMove={onPointerMove}
           onPointerLeave={() => setHover(null)}
         />
-        {readError && <PanelReadError reason={readError} className="absolute left-2 right-2 top-2 z-10" />}
+        {readError && (
+          <PanelReadError reason={readError.message} kind={readError.kind} className="absolute left-2 right-2 top-2 z-10" />
+        )}
         {hover ? (
           <div
             className="absolute z-20 pointer-events-none rounded border border-border bg-card/95 px-2 py-1 text-[10px] font-mono shadow-sm max-w-[min(360px,90vw)]"

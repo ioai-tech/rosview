@@ -75,8 +75,9 @@ describe('AlignPanel read errors', () => {
 
     await render(['/camera']);
     expect(container.querySelector('[data-testid="panel-read-error"]')?.textContent).toBe(
-      `Could not read the recording: ${reason}`,
+      'Could not read the recording: The server stopped sending data.',
     );
+    expect(container.querySelector('[data-testid="panel-read-error"]')?.getAttribute('title')).toBe(reason);
 
     // A topic that is not in the recording: nothing is read any more.
     await render(['/gone']);

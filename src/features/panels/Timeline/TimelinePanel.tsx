@@ -4,7 +4,9 @@ import { useIntl } from 'react-intl';
 import { useShallow } from 'zustand/react/shallow';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
 import type { MessagePipelineState } from '@/core/pipeline/store';
-import type { Player } from '@/core/types/player';
+import type { Player, ReadErrorKind } from '@/core/types/player';
+import { readErrorKind } from '@/core/players/readErrorKind';
+import { useReadRetry } from '@/features/panels/common/useReadRetry';
 import type { DataQualityIssueRange, DataQualityReport, MessageEvent } from '@/core/types/ros';
 import { toNano } from '@/shared/utils/time';
 import { scheduleFrame } from '@/shared/utils/rafScheduler';
@@ -72,7 +74,9 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
     })),
   );
   const [samplesByTopic, setSamplesByTopic] = useState<Map<string, TopicSample>>(new Map());
-  const [readError, setReadError] = useState<string | null>(null);
+  const [readError, setReadError] = useState<{ message: string; kind?: ReadErrorKind } | null>(null);
+  // Retry (`Player.retry()`) reads the bounds again after a failure.
+  const readAttempt = useReadRetry(readError != null);
   const markerRef = useRef<HTMLDivElement | null>(null);
   const markerContainerRef = useRef<HTMLDivElement | null>(null);
   const rangeRef = useRef<{ startNs: bigint; totalNs: bigint } | undefined>(undefined);
@@ -104,7 +108,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
         if (!controller.signal.aborted) {
           console.warn('TimelinePanel: failed to read topic time bounds', error);
           setSamplesByTopic(new Map());
-          setReadError(error instanceof Error ? error.message : String(error));
+          setReadError({ message: error instanceof Error ? error.message : String(error), kind: readErrorKind(error) });
         }
       }
     }
@@ -112,7 +116,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
     return () => {
       controller.abort();
     };
-  }, [player, topics, startTime, endTime]);
+  }, [player, topics, startTime, endTime, readAttempt]);
 
   const rows = useMemo<TopicRow[]>(() => {
     if (!startTime || !endTime) return [];
@@ -241,7 +245,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({ player, config }) 
 
   return (
     <div className="h-full overflow-auto p-2">
-      {readError && <PanelReadError reason={readError} className="mb-2" />}
+      {readError && <PanelReadError reason={readError.message} kind={readError.kind} className="mb-2" />}
       <div className="relative space-y-2">
         <div
           ref={markerContainerRef}

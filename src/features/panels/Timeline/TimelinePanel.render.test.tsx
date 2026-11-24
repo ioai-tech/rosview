@@ -68,6 +68,8 @@ describe('TimelinePanel read errors', () => {
     });
     const alert = container.querySelector('[data-testid="panel-read-error"]');
     expect(alert?.getAttribute('role')).toBe('alert');
-    expect(alert?.textContent).toBe(`Could not read the recording: ${reason}`);
+    // A stall is said in the viewer's language; the raw message is the detail.
+    expect(alert?.textContent).toBe('Could not read the recording: The server stopped sending data.');
+    expect(alert?.getAttribute('title')).toBe(reason);
   });
 });

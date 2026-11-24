@@ -6,10 +6,13 @@
  * of an indexed MCAP is usable after a few hundred milliseconds rather than after a 50 MiB
  * transfer. Demand reads (a decoder waiting for a chunk) pre-empt read-ahead; read-ahead that
  * no longer matches the playhead is aborted. URLs may be renewed mid-session (see `UrlRenewal`).
+ * A read the network drops after the server has answered once waits for the network and is asked
+ * again by itself (see `ConnectionMonitor`); what arrived before is kept.
  */
 import type { Range } from '@/shared/utils/ranges';
 import { RANGE_BLOCK_BYTES as B, rangeBlockCache, type RangeBlockCache, type RangeStore } from './rangeCache';
 import type { RenewableUrl, UrlRenewal } from './urlRenewal';
+import { ConnectionMonitor } from './connection';
 
 export class RangeHttpError extends Error {
   readonly status: number;
@@ -42,6 +45,21 @@ export class RangeStallError extends Error {
   }
 }
 
+/**
+ * A request got no response at all (the network is down, the host unreachable, or a refusal
+ * without CORS headers): the browser's own text ("Failed to fetch") is only the `detail`.
+ */
+export class RangeNetworkError extends Error {
+  /** The browser's message for the failure, for diagnostics. */
+  readonly detail: string;
+  constructor(what: string, cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`Could not reach the server while ${what} (${detail}).`, { cause });
+    this.name = 'RangeNetworkError';
+    this.detail = detail;
+  }
+}
+
 export type RangeProgress = { loadedBytes: number; totalBytes: number; transferredBytes: number };
 
 export interface RangeSourceOptions {
@@ -55,6 +73,11 @@ export interface RangeSourceOptions {
   renewal?: UrlRenewal;
   cache?: RangeBlockCache;
   fetchImpl?: typeof fetch;
+  /**
+   * The viewer's network state, shared by its sources: a read the network dropped waits there and
+   * the viewer shows that it is reconnecting. Default: one of its own.
+   */
+  connection?: ConnectionMonitor;
   /**
    * A request that receives no bytes for this long is stalled: it is aborted and asked again once,
    * then the read fails with `RangeStallError`. Waiting for the response headers may take three
@@ -160,6 +183,9 @@ export class RangeSource implements RenewableUrl {
   #cache: RangeBlockCache;
   #fetch: typeof fetch;
   #stallMs: number;
+  #connection: ConnectionMonitor;
+  /** The server answered a request of this source (any status): a later network error is an outage, not a wrong URL. */
+  #reached = false;
   #anonId = `anon:${++anonymousCounter}`;
 
   #size = 0;
@@ -201,6 +227,7 @@ export class RangeSource implements RenewableUrl {
       typeof options.stallTimeoutMs === 'number' && options.stallTimeoutMs > 0
         ? options.stallTimeoutMs
         : DEFAULT_STALL_TIMEOUT_MS;
+    this.#connection = options.connection ?? new ConnectionMonitor();
     this.#unregister = this.#renewal?.register(this);
     this.#unlistenClear = this.#cache.onClear(() => this.#abortAll());
   }
@@ -530,12 +557,15 @@ export class RangeSource implements RenewableUrl {
     let next = run.first;
     let attempt = 0;
     let stalls = 0;
+    let outageRetries = 0;
     try {
       for (;;) {
         const watch = this.#watch(run.controller.signal);
         try {
           const end = Math.min(this.#size, (run.last + 1) * B) - 1;
           const res = await this.#request(next * B, end, watch.signal);
+          this.#connection.release(run);
+          outageRetries = 0;
           watch.touch();
           next = await this.#consume(res, run, next, { onBytes: watch.touch, signal: watch.signal });
           if (next > run.last) break;
@@ -554,6 +584,16 @@ export class RangeSource implements RenewableUrl {
             continue;
           }
           if (err instanceof RangeMismatchError) throw err; // wrong bytes are never retried
+          if (err instanceof RangeNetworkError && this.#reached) {
+            // Read-ahead is asked for again by the next prefetch; it does not hold a slot through an outage.
+            if (run.kind === 'prefetch') throw err;
+            // The server answered before, so the network dropped: wait for it however long it takes
+            // (the viewer says it is reconnecting) and ask for the blocks that have not arrived.
+            await this.#connection.waitToRetry(run, outageRetries++, run.controller.signal);
+            while (next <= run.last && this.#store.has(next)) next++;
+            if (next > run.last) break;
+            continue;
+          }
           if (err instanceof WholeFileInFlight) {
             await this.#wholeFile?.promise.catch(() => undefined);
             while (next <= run.last && this.#store.has(next)) next++;
@@ -567,7 +607,10 @@ export class RangeSource implements RenewableUrl {
           }
           const status = err instanceof RangeHttpError ? err.status : 0;
           if (status !== 0 && !RETRYABLE.has(status)) throw err;
-          if (++attempt >= MAX_ATTEMPTS) throw err;
+          if (++attempt >= MAX_ATTEMPTS) {
+            // A body the network cut on every attempt is a network failure, said as one.
+            throw err instanceof TypeError ? new RangeNetworkError(`reading ${this.#describe()}`, err) : err;
+          }
           await sleep(300 * 2 ** (attempt - 1), run.controller.signal);
           // resume from the first block not yet committed
           while (next <= run.last && this.#store.has(next)) next++;
@@ -579,6 +622,7 @@ export class RangeSource implements RenewableUrl {
     } catch (err) {
       this.#dropRun(run, err);
     } finally {
+      this.#connection.release(run);
       this.#active.delete(run);
       this.#dropRun(run, new Error('Range request ended early'));
       this.#pump();
@@ -648,8 +692,13 @@ export class RangeSource implements RenewableUrl {
           renewed = true;
           if (await this.#renewal.renew(this, current)) continue;
         }
-        throw err;
+        throw new RangeNetworkError(`reading ${this.#describe()}`, err);
       }
+      // A response, whatever its status: the network works. Reads waiting for it ask again now, and
+      // a renewal that failed during an outage (the host was unreachable too) is not a refusal.
+      this.#reached = true;
+      if (this.#connection.reconnecting) this.#renewal?.forgiveBackoff();
+      this.#connection.responded();
       if (signal.aborted) {
         await res.body?.cancel().catch(() => undefined);
         throw abortError();
