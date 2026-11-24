@@ -17,5 +17,6 @@
   "playback.loop.once": "1 回",
   "playback.buffering": "バッファ中",
   "playback.retry": "再試行",
-  "playback.reconnecting": "接続が切れました。再接続しています…"
+  "playback.reconnecting": "接続が切れました。再接続しています…",
+  "playback.reconnectingFor": "接続が切れて {elapsed} 経過しました。再接続しています…"
 }

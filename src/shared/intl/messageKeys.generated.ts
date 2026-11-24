@@ -404,6 +404,7 @@ export type RosViewMessageKey =
   | "playback.pause"
   | "playback.play"
   | "playback.reconnecting"
+  | "playback.reconnectingFor"
   | "playback.retry"
   | "playback.samplingFps.aria"
   | "playback.speed.aria"

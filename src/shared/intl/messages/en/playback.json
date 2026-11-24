@@ -17,5 +17,6 @@
   "playback.loop.once": "Once",
   "playback.buffering": "Buffering",
   "playback.retry": "Retry",
-  "playback.reconnecting": "Connection lost. Reconnecting…"
+  "playback.reconnecting": "Connection lost. Reconnecting…",
+  "playback.reconnectingFor": "Connection lost for {elapsed}. Reconnecting…"
 }

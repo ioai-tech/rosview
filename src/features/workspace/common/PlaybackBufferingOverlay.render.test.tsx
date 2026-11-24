@@ -46,6 +46,30 @@ describe('PlaybackBufferingOverlay', () => {
     expect(container.querySelector('[data-testid="rosview-playback-error"]')).toBeNull();
   });
 
+  it('says for how long the connection has been lost once the outage lasts, and stops counting when it ends', async () => {
+    vi.useFakeTimers();
+    try {
+      await render({ reconnecting: true, buffering: true }, {} as Player, 'zh');
+      const text = () => container.querySelector('[data-testid="rosview-playback-reconnecting-text"]')?.textContent;
+      expect(text()).toBe('网络连接已断开，正在重新连接…');
+      await act(async () => vi.advanceTimersByTime(9_000));
+      expect(text()).toBe('网络连接已断开，正在重新连接…');
+      await act(async () => vi.advanceTimersByTime(66_000));
+      expect(text()).toBe('网络连接已断开 1:15，正在重新连接…');
+
+      await render({ buffering: false }, {} as Player, 'zh');
+      expect(container.querySelector('[data-testid="rosview-playback-reconnecting"]')).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      // A new outage counts from its own start.
+      await render({ reconnecting: true, buffering: true }, {} as Player, 'en');
+      expect(text()).toBe('Connection lost. Reconnecting…');
+      await act(async () => vi.advanceTimersByTime(3_725_000));
+      expect(text()).toBe('Connection lost for 1:02:05. Reconnecting…');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("says a network failure in the viewer's language; the browser's words are only the detail", async () => {
     await render({ playbackError: 'Failed to fetch', playbackErrorKind: 'network' }, {} as Player, 'zh');
     const text = container.querySelector('[data-testid="rosview-playback-error"] p');
