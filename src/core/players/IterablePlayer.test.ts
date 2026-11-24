@@ -1488,6 +1488,100 @@ describe('IterablePlayer playback watchdogs', () => {
     }
   });
 
+  it('holds the playhead while the network is down and plays on from there once it is back (M-2)', async () => {
+    const clock = installFakePlaybackClock();
+    const source = makeSource([]);
+    const cursor = { nextBatch: vi.fn(async () => []), end: vi.fn(async () => undefined) };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const listeners = new Set<() => void>();
+    const connection = {
+      reconnecting: false,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    const setReconnecting = (value: boolean): void => {
+      connection.reconnecting = value;
+      for (const listener of listeners) listener();
+    };
+    const player = new IterablePlayer(source, { connection });
+    let state: PlayerState | undefined;
+    const seconds = (): number => {
+      const t = player.getCurrentTime()!;
+      return t.sec + t.nsec / 1e9;
+    };
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.play();
+      clock.now = 1_000;
+      clock.runNextRaf();
+      await flushAsyncWork();
+      const before = seconds();
+      expect(before).toBeGreaterThan(0.9);
+
+      // Data the cursor still has would let the clock run on; the frames would not follow.
+      setReconnecting(true);
+      for (const at of [2_000, 3_000, 4_000]) {
+        clock.now = at;
+        clock.runNextRaf();
+        await flushAsyncWork();
+      }
+      expect(seconds()).toBe(before);
+      expect(state?.progress.buffering).toBe(true);
+
+      setReconnecting(false);
+      expect(state?.progress.buffering).toBe(false);
+      clock.now = 4_500;
+      clock.runNextRaf();
+      await flushAsyncWork();
+      // On from where it waited: half a second later, not three and a half.
+      expect(seconds()).toBeCloseTo(before + 0.5, 1);
+    } finally {
+      player.close();
+      clock.restore();
+    }
+  });
+
+  it('a seek while playing plays on from the seek time once its frame arrives, however long that took (M-2)', async () => {
+    const clock = installFakePlaybackClock();
+    const source = makeSource([]);
+    const cursor = { nextBatch: vi.fn(async () => []), end: vi.fn(async () => undefined) };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.play();
+      clock.now = 100;
+      clock.runNextRaf();
+      await flushAsyncWork();
+
+      // The frame at the seek time takes 5 s (the network is down meanwhile).
+      const frame = deferred<MessageEvent[]>();
+      vi.mocked(source.getBackfillMessages).mockImplementationOnce(() => frame.promise);
+      player.seek({ sec: 2, nsec: 0 });
+      clock.now = 5_100;
+      frame.resolve([]);
+      await flushAsyncWork();
+      clock.now = 5_200;
+      clock.runNextRaf();
+      await flushAsyncWork();
+
+      // Playback goes on from 2 s, not from 2 s plus the 5 s the frame took.
+      const now = player.getCurrentTime()!;
+      expect(now.sec + now.nsec / 1e9).toBeGreaterThanOrEqual(2);
+      expect(now.sec + now.nsec / 1e9).toBeLessThan(2.5);
+    } finally {
+      player.close();
+      clock.restore();
+    }
+  });
+
   it('while the network is down a slow read never fails playback, which resumes when the read answers (M-2)', async () => {
     const clock = installFakePlaybackClock();
     const source = makeSource([]);

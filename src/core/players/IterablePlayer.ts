@@ -246,6 +246,13 @@ export class IterablePlayer implements Player {
     const reconnecting = this._connection?.reconnecting === true;
     if ((this._state.progress.reconnecting === true) === reconnecting) return;
     this._state.progress = { ...this._state.progress, reconnecting };
+    if (!reconnecting && this._isPlaying && this._isBuffering) {
+      // Back: playback goes on from where it waited (a slow read buffers again on the next tick).
+      this._setBuffering(false);
+      const now = performance.now();
+      this._clock.seek(this._currentTime, now);
+      this._lastTickWallMs = now;
+    }
     if (this._state.presence !== "closed") this._emitState();
   };
 
@@ -823,6 +830,13 @@ export class IterablePlayer implements Player {
       }
     } finally {
       if (this._isPlaybackEpochCurrent(epoch)) {
+        if (this._isPlaying) {
+          // No tick ran while the frame at the seek time was read (a slow link, or a network that
+          // dropped meanwhile): playback goes on from there, not as far ahead as that took.
+          const resumedAt = performance.now();
+          this._clock.seek(this._currentTime, resumedAt);
+          this._lastTickWallMs = resumedAt;
+        }
         this._lastPipelineEmitMs = 0;
         this._emitState();
         this._scheduleNextTick();
@@ -1269,6 +1283,14 @@ export class IterablePlayer implements Player {
     if (!this._isPlaying || this._pageSuspended) return;
     try {
       const now = performance.now();
+      if (this._connection?.reconnecting) {
+        // The network is gone: playback waits at the playhead (the frames it would show cannot be
+        // read) and goes on from there once the network is back, instead of running on without them.
+        this._setBuffering(true);
+        this._clock.seek(this._currentTime, now);
+        this._lastTickWallMs = now;
+        return;
+      }
       const slowRead =
         this._prefetchStartedAtMs != undefined &&
         now - this._prefetchStartedAtMs >= PLAYBACK_BUFFERING_DELAY_MS;
