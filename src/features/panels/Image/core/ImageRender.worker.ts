@@ -49,6 +49,7 @@ import type {
 } from './imageWorkerProtocol';
 import type { RawImageDecodeOptions } from './imageColorMode';
 import { H264_SEEK_MAX_FRAMES } from './h264SeekRepair';
+import { H264StallWatch } from './h264StallWatch';
 
 const DEFAULT_RENDER_OPTIONS: ImageRenderOptions = {
   backgroundColor: '#000000',
@@ -373,9 +374,8 @@ class ImageRenderWorkerRuntime {
   #h264LastEnqueuedTimeNs: bigint | null = null;
   #h264FrameIntervalMs = 0;
   #lastH264BootstrapRequestAt = -Infinity;
-  /** Wall clock of the last visible H.264 progress, used by the stall watchdog. */
-  #h264ProgressAt: number | null = null;
-  #h264StallReported = false;
+  /** Stall watchdog: playing time since the last visible H.264 progress. */
+  #h264StallWatch = new H264StallWatch();
   #lastH264RenderAt = -Infinity;
   #lastH264BitmapAt = -Infinity;
   #droppedH264Frames = 0;
@@ -438,6 +438,7 @@ class ImageRenderWorkerRuntime {
       case 'playback':
         this.#playbackTimeNs = timeToKey(message.currentTime);
         this.#isPlaying = message.isPlaying;
+        this.#h264StallWatch.setPlaying(message.isPlaying, performance.now());
         this.#updateH264Pressure();
         this.#trimPendingH264FramesIfNeeded();
         this.#reportH264StallIfDue();
@@ -582,7 +583,7 @@ class ImageRenderWorkerRuntime {
     this.#h264LastEnqueuedTimeNs = frameTimeNs;
     if (previousNs == null) {
       // Arm the stall watchdog from the first live frame.
-      this.#h264ProgressAt ??= performance.now();
+      this.#h264StallWatch.arm(performance.now());
       return;
     }
     const gapMs = Number(frameTimeNs - previousNs) / 1_000_000;
@@ -646,24 +647,15 @@ class ImageRenderWorkerRuntime {
    * like a still image with no explanation.
    */
   #reportH264StallIfDue(): void {
-    const progressAt = this.#h264ProgressAt;
-    if (progressAt == null || !this.#isPlaying) {
+    if (!this.#h264StallWatch.shouldReport(performance.now(), H264_STALL_REPORT_MS)) {
       return;
     }
-    if (performance.now() - progressAt < H264_STALL_REPORT_MS) {
-      return;
-    }
-    if (this.#h264StallReported) {
-      return;
-    }
-    this.#h264StallReported = true;
     this.#emitStatus({ phase: 'stalled' });
     this.#requestH264Bootstrap();
   }
 
   #noteH264Progress(): void {
-    this.#h264ProgressAt = performance.now();
-    this.#h264StallReported = false;
+    this.#h264StallWatch.noteProgress(performance.now());
   }
 
   #enqueueFrame(frame: ImageWorkerFrameEnvelope): void {
@@ -1085,8 +1077,7 @@ class ImageRenderWorkerRuntime {
     this.#h264NeedsResync = false;
     this.#h264LastEnqueuedTimeNs = null;
     this.#h264FrameIntervalMs = 0;
-    this.#h264ProgressAt = null;
-    this.#h264StallReported = false;
+    this.#h264StallWatch.reset();
     // #lastH264BootstrapRequestAt is intentionally preserved: a bootstrap runs
     // through here, so clearing it would let a bootstrap that fails to produce
     // output immediately request another one.
