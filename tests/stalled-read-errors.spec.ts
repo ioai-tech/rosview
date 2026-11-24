@@ -83,10 +83,15 @@ test('a stalled read: the image shows, each panel says why its topic is missing,
   // The image's chunk is not stalled.
   await expect(page.getByTestId('image-panel-status').first()).toHaveText(/^\d+x\d+/, { timeout: 30_000 });
 
-  // The 3D panel names the reason (the stall, after one retry).
-  const reason = /Could not read \/(tf_static|scene\/map): No data arrived from the server for 1 s while reading .*also after a retry\./;
+  // The 3D panel names the reason (the stall, after one retry) in the viewer's language; the raw
+  // message is the detail.
+  const reason = /Could not read \/(tf_static|scene\/map): The server stopped sending data\./;
   const threeDError = page.locator('[data-panel-type="3D"] [data-testid="panel-topic-read-error"]');
   await expect(threeDError).toHaveText(reason, { timeout: 30_000 });
+  await expect(threeDError.locator('p').first()).toHaveAttribute(
+    'title',
+    /No data arrived from the server for 1 s while reading .*also after a retry\./,
+  );
 
   // Every panel that reads a stalled topic says so, and none says it is waiting for it.
   const failingPanels = page.locator('[data-panel-id]:has([data-testid="panel-topic-read-error"])');

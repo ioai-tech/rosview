@@ -11,13 +11,17 @@
  */
 import type { ConnectionStatus } from '@/core/types/player';
 
-/** Delay before the `attempt`-th retry (0-based) of a read the network dropped: 0.5 s doubling, at most 5 s. */
+/**
+ * Delay before the `attempt`-th retry (0-based) of a read the network dropped: 0.5 s doubling, at
+ * most 3 s, so a viewer is back within about 3 s of the network even when the browser never says
+ * `online`. A request the network drops costs the server nothing.
+ */
 export function networkRetryDelayMs(attempt: number): number {
   return Math.min(NETWORK_RETRY_MAX_MS, NETWORK_RETRY_FIRST_MS * 2 ** Math.max(0, attempt));
 }
 
 const NETWORK_RETRY_FIRST_MS = 500;
-const NETWORK_RETRY_MAX_MS = 5_000;
+const NETWORK_RETRY_MAX_MS = 3_000;
 
 function abortError(): Error {
   const e = new Error('Aborted');

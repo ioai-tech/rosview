@@ -9,16 +9,16 @@ describe('ConnectionMonitor', () => {
     vi.useRealTimers();
   });
 
-  it('backs off 0.5 s doubling, never more than 5 s apart', () => {
-    expect([0, 1, 2, 3, 4, 10, 100].map(networkRetryDelayMs)).toEqual([500, 1000, 2000, 4000, 5000, 5000, 5000]);
+  it('backs off 0.5 s doubling, never more than 3 s apart', () => {
+    expect([0, 1, 2, 3, 4, 10, 100].map(networkRetryDelayMs)).toEqual([500, 1000, 2000, 3000, 3000, 3000, 3000]);
   });
 
   it('asks again when its delay has passed', async () => {
     vi.useFakeTimers();
     const monitor = new ConnectionMonitor();
     let woke = false;
-    void monitor.waitToRetry({}, 3, new AbortController().signal).then(() => (woke = true));
-    await vi.advanceTimersByTimeAsync(3_999);
+    void monitor.waitToRetry({}, 2, new AbortController().signal).then(() => (woke = true));
+    await vi.advanceTimersByTimeAsync(1_999);
     expect(woke).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(woke).toBe(true);

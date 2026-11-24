@@ -86,7 +86,8 @@ export interface PlayerState {
     playbackErrorKind?: ReadErrorKind;
     /**
      * The network dropped while reading the remote recording: reads wait and are asked again with a
-     * bounded backoff, and playback resumes by itself when the network is back. Not a failure.
+     * bounded backoff (at most 3 s apart, at once on `online`), and playback resumes by itself when
+     * the network is back. Not a failure.
      */
     reconnecting?: boolean;
     /**

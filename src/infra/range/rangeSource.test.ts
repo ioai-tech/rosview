@@ -681,12 +681,12 @@ describe('a network outage (M-2: Raw did not recover from a dropped network)', (
       // Before the fix the read failed after about 2 s with the browser's "Failed to fetch".
       expect(read.done).toBe(false);
       expect(connection.reconnecting).toBe(true);
-      // 0.5, 1, 2, 4 s, then every 5 s: about 15 attempts in a minute, never a tight loop.
-      expect(net.attemptsWhileDown).toBeGreaterThanOrEqual(12);
-      expect(net.attemptsWhileDown).toBeLessThanOrEqual(16);
+      // 0.5, 1, 2 s, then every 3 s: about 22 attempts in a minute, never a tight loop.
+      expect(net.attemptsWhileDown).toBeGreaterThanOrEqual(19);
+      expect(net.attemptsWhileDown).toBeLessThanOrEqual(23);
 
       net.down = false;
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(3_000);
       expect(read.done).toBe(true);
       expect(read.error).toBeUndefined();
       expect(same(read.value!, server.data.slice(8 * B, 8 * B + 10))).toBe(true);
