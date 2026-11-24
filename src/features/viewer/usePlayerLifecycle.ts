@@ -11,6 +11,7 @@ import { groupDatasets, type DatasetItem } from '@/shared/utils/datasetSources';
 import { pushSpaUrlParam, serializeSourceLocator } from '@/shared/utils/sourceLocator';
 import { fallbackIndexOrder, prepareSourceMember } from './sourceLoading';
 import { UrlRenewal } from '@/infra/range/urlRenewal';
+import { ConnectionMonitor } from '@/infra/range/connection';
 import { datasetItemToSourceLocator } from './rosViewerUtils';
 import type { RosViewerProps } from './RosViewer.types';
 import type { createRosViewIntl } from '@/shared/intl/createRosViewIntl';
@@ -75,6 +76,9 @@ export function usePlayerLifecycle(props: RosViewerProps, args: UsePlayerLifecyc
 
   // Presigned-URL renewal is configured per viewer and read live, so a later `urlExpiresAt` applies.
   const [renewal] = useState(() => new UrlRenewal());
+  // The network state of this viewer's remote reads: a read the network dropped waits there, and the
+  // player holds its deadlines and says it is reconnecting meanwhile.
+  const [connection] = useState(() => new ConnectionMonitor());
   useEffect(() => {
     renewal.update({ refreshUrls: props.refreshUrls, urlExpiresAt: props.urlExpiresAt });
   }, [renewal, props.refreshUrls, props.urlExpiresAt]);
@@ -165,6 +169,7 @@ export function usePlayerLifecycle(props: RosViewerProps, args: UsePlayerLifecyc
             group.members.map((ds) =>
               prepareSourceMember(ds, autoDataQualityScan, {
                 renewal,
+                connection,
                 persist: persistence !== 'off',
                 // A source key names one recording: with several remote sources it would be ambiguous.
                 sourceKey:
@@ -190,8 +195,8 @@ export function usePlayerLifecycle(props: RosViewerProps, args: UsePlayerLifecyc
         // `CombinedSourceProxy`.
         const newPlayer =
           preparedMembers.length === 1
-            ? new IterablePlayer(preparedMembers[0].source)
-            : new IterablePlayer(new CombinedSourceProxy(preparedMembers));
+            ? new IterablePlayer(preparedMembers[0].source, { connection })
+            : new IterablePlayer(new CombinedSourceProxy(preparedMembers), { connection });
         createdPlayer = newPlayer;
         if (!cancelled) setPlayer(newPlayer);
 
@@ -252,12 +257,13 @@ export function usePlayerLifecycle(props: RosViewerProps, args: UsePlayerLifecyc
       createdPlayer?.close();
       setPlayer(null);
     };
-    // `renewal` is stable for the viewer's lifetime. `activeGroupMembersKey` is not read directly but forces a rebuild when
+    // `renewal` and `connection` are stable for the viewer's lifetime. `activeGroupMembersKey` is not read directly but forces a rebuild when
     // files are added to (or removed from) the currently active group.
   }, [
     activeId,
     activeGroupMembersKey,
     clearOpenFeedback,
+    connection,
     datasetsRef,
     hasSource,
     offlineIntl,

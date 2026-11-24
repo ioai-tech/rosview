@@ -1487,6 +1487,150 @@ describe('IterablePlayer playback watchdogs', () => {
       clock.restore();
     }
   });
+
+  it('holds the playhead while the network is down and plays on from there once it is back (M-2)', async () => {
+    const clock = installFakePlaybackClock();
+    const source = makeSource([]);
+    const cursor = { nextBatch: vi.fn(async () => []), end: vi.fn(async () => undefined) };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const listeners = new Set<() => void>();
+    const connection = {
+      reconnecting: false,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    const setReconnecting = (value: boolean): void => {
+      connection.reconnecting = value;
+      for (const listener of listeners) listener();
+    };
+    const player = new IterablePlayer(source, { connection });
+    let state: PlayerState | undefined;
+    const seconds = (): number => {
+      const t = player.getCurrentTime()!;
+      return t.sec + t.nsec / 1e9;
+    };
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.play();
+      clock.now = 1_000;
+      clock.runNextRaf();
+      await flushAsyncWork();
+      const before = seconds();
+      expect(before).toBeGreaterThan(0.9);
+
+      // Data the cursor still has would let the clock run on; the frames would not follow.
+      setReconnecting(true);
+      for (const at of [2_000, 3_000, 4_000]) {
+        clock.now = at;
+        clock.runNextRaf();
+        await flushAsyncWork();
+      }
+      expect(seconds()).toBe(before);
+      expect(state?.progress.buffering).toBe(true);
+
+      setReconnecting(false);
+      expect(state?.progress.buffering).toBe(false);
+      clock.now = 4_500;
+      clock.runNextRaf();
+      await flushAsyncWork();
+      // On from where it waited: half a second later, not three and a half.
+      expect(seconds()).toBeCloseTo(before + 0.5, 1);
+    } finally {
+      player.close();
+      clock.restore();
+    }
+  });
+
+  it('a seek while playing plays on from the seek time once its frame arrives, however long that took (M-2)', async () => {
+    const clock = installFakePlaybackClock();
+    const source = makeSource([]);
+    const cursor = { nextBatch: vi.fn(async () => []), end: vi.fn(async () => undefined) };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    const player = new IterablePlayer(source);
+    try {
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.play();
+      clock.now = 100;
+      clock.runNextRaf();
+      await flushAsyncWork();
+
+      // The frame at the seek time takes 5 s (the network is down meanwhile).
+      const frame = deferred<MessageEvent[]>();
+      vi.mocked(source.getBackfillMessages).mockImplementationOnce(() => frame.promise);
+      player.seek({ sec: 2, nsec: 0 });
+      clock.now = 5_100;
+      frame.resolve([]);
+      await flushAsyncWork();
+      clock.now = 5_200;
+      clock.runNextRaf();
+      await flushAsyncWork();
+
+      // Playback goes on from 2 s, not from 2 s plus the 5 s the frame took.
+      const now = player.getCurrentTime()!;
+      expect(now.sec + now.nsec / 1e9).toBeGreaterThanOrEqual(2);
+      expect(now.sec + now.nsec / 1e9).toBeLessThan(2.5);
+    } finally {
+      player.close();
+      clock.restore();
+    }
+  });
+
+  it('while the network is down a slow read never fails playback, which resumes when the read answers (M-2)', async () => {
+    const clock = installFakePlaybackClock();
+    const source = makeSource([]);
+    const batch = deferred<MessageEvent[]>();
+    const cursor = { nextBatch: vi.fn(() => batch.promise), end: vi.fn(async () => undefined) };
+    vi.mocked(source.getMessageCursor).mockResolvedValue(cursor as never);
+    // The viewer's network state, as the range reader reports it.
+    const listeners = new Set<() => void>();
+    const connection = {
+      reconnecting: false,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    const setReconnecting = (value: boolean): void => {
+      connection.reconnecting = value;
+      for (const listener of listeners) listener();
+    };
+    const player = new IterablePlayer(source, { rpcTimeoutMs: 20, sourceFailureThreshold: 1, connection });
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('panel', [{ topic: TOPIC, subscriberId: 'panel' }]);
+      await flushAsyncWork();
+      player.play();
+      setReconnecting(true);
+      expect(state?.progress.reconnecting).toBe(true);
+      clock.now = 100;
+      clock.runNextRaf();
+      // Many deadlines pass while the read waits for the network: none of them is a failure.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(state?.progress.playbackError).toBeUndefined();
+      expect(state?.activeData?.isPlaying).toBe(true);
+
+      setReconnecting(false);
+      expect(state?.progress.reconnecting).toBe(false);
+      batch.resolve([makeImageMessageAtMs(50)]);
+      await flushAsyncWork();
+      expect(state?.progress.playbackError).toBeUndefined();
+      expect(state?.activeData?.isPlaying).toBe(true);
+    } finally {
+      player.close();
+      clock.restore();
+    }
+    // A closed player no longer listens.
+    expect(listeners.size).toBe(0);
+  });
 });
 
 describe('IterablePlayer initialize logging', () => {
@@ -1949,10 +2093,35 @@ describe('IterablePlayer read errors by panel', () => {
       player.registerHighFrequencyConsumer('Image!1:image-main', { topic: TOPIC, lane: 'video', onLatestMessage: vi.fn() });
       await flushAsyncWork();
       expect(state?.activeData?.panelReadErrors).toEqual({
-        'Raw!1': [{ topic: MAP_TOPIC, message: reason }],
-        '3D!1': [{ topic: MAP_TOPIC, message: reason }],
-        'Image!1': [{ topic: TOPIC, message: reason }],
+        'Raw!1': [{ topic: MAP_TOPIC, message: reason, kind: 'stalled' }],
+        '3D!1': [{ topic: MAP_TOPIC, message: reason, kind: 'stalled' }],
+        'Image!1': [{ topic: TOPIC, message: reason, kind: 'stalled' }],
       });
+    } finally {
+      player.close();
+    }
+  });
+
+  it('retry() reads the frame of each failed topic again, also while paused, and bumps retryCount', async () => {
+    const failing = new Set([MAP_TOPIC]);
+    const source = failingSource(failing);
+    const player = new IterablePlayer(source);
+    let state: PlayerState | undefined;
+    try {
+      player.setListener((s) => (state = s));
+      await player.initialize({});
+      player.registerSubscriptions('Raw!1', [{ topic: MAP_TOPIC, subscriberId: 'Raw!1' }]);
+      await flushAsyncWork();
+      expect(state?.activeData?.topicErrors?.[MAP_TOPIC]).toBe(reason);
+      expect(state?.progress.retryCount).toBeUndefined();
+
+      failing.clear(); // the server answers again
+      player.retry();
+      await flushAsyncWork();
+      expect(state?.activeData?.topicErrors).toEqual({});
+      expect(state?.activeData?.panelReadErrors).toBeUndefined();
+      expect(state?.progress.retryCount).toBe(1);
+      expect(state?.activeData?.isPlaying).toBe(false);
     } finally {
       player.close();
     }
@@ -1997,7 +2166,7 @@ describe('IterablePlayer read errors by panel', () => {
       await player.initialize({});
       subscribe(before);
       await flushAsyncWork();
-      expect(state?.activeData?.panelReadErrors).toEqual({ [panel]: [{ topic: MAP_TOPIC, message: reason }] });
+      expect(state?.activeData?.panelReadErrors).toEqual({ [panel]: [{ topic: MAP_TOPIC, message: reason, kind: 'stalled' }] });
 
       // The same panel re-registers with its new topics (a Raw path change, a Plot series change).
       subscribe(after);

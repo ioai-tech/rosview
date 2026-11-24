@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RangeSource, RangeHttpError, RangeMismatchError, RangeStallError } from './RangeSource';
+import { RangeSource, RangeHttpError, RangeMismatchError, RangeNetworkError, RangeStallError } from './RangeSource';
+import { ConnectionMonitor } from './connection';
 import { rangeBlockCache } from './rangeCache';
 import { clearMemoryIndexes } from './rangeHandle';
 import { RangeBlockCache, RANGE_BLOCK_BYTES as B } from './rangeCache';
@@ -634,5 +635,226 @@ describe('stalled requests', () => {
     expect((await source.read(B, 3 * B)).byteLength).toBe(3 * B);
     expect(requests).toBe(2); // the probe and one request: no retry
     source.dispose();
+  });
+});
+
+describe('a network outage (M-2: Raw did not recover from a dropped network)', () => {
+  const url = 'https://x/a';
+  /** `fakeServer` behind a network that can go down: then every request fails as the browser's would. */
+  function flakyNetwork(size: number) {
+    const server = fakeServer(size);
+    server.validUrls.add(url);
+    const net = { down: false, attemptsWhileDown: 0 };
+    const fetchImpl: typeof fetch = (input, init) => {
+      if (net.down) {
+        net.attemptsWhileDown++;
+        return Promise.reject(new TypeError('Failed to fetch'));
+      }
+      return server.fetchImpl(input, init);
+    };
+    return { server, net, fetchImpl };
+  }
+
+  /** Settles `promise` into a box, so a test can see that it has not settled yet. */
+  function track<T>(promise: Promise<T>) {
+    const box: { done: boolean; value?: T; error?: unknown } = { done: false };
+    promise.then(
+      (value) => Object.assign(box, { done: true, value }),
+      (error: unknown) => Object.assign(box, { done: true, error }),
+    );
+    return box;
+  }
+
+  it('a read the network drops waits, with a bounded backoff, and completes once the network is back', async () => {
+    vi.useFakeTimers();
+    try {
+      const { server, net, fetchImpl } = flakyNetwork(16 * B);
+      const connection = new ConnectionMonitor();
+      const changes: boolean[] = [];
+      connection.subscribe(() => changes.push(connection.reconnecting));
+      const source = new RangeSource({ url, knownTotalBytes: 16 * B, cache: new RangeBlockCache(), fetchImpl, connection });
+      expect(same(await source.read(0, 10), server.data.slice(0, 10))).toBe(true); // the server answered once
+
+      net.down = true;
+      const read = track(source.read(8 * B, 10));
+      await vi.advanceTimersByTimeAsync(60_000);
+      // Before the fix the read failed after about 2 s with the browser's "Failed to fetch".
+      expect(read.done).toBe(false);
+      expect(connection.reconnecting).toBe(true);
+      // 0.5, 1, 2 s, then every 3 s: about 22 attempts in a minute, never a tight loop.
+      expect(net.attemptsWhileDown).toBeGreaterThanOrEqual(19);
+      expect(net.attemptsWhileDown).toBeLessThanOrEqual(23);
+
+      net.down = false;
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(read.done).toBe(true);
+      expect(read.error).toBeUndefined();
+      expect(same(read.value!, server.data.slice(8 * B, 8 * B + 10))).toBe(true);
+      expect(connection.reconnecting).toBe(false);
+      expect(changes).toEqual([true, false]);
+      source.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the blocks that arrived before the cut and asks only for the rest', async () => {
+    vi.useFakeTimers();
+    try {
+      const { server, net, fetchImpl: flaky } = flakyNetwork(16 * B);
+      let cutNext = false;
+      // The first response after `cutNext` delivers one block, then the network goes down mid-body.
+      const fetchImpl: typeof fetch = async (input, init) => {
+        const res = await flaky(input, init);
+        if (!cutNext || res.status !== 206) return res;
+        cutNext = false;
+        const reader = res.body!.getReader();
+        let sent = 0;
+        const body = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            if (sent >= B) {
+              net.down = true;
+              controller.error(new TypeError('network error'));
+              return;
+            }
+            const { value } = await reader.read();
+            controller.enqueue(value!);
+            sent += value!.byteLength;
+          },
+        });
+        return new Response(body, { status: 206, headers: res.headers });
+      };
+      const source = new RangeSource({ url, knownTotalBytes: 16 * B, cache: new RangeBlockCache(), fetchImpl });
+      await source.read(0, 10);
+      cutNext = true;
+      const read = track(source.read(4 * B, 3 * B));
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(read.done).toBe(false);
+      net.down = false;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(read.error).toBeUndefined();
+      expect(same(read.value!, server.data.slice(4 * B, 7 * B))).toBe(true);
+      // The block that arrived before the cut was not asked for again.
+      const after = server.requests.filter((r) => r.start >= 4 * B).map((r) => r.start / B);
+      expect(after).toEqual([4, 5]);
+      source.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a server never reached fails with a named RangeNetworkError, the browser text only its detail', async () => {
+    vi.useFakeTimers();
+    try {
+      const connection = new ConnectionMonitor();
+      const fetchImpl: typeof fetch = () => Promise.reject(new TypeError('Failed to fetch'));
+      const source = new RangeSource({ url, knownTotalBytes: 4 * B, cache: new RangeBlockCache(), fetchImpl, connection });
+      const read = track(source.read(0, 10));
+      await vi.advanceTimersByTimeAsync(5_000);
+      // A wrong host or a bucket without CORS is not an outage to wait out: it is said, by name.
+      expect(read.error).toBeInstanceOf(RangeNetworkError);
+      expect((read.error as RangeNetworkError).detail).toBe('Failed to fetch');
+      expect((read.error as Error).message).toMatch(/^Could not reach the server while reading /);
+      expect(connection.reconnecting).toBe(false);
+      source.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('after the outage a URL the server refuses stays an honest RangeHttpError, not an endless wait', async () => {
+    vi.useFakeTimers();
+    try {
+      const { server, net, fetchImpl } = flakyNetwork(16 * B);
+      const connection = new ConnectionMonitor();
+      const source = new RangeSource({ url, knownTotalBytes: 16 * B, cache: new RangeBlockCache(), fetchImpl, connection });
+      await source.read(0, 10);
+      net.down = true;
+      const read = track(source.read(8 * B, 10));
+      await vi.advanceTimersByTimeAsync(10_000);
+      server.validUrls.clear(); // the URL is gone for good (403)
+      net.down = false;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(read.error).toBeInstanceOf(RangeHttpError);
+      expect((read.error as RangeHttpError).status).toBe(403);
+      expect(connection.reconnecting).toBe(false);
+      source.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('renews a URL that expired during the outage although the refresh failed while the host was unreachable', async () => {
+    vi.useFakeTimers();
+    try {
+      const { server, net, fetchImpl } = flakyNetwork(16 * B);
+      const renewal = new UrlRenewal();
+      const refreshUrls = vi.fn(async (expired: string[]) => {
+        if (net.down) throw new TypeError('Failed to fetch'); // the host is unreachable too
+        return expired.map(() => 'https://x/new');
+      });
+      renewal.update({ refreshUrls, urlExpiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+      const source = new RangeSource({ url, knownTotalBytes: 16 * B, renewal, cache: new RangeBlockCache(), fetchImpl });
+      await source.read(0, 10);
+
+      net.down = true;
+      // The URL expires during the outage.
+      renewal.update({ refreshUrls, urlExpiresAt: new Date(Date.now() + 2_000).toISOString() });
+      server.validUrls.delete(url);
+      server.validUrls.add('https://x/new');
+      const read = track(source.read(8 * B, 10));
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(refreshUrls).toHaveBeenCalled(); // and failed: the host could not be reached
+      net.down = false;
+      await vi.advanceTimersByTimeAsync(5_000);
+      // The 403 of the expired URL is renewed at once, not refused for the refresh's 30 s backoff.
+      expect(read.error).toBeUndefined();
+      expect(same(read.value!, server.data.slice(8 * B, 8 * B + 10))).toBe(true);
+      expect(source.getUrl()).toBe('https://x/new');
+      source.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('read-ahead does not wait through an outage; only reads someone waits for do', async () => {
+    vi.useFakeTimers();
+    try {
+      const { net, fetchImpl } = flakyNetwork(16 * B);
+      const connection = new ConnectionMonitor();
+      const source = new RangeSource({ url, knownTotalBytes: 16 * B, cache: new RangeBlockCache(), fetchImpl, connection });
+      await source.read(0, 10);
+      net.down = true;
+      source.prefetch([{ start: 8 * B, end: 12 * B }]);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(net.attemptsWhileDown).toBe(1);
+      expect(connection.reconnecting).toBe(false);
+      source.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a waiting read ends when the source is disposed', async () => {
+    vi.useFakeTimers();
+    try {
+      const { net, fetchImpl } = flakyNetwork(16 * B);
+      const connection = new ConnectionMonitor();
+      const source = new RangeSource({ url, knownTotalBytes: 16 * B, cache: new RangeBlockCache(), fetchImpl, connection });
+      await source.read(0, 10);
+      net.down = true;
+      const read = track(source.read(8 * B, 10));
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(connection.reconnecting).toBe(true);
+      source.dispose();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(read.done).toBe(true);
+      expect(connection.reconnecting).toBe(false);
+      const attempts = net.attemptsWhileDown;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(net.attemptsWhileDown).toBe(attempts);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -18,6 +18,7 @@ import { RangeSource } from '@/infra/range/RangeSource';
 import { exposeRangeSource, type ExposedRangeSource } from '@/infra/range/rangeHandle';
 import { rangeBlockCache } from '@/infra/range/rangeCache';
 import type { UrlRenewal } from '@/infra/range/urlRenewal';
+import type { ConnectionMonitor } from '@/infra/range/connection';
 import { resolveRemoteCacheBytes } from '@/infra/workers/remoteCacheConfig';
 
 /**
@@ -34,6 +35,8 @@ function e2eStallTimeoutMs(): number | undefined {
 /** Per-viewer settings for how remote recordings are read. */
 export interface RemoteReadOptions {
   renewal?: UrlRenewal;
+  /** The viewer's network state: its sources wait there for the network after an outage. */
+  connection?: ConnectionMonitor;
   /** Host-stable id of the (single) recording; enables cache reuse across opens. */
   sourceKey?: string;
   /** False when the host turned persistence off: nothing about the recording may reach IndexedDB. */
@@ -164,6 +167,7 @@ export async function prepareSourceMember(
       sourceKey: remoteOptions.sourceKey,
       knownTotalBytes: ds.sizeBytes,
       renewal,
+      connection: remoteOptions.connection,
       stallTimeoutMs: e2eStallTimeoutMs(),
     });
     exposed = exposeRangeSource(rangeSource, {

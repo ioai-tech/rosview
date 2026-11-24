@@ -10,6 +10,14 @@ export function isTimeoutError(error: unknown): error is TimeoutError {
   return error instanceof TimeoutError || (error instanceof Error && error.name === 'TimeoutError');
 }
 
+export interface WithTimeoutOptions {
+  /**
+   * While this returns true when the deadline comes, the wait is explained (for example the network
+   * is down and the read waits for it): the deadline starts again instead of rejecting.
+   */
+  holdWhile?: () => boolean;
+}
+
 /**
  * Rejects with a `TimeoutError` when `promise` takes longer than `timeoutMs`. What the promise
  * settles with after that is not dropped silently: a value goes to `onLateValue`, an error to
@@ -21,16 +29,22 @@ export function withTimeout<T>(
   message: string,
   onLateValue?: (value: T) => void,
   onLateError?: (error: Error) => void,
+  options: WithTimeoutOptions = {},
 ): Promise<T> {
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   return new Promise<T>((resolve, reject) => {
-    timer = setTimeout(() => {
+    const expire = (): void => {
+      if (options.holdWhile?.()) {
+        timer = setTimeout(expire, timeoutMs);
+        return;
+      }
       timedOut = true;
       timer = null;
       reject(new TimeoutError(message));
-    }, timeoutMs);
+    };
+    timer = setTimeout(expire, timeoutMs);
 
     promise.then(
       (value) => {

@@ -60,6 +60,14 @@ export class UrlRenewal {
   }
 
   /**
+   * The network came back after an outage: a refresh that failed meanwhile could not reach the host
+   * and was no refusal, so the next expired URL may ask the host again at once.
+   */
+  forgiveBackoff(): void {
+    this.#backoffUntil = 0;
+  }
+
+  /**
    * Renews every live source's URL. Resolves true when `source` now has a URL different from
    * `failedUrl` and the request should be retried once.
    */

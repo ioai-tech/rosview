@@ -1,6 +1,8 @@
 import type {
+  ConnectionStatus,
   GetMessagesInTimeRangeArgs,
   HighFrequencyConsumer,
+  ReadErrorKind,
   TopicReadError,
   Player,
   PlayerState,
@@ -12,6 +14,7 @@ import type { DataQualityReport, Initialization, MessageEvent, PlayerProblem, Ti
 import { messageBus } from '@/core/pipeline/messageBus';
 import { useMessagePipelineStore } from '@/core/pipeline/store';
 import { BackgroundReadGate } from './backgroundReadGate';
+import { readErrorKind } from './readErrorKind';
 import type { ISourceHandle } from '@/infra/workers/ISourceHandle';
 import type { IMessageCursor, SourceInitProgress } from '@/infra/workers/types';
 import { isTimeoutError, withTimeout } from '@/shared/utils/asyncTimeout';
@@ -204,7 +207,11 @@ export class IterablePlayer implements Player {
   private _sourceFailureCount = 0;
   private _playbackProblems: PlayerProblem[] = [];
   /** Topics whose frame could not be read, with the reason (cleared when the topic delivers). */
-  private _topicReadErrors = new Map<string, string>();
+  private _topicReadErrors = new Map<string, { message: string; kind?: ReadErrorKind }>();
+  /** The viewer's network state: while it reconnects, a slow read is explained and never timed out. */
+  private _connection?: ConnectionStatus;
+  private _unsubscribeConnection?: () => void;
+  private _retryCount = 0;
   private _backgroundReads = new BackgroundReadGate(BACKGROUND_READ_SLOTS);
   private _playbackProblemIsTimeout = false;
   private _rpcTimeoutMs = PLAYBACK_RPC_TIMEOUT_MS;
@@ -227,8 +234,27 @@ export class IterablePlayer implements Player {
     if (options.sourceFailureThreshold != undefined) {
       this._sourceFailureThreshold = options.sourceFailureThreshold;
     }
+    if (options.connection) {
+      this._connection = options.connection;
+      this._unsubscribeConnection = options.connection.subscribe(this._handleConnectionChange);
+    }
     this._attachPageLifecycleListeners();
   }
+
+  /** The network dropped or came back: said in the progress (reads resume by themselves). */
+  private _handleConnectionChange = (): void => {
+    const reconnecting = this._connection?.reconnecting === true;
+    if ((this._state.progress.reconnecting === true) === reconnecting) return;
+    this._state.progress = { ...this._state.progress, reconnecting };
+    if (!reconnecting && this._isPlaying && this._isBuffering) {
+      // Back: playback goes on from where it waited (a slow read buffers again on the next tick).
+      this._setBuffering(false);
+      const now = performance.now();
+      this._clock.seek(this._currentTime, now);
+      this._lastTickWallMs = now;
+    }
+    if (this._state.presence !== "closed") this._emitState();
+  };
 
   setListener(listener: (state: PlayerState) => void): void {
     this._listener = listener;
@@ -458,7 +484,7 @@ export class IterablePlayer implements Player {
     let late = false;
     // A new attempt at these topics' frame: their previous read errors no longer apply.
     if (this._clearTopicReadErrors(topics)) this._emitState();
-    const deliver = (done: readonly string[], messages: MessageEvent[], error?: { message: string }): boolean => {
+    const deliver = (done: readonly string[], messages: MessageEvent[], error?: { name?: string; message: string }): boolean => {
       if (!this._isPlaybackEpochCurrent(epoch) || (late && this._isPlaying)) return false;
       for (const topic of done) {
         delivered.add(topic);
@@ -467,7 +493,8 @@ export class IterablePlayer implements Player {
       if (pendingFrames.size === 0) framesRead?.();
       if (error) {
         // The panels of these topics show why their frame is missing instead of waiting forever.
-        for (const topic of done) this._topicReadErrors.set(topic, error.message);
+        const kind = readErrorKind(error);
+        for (const topic of done) this._topicReadErrors.set(topic, { message: error.message, ...(kind ? { kind } : {}) });
         this._syncProblems();
         this._emitState();
       } else {
@@ -494,7 +521,7 @@ export class IterablePlayer implements Player {
     // The whole call failed (a source without per-topic delivery, or a worker error): every topic
     // not delivered yet gets that error.
     const failRest = (err: Error): void => {
-      deliver(ordered.filter((topic) => !delivered.has(topic)), [], { message: err.message });
+      deliver(ordered.filter((topic) => !delivered.has(topic)), [], { name: err.name, message: err.message });
     };
     try {
       deliverRest(
@@ -563,14 +590,14 @@ export class IterablePlayer implements Player {
   /** Publishes playback problems and per-topic read errors on the active data. */
   private _syncProblems(): void {
     if (!this._state.activeData) return;
-    const topicErrors = Object.fromEntries(this._topicReadErrors);
+    const topicErrors = Object.fromEntries([...this._topicReadErrors].map(([topic, { message }]) => [topic, message]));
     let panelReadErrors: Record<string, TopicReadError[]> | undefined;
     if (this._topicReadErrors.size > 0) {
       panelReadErrors = {};
       for (const [panelId, topics] of this._topicsByPanel()) {
         const failed = [...topics]
           .filter((topic) => this._topicReadErrors.has(topic))
-          .map((topic) => ({ topic, message: this._topicReadErrors.get(topic)! }));
+          .map((topic) => ({ topic, ...this._topicReadErrors.get(topic)! }));
         if (failed.length > 0) panelReadErrors[panelId] = failed;
       }
     }
@@ -714,6 +741,29 @@ export class IterablePlayer implements Player {
     this._scheduleNextTick();
   }
 
+  /**
+   * Tries again what failed: playback when it stopped on an error, the frame of each topic that
+   * could not be read (also while paused), and panels' own window reads (`progress.retryCount`).
+   */
+  retry(): void {
+    if (this._state.presence === "closed") return;
+    this._retryCount += 1;
+    this._state.progress = { ...this._state.progress, retryCount: this._retryCount };
+    const failedTopics = [...this._topicReadErrors.keys()];
+    if (this._state.progress.playbackError) {
+      // play() clears the error and reads again from the playhead; the panels' frames follow.
+      this.play();
+      if (failedTopics.length > 0 && this._initialization) {
+        void this._backfillTopics(this._playbackEpoch, this._currentTime, failedTopics);
+      }
+      return;
+    }
+    if (failedTopics.length > 0 && this._initialization) {
+      void this._backfillTopics(this._playbackEpoch, this._currentTime, failedTopics);
+    }
+    this._emitState();
+  }
+
   pause(): void {
     this._playWhenReady = false;
     this._advancePlaybackEpoch();
@@ -780,6 +830,13 @@ export class IterablePlayer implements Player {
       }
     } finally {
       if (this._isPlaybackEpochCurrent(epoch)) {
+        if (this._isPlaying) {
+          // No tick ran while the frame at the seek time was read (a slow link, or a network that
+          // dropped meanwhile): playback goes on from there, not as far ahead as that took.
+          const resumedAt = performance.now();
+          this._clock.seek(this._currentTime, resumedAt);
+          this._lastTickWallMs = resumedAt;
+        }
         this._lastPipelineEmitMs = 0;
         this._emitState();
         this._scheduleNextTick();
@@ -877,6 +934,8 @@ export class IterablePlayer implements Player {
   }
 
   close(): void {
+    this._unsubscribeConnection?.();
+    this._unsubscribeConnection = undefined;
     this._playWhenReady = false;
     this._advancePlaybackEpoch();
     this._clock.pause(performance.now());
@@ -1224,6 +1283,14 @@ export class IterablePlayer implements Player {
     if (!this._isPlaying || this._pageSuspended) return;
     try {
       const now = performance.now();
+      if (this._connection?.reconnecting) {
+        // The network is gone: playback waits at the playhead (the frames it would show cannot be
+        // read) and goes on from there once the network is back, instead of running on without them.
+        this._setBuffering(true);
+        this._clock.seek(this._currentTime, now);
+        this._lastTickWallMs = now;
+        return;
+      }
       const slowRead =
         this._prefetchStartedAtMs != undefined &&
         now - this._prefetchStartedAtMs >= PLAYBACK_BUFFERING_DELAY_MS;
@@ -1456,7 +1523,10 @@ export class IterablePlayer implements Player {
     onLateValue?: (value: T) => void,
     onLateError?: (error: Error) => void,
   ): Promise<T> {
-    return withTimeout(promise, this._rpcTimeoutMs, message, onLateValue, onLateError);
+    // A read that waits for the network is explained: its deadline starts again once it is back.
+    return withTimeout(promise, this._rpcTimeoutMs, message, onLateValue, onLateError, {
+      holdWhile: () => this._connection?.reconnecting === true,
+    });
   }
 
   private _noteSourceSuccess(): void {
@@ -1470,7 +1540,7 @@ export class IterablePlayer implements Player {
     if (!isTimeoutError(error)) {
       // A real error from the source (for example a stalled or refused read) is the answer:
       // shown as it is, also when it replaces an earlier timeout.
-      this._failPlayback(error instanceof Error ? error.message : String(error));
+      this._failPlayback(error instanceof Error ? error.message : String(error), false, readErrorKind(error));
       return;
     }
     this._sourceFailureCount += 1;
@@ -1483,20 +1553,21 @@ export class IterablePlayer implements Player {
     );
   }
 
-  private _failPlayback(message: string, timeout = false): void {
+  private _failPlayback(message: string, timeout = false, kind?: ReadErrorKind): void {
     this._setBuffering(false);
-    this._setPlaybackProblem({ severity: "error", message });
+    this._setPlaybackProblem({ severity: "error", message }, kind);
     // A timeout is a guess; the real error of the read it gave up on may still arrive and replace it.
     this._playbackProblemIsTimeout = timeout;
     if (this._isPlaying) this.pause();
     else this._emitState();
   }
 
-  private _setPlaybackProblem(problem: PlayerProblem | undefined): void {
+  private _setPlaybackProblem(problem: PlayerProblem | undefined, kind?: ReadErrorKind): void {
     this._playbackProblems = problem ? [problem] : [];
     this._state.progress = {
       ...this._state.progress,
       playbackError: problem?.message,
+      playbackErrorKind: problem ? kind : undefined,
     };
     this._syncProblems();
   }
@@ -1634,6 +1705,9 @@ export class IterablePlayer implements Player {
         buffering: this._isBuffering,
         bufferedAheadMs: progress.bufferedAheadMs,
         playbackError: this._state.progress.playbackError,
+        playbackErrorKind: this._state.progress.playbackErrorKind,
+        reconnecting: this._state.progress.reconnecting,
+        retryCount: this._state.progress.retryCount,
         dataQualityReport,
       };
       const prevProgress = this._state.progress;
