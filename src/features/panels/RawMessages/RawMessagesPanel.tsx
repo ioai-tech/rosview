@@ -54,6 +54,8 @@ interface RawMessageRowProps {
   expanded: boolean;
   onToggle: (path: string) => void;
   onCopy: (path: string) => void;
+  /** Localized label of the per-row copy button. */
+  copyLabel: string;
   registerValueNode: (path: string, node: HTMLSpanElement | null) => void;
 }
 
@@ -291,6 +293,7 @@ const RawMessageRow = React.memo(function RawMessageRow({
   expanded,
   onToggle,
   onCopy,
+  copyLabel,
   registerValueNode,
 }: RawMessageRowProps) {
   const handleToggle = useCallback(() => {
@@ -328,8 +331,9 @@ const RawMessageRow = React.memo(function RawMessageRow({
         type="button"
         className="ml-2 rounded px-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
         onClick={handleCopy}
+        data-testid="raw-messages-copy-field"
       >
-        COPY
+        {copyLabel}
       </button>
     </div>
   );
@@ -682,6 +686,7 @@ export const RawMessagesPanel: React.FC<RawMessagesPanelProps> = ({
     });
   }, []);
 
+  const copyLabel = formatMessage({ id: 'panels.rawMessages.copy.button' });
   const copyField = useCallback(
     async (path: string) => {
       const value = readValueAtPath(latestRef.current, path);
@@ -735,6 +740,7 @@ export const RawMessagesPanel: React.FC<RawMessagesPanelProps> = ({
                   expanded={expandedPaths.has(row.path)}
                   onToggle={toggleExpand}
                   onCopy={copyField}
+                  copyLabel={copyLabel}
                   registerValueNode={registerValueNode}
                 />
               ))}

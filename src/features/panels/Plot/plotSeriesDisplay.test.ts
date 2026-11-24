@@ -14,6 +14,16 @@ describe('displaySeriesLabels', () => {
       'a · velocity',
     ]);
   });
+  it('names known fields in the UI language and keeps other fields as they are', () => {
+    const zh = { position: '位置', velocity: '速度', effort: '力矩' };
+    expect(displaySeriesLabels(['position[0] (a)', 'velocity[0] (a)', 'accel[0] (a)'], zh)).toEqual([
+      'a · 位置',
+      'a · 速度',
+      'a · accel',
+    ]);
+    // One field: the joint name alone, as without field labels.
+    expect(displaySeriesLabels(['position[0] (a)'], zh)).toEqual(['a']);
+  });
   it('leaves unnamed labels untouched', () => {
     expect(displaySeriesLabels(['position[0]', '/t · x'])).toEqual(['position[0]', '/t · x']);
   });

@@ -209,6 +209,7 @@
   "panels.rawMessages.settings.enum.binaryCopy.base64": "Base64",
   "panels.rawMessages.copy.success": "Copied {path}",
   "panels.rawMessages.copy.error": "Copy failed",
+  "panels.rawMessages.copy.button": "Copy",
   "panels.pose.settings.section.source": "Source",
   "panels.pose.settings.field.schemaAuto.label": "Schema auto-detection",
   "panels.pose.settings.field.schemaAuto.help": "Pose panel automatically includes geometry_msgs/msg/PoseStamped.",

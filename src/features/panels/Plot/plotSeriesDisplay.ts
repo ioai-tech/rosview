@@ -4,15 +4,22 @@ const NAMED_ITEM = /^([A-Za-z_]\w*)\[\d+\] \((.+)\)$/;
  * Human labels for series. Array items carry `field[i] (name)`; the joint name
  * is what users recognise, so use it alone when all series share one field and
  * append the field (`name · velocity`) when several fields are plotted together.
+ * `fieldLabels` names known fields in the UI language (`position` → 位置); other
+ * fields keep their message name.
  */
-export function displaySeriesLabels(labels: readonly string[]): string[] {
+export function displaySeriesLabels(
+  labels: readonly string[],
+  fieldLabels?: Readonly<Record<string, string>>,
+): string[] {
   const parsed = labels.map((label) => NAMED_ITEM.exec(label));
   const fields = new Set<string>();
   for (const match of parsed) if (match) fields.add(match[1]);
   return labels.map((label, index) => {
     const match = parsed[index];
     if (!match) return label;
-    return fields.size > 1 ? `${match[2]} · ${match[1]}` : match[2];
+    if (fields.size <= 1) return match[2];
+    const field = fieldLabels && Object.prototype.hasOwnProperty.call(fieldLabels, match[1]) ? fieldLabels[match[1]] : match[1];
+    return `${match[2]} · ${field}`;
   });
 }
 

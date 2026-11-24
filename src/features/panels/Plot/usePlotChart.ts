@@ -34,6 +34,8 @@ export interface UsePlotChartArgs {
    * appending.
    */
   loading?: boolean;
+  /** UI-language names of known series fields (JointState position / velocity / effort). */
+  seriesFieldLabels?: Readonly<Record<string, string>>;
   onViewportStateChange?: (state: PlotViewportState) => void;
 }
 
@@ -226,6 +228,7 @@ export function usePlotChart({
   logStart,
   loading,
   onViewportStateChange,
+  seriesFieldLabels,
 }: UsePlotChartArgs): UsePlotChartResult {
   const uplotRef = useRef<uPlot | null>(null);
   const currentTimeSecRef = useRef<number | undefined>(
@@ -467,7 +470,10 @@ export function usePlotChart({
     followingViewWidthRef.current = config.followingViewWidthSec;
     xAxisModeRef.current = config.xAxisMode;
 
-    const displayLabels = displaySeriesLabels(dataset.series.map((s) => s.label));
+    const displayLabels = displaySeriesLabels(
+      dataset.series.map((s) => s.label),
+      seriesFieldLabels,
+    );
     tooltipSeriesRef.current = dataset.series.map((s, index) => ({
       label: displayLabels[index] ?? s.label,
       color: s.color,
@@ -555,6 +561,7 @@ export function usePlotChart({
     destroyChart,
     hiddenSeries,
     mountChart,
+    seriesFieldLabels,
     xRange,
   ]);
 

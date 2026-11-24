@@ -314,6 +314,7 @@ export type RosViewMessageKey =
   | "panels.pose.settings.section.pose"
   | "panels.pose.settings.section.source"
   | "panels.pose.settings.section.trajectory"
+  | "panels.rawMessages.copy.button"
   | "panels.rawMessages.copy.error"
   | "panels.rawMessages.copy.success"
   | "panels.rawMessages.defaultTitle"
