@@ -8,7 +8,6 @@ import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
 import type { Player } from '@/core/types/player';
 import { TopicQuickPicker } from '../framework';
 import type { JointStateField, PlotConfig } from './defaults';
-import { JOINT_STATE_FIELDS } from './defaults';
 import { filterPlottableTopics } from './plottableSchemas';
 import { pickDefaultPlotTopic } from './pickDefaultPlotTopic';
 import { secToTime } from './plotChart';
@@ -27,6 +26,7 @@ import {
   setPlotLegendEntries,
 } from './plotPanelRuntimeStore';
 import { PlotChartLegend } from './PlotChartLegend';
+import { PlotJointFieldControl } from './PlotJointFieldControl';
 import { displaySeriesLabels } from './plotSeriesDisplay';
 import { annotatePlotUnits } from './plotUnits';
 import { formatPlotDatasetWarning } from './plotWarnings';
@@ -34,6 +34,7 @@ import { hasManualPlotViewport, usePlotChart, type PlotViewportState } from './u
 import { REMOTE_PLOT_WINDOW_SEC, usePlotPanelData } from './usePlotPanelData';
 import { usePlotTopicDetection } from './usePlotTopicDetection';
 import { timeToSec } from '@/core/analysis/timeSeries';
+import { useElementWidth } from '@/shared/hooks/useElementWidth';
 
 /** Stable empty array for activeTopics when no topics are configured. */
 const EMPTY_TOPICS: string[] = [];
@@ -45,42 +46,18 @@ interface PlotPanelProps {
   setConfig: (next: PlotConfig | ((prev: PlotConfig) => PlotConfig)) => void;
 }
 
-function JointStateFieldChips({
-  fields,
-  fieldLabels,
-  onChange,
-}: {
-  fields: JointStateField[];
-  fieldLabels: Record<JointStateField, string>;
-  onChange: (fields: JointStateField[]) => void;
-}): React.ReactNode {
-  return (
-    <div className="flex items-center gap-0.5">
-      {JOINT_STATE_FIELDS.map((field) => {
-        const active = fields.includes(field);
-        return (
-          <button
-            key={field}
-            type="button"
-            onClick={() => {
-              const next = active ? fields.filter((f) => f !== field) : [...fields, field];
-              onChange(next.length > 0 ? next : ['position']);
-            }}
-            className={`rounded px-1.5 py-0.5 text-[10px] capitalize ${
-              active ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
-            }`}
-          >
-            {fieldLabels[field]}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+/** The topic picker's floor: below it the topic is unreadable. */
+const TOPIC_PICKER_MIN_WIDTH_PX = 120;
+/** Room kept for a short status ("Loading…") beside the field tabs; longer status text ellipsizes. */
+const TOOLBAR_STATUS_RESERVE_PX = 48;
+/** The toolbar's `gap-2`. */
+const TOOLBAR_GAP_PX = 8;
 
 export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, setConfig }) => {
   const { formatMessage } = useIntl();
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const toolbarWidth = useElementWidth(toolbarRef);
   const autoTopicAppliedRef = useRef(false);
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const [viewportState, setViewportState] = useState<PlotViewportState>({ x: false, y: false });
@@ -284,8 +261,13 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="plot-panel">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted px-2 py-1">
-        {/* The topic stays readable in a narrow panel: the window hint truncates first. */}
+      {/* One line at any width: the tabs fold into a menu and the status text ellipsizes. */}
+      <div
+        ref={toolbarRef}
+        className="@container/plottoolbar flex shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-muted px-2 py-1"
+        data-testid="plot-toolbar"
+      >
+        {/* The topic stays readable in a narrow panel: the window hint truncates first, then hides. */}
         <div className="min-w-[7.5rem] flex-1 max-w-xs">
           <TopicQuickPicker
             value={primary?.topic ?? ''}
@@ -296,15 +278,20 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
           />
         </div>
         {showJointStateFields && (
-          <JointStateFieldChips
+          <PlotJointFieldControl
             fields={config.jointStateFields}
             fieldLabels={jointFieldLabels}
             onChange={handleJointStateFieldsChange}
+            availableWidth={
+              toolbarWidth === undefined
+                ? undefined
+                : toolbarWidth - TOPIC_PICKER_MIN_WIDTH_PX - 2 * TOOLBAR_GAP_PX - TOOLBAR_STATUS_RESERVE_PX
+            }
           />
         )}
         {dataWindow && (
           <span
-            className="ml-auto min-w-0 truncate text-[10px] text-muted-foreground"
+            className="ml-auto min-w-0 shrink-[100] truncate whitespace-nowrap text-[10px] text-muted-foreground @max-[360px]/plottoolbar:hidden"
             data-testid="plot-window-hint"
             title={formatMessage({ id: 'panels.plot.status.windowed' }, { seconds: REMOTE_PLOT_WINDOW_SEC })}
           >
@@ -312,7 +299,13 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
           </span>
         )}
         {status && (
-          <span className={`${dataWindow ? '' : 'ml-auto '}shrink-0 text-[10px] text-muted-foreground`}>{status}</span>
+          <span
+            className={`${dataWindow ? '@max-[360px]/plottoolbar:ml-auto ' : 'ml-auto '}min-w-0 truncate whitespace-nowrap text-[10px] text-muted-foreground`}
+            data-testid="plot-status"
+            title={status}
+          >
+            {status}
+          </span>
         )}
       </div>
       <div className="relative min-h-0 flex-1 flex flex-col">

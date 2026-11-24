@@ -325,11 +325,12 @@ const RawMessageRow = React.memo(function RawMessageRow({
           <ChevronRight className={`size-3 transition-transform ${expanded ? 'rotate-90' : ''}`} />
         ) : null}
       </button>
-      <span className="mr-2 text-cyan-300">{row.key}:</span>
-      <span ref={valueRef} className="truncate" />
+      {/* A row is one line: the key and the copy label never wrap, the value truncates. */}
+      <span className="mr-2 shrink-0 whitespace-nowrap text-cyan-300">{row.key}:</span>
+      <span ref={valueRef} className="min-w-0 truncate" />
       <button
         type="button"
-        className="ml-2 rounded px-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+        className="ml-2 shrink-0 whitespace-nowrap rounded px-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
         onClick={handleCopy}
         data-testid="raw-messages-copy-field"
       >

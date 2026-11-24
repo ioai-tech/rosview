@@ -280,6 +280,7 @@ export type RosViewMessageKey =
   | "panels.plot.status.loadingProgress"
   | "panels.plot.status.sampling"
   | "panels.plot.status.windowed"
+  | "panels.plot.toolbar.jointFields"
   | "panels.plot.toolbar.resetZoom"
   | "panels.plot.toolbar.resetZoomAria"
   | "panels.plot.toolbar.selectTopic"

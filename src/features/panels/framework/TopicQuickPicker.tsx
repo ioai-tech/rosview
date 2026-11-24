@@ -109,7 +109,8 @@ export const TopicQuickPicker: React.FC<TopicQuickPickerProps> = ({
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
-          title={valueLabel ? value : undefined}
+          // A narrow panel truncates the topic; hovering still shows all of it.
+          title={value.length > 0 ? value : undefined}
           className={cn(
             'h-8 min-w-0 w-full justify-between gap-2 px-2 font-mono text-xs font-normal',
             className,

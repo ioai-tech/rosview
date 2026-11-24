@@ -70,10 +70,10 @@ describe('TopicQuickPicker with host topic labels', () => {
     expect(items[0]?.getAttribute('data-value')).toContain('Head left');
   });
 
-  it('is unchanged without a label', () => {
+  it('shows the topic alone without a label, with the topic as its tooltip for when it truncates', () => {
     const trigger = render(WRIST, { [HEAD]: 'Head left' });
     expect(trigger.querySelector('[data-testid="topic-picker-label"]')).toBeNull();
     expect(trigger.textContent).toBe(WRIST);
-    expect(trigger.hasAttribute('title')).toBe(false);
+    expect(trigger.title).toBe(WRIST);
   });
 });
