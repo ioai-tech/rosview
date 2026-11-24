@@ -1,7 +1,6 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState, type RefObject } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useIntl } from 'react-intl';
-import { useElementWidth } from '@/shared/hooks/useElementWidth';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -21,18 +20,61 @@ interface PlotJointFieldControlProps {
   fields: readonly JointStateField[];
   fieldLabels: Record<JointStateField, string>;
   onChange: (fields: JointStateField[]) => void;
+  /** The toolbar the tabs sit in; its content width bounds the tabs. */
+  toolbarRef: RefObject<HTMLElement | null>;
   /**
-   * Width the toolbar can give the field tabs. When the tabs need more, they fold into one menu
-   * button instead of squeezing: a squeezed tab wraps its label one character per line. Undefined
-   * (not measured yet) shows the tabs.
+   * Toolbar width the other controls keep (their floors plus gaps). When the tabs need more than
+   * the rest, they fold into one menu button instead of squeezing: a squeezed tab wraps its label
+   * one character per line.
    */
-  availableWidth: number | undefined;
+  reservedWidth: number;
 }
 
 function tabClassName(active: boolean): string {
   return `shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] capitalize ${
     active ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
   }`;
+}
+
+/**
+ * Whether the tabs fit beside the rest of the toolbar. One observer watches the toolbar and an
+ * invisible copy of the tabs (so the answer follows the locale, the font and the panel size), and
+ * only a change of answer re-renders: dragging a splitter across many Plot panels re-renders none
+ * of them until a toolbar crosses its threshold. Neither width depends on the answer, so it cannot
+ * oscillate. Until both are measured the tabs show.
+ */
+function useTabsFit(
+  toolbarRef: RefObject<HTMLElement | null>,
+  measureRef: RefObject<HTMLElement | null>,
+  reservedWidth: number,
+): boolean {
+  const [fit, setFit] = useState(true);
+
+  useEffect(() => {
+    const toolbar = toolbarRef.current;
+    const measure = measureRef.current;
+    if (!toolbar || !measure || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const widths = new Map<Element, number>();
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        widths.set(entry.target, entry.contentRect.width);
+      }
+      const toolbarWidth = widths.get(toolbar);
+      const tabsWidth = widths.get(measure);
+      if (toolbarWidth !== undefined && tabsWidth !== undefined) {
+        setFit(tabsWidth <= toolbarWidth - reservedWidth);
+      }
+    });
+    observer.observe(toolbar);
+    observer.observe(measure);
+    return () => {
+      observer.disconnect();
+    };
+  }, [toolbarRef, measureRef, reservedWidth]);
+
+  return fit;
 }
 
 /**
@@ -44,13 +86,13 @@ export function PlotJointFieldControl({
   fields,
   fieldLabels,
   onChange,
-  availableWidth,
+  toolbarRef,
+  reservedWidth,
 }: PlotJointFieldControlProps): React.ReactNode {
   const { formatMessage } = useIntl();
   // An invisible copy of the tabs measures what they need in the current locale and font.
   const measureRef = useRef<HTMLDivElement | null>(null);
-  const tabsWidth = useElementWidth(measureRef);
-  const collapsed = availableWidth !== undefined && tabsWidth !== undefined && tabsWidth > availableWidth;
+  const collapsed = !useTabsFit(toolbarRef, measureRef, reservedWidth);
 
   const activeLabels = JOINT_STATE_FIELDS.filter((f) => fields.includes(f)).map((f) => fieldLabels[f]);
   const menuLabel = formatMessage({ id: 'panels.plot.toolbar.jointFields' });

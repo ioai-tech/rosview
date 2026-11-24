@@ -101,6 +101,14 @@ function violations(boxes: TextBox[]): string[] {
 
 test('zh plot toolbars in a narrow auto-layout row keep every tab and status on one line', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 768 });
+  // Measuring the tabs must never feed back into what it measures.
+  const resizeLoopErrors: string[] = [];
+  page.on('pageerror', (error) => {
+    if (error.message.includes('ResizeObserver')) resizeLoopErrors.push(error.message);
+  });
+  page.on('console', (message) => {
+    if (message.text().includes('ResizeObserver')) resizeLoopErrors.push(message.text());
+  });
   await page.addInitScript(() => {
     (window as unknown as { __rosviewHostProps: unknown }).__rosviewHostProps = {
       preferAutoLayout: true,
@@ -143,8 +151,36 @@ test('zh plot toolbars in a narrow auto-layout row keep every tab and status on 
   await menu.getByRole('menuitemcheckbox', { name: '速度' }).click();
   await expect(menu.getByRole('menuitemcheckbox', { name: '速度' })).toHaveAttribute('aria-checked', 'true');
   await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(fieldMenus.first()).toBeFocused();
   await expect(fieldMenus.first()).toHaveText('位置+1');
   await expect(fieldMenus.first()).toHaveAttribute('title', '位置, 速度');
+  expect((await measureText(page, toolbars)).flatMap(violations)).toEqual([]);
+
+  // The menu works from the keyboard: arrows move, Space toggles and keeps it open, Escape returns
+  // focus to the button. The last active field cannot be switched off. Arrow keys move focus on the
+  // next task, so each press waits for it before the next key.
+  await page.keyboard.press('Enter');
+  await expect(menu.getByRole('menuitemcheckbox', { name: '位置' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(menu.getByRole('menuitemcheckbox', { name: '速度' })).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(menu.getByRole('menuitemcheckbox', { name: '速度' })).toHaveAttribute('aria-checked', 'false');
+  await expect(menu.getByRole('menuitemcheckbox', { name: '速度' })).toBeFocused();
+  await page.keyboard.press('ArrowUp');
+  await expect(menu.getByRole('menuitemcheckbox', { name: '位置' })).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(menu.getByRole('menuitemcheckbox', { name: '位置' })).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+  await expect(fieldMenus.first()).toBeFocused();
+  await expect(fieldMenus.first()).toHaveText('位置');
+
+  // Narrower still, the topic picker gives way to the folded menu rather than clipping it away.
+  await page.setViewportSize({ width: 640, height: 768 });
+  await expect(async () => {
+    for (let i = 0; i < 3; i++) expect((await panels.nth(i).boundingBox())!.width).toBeLessThan(200);
+  }).toPass();
+  await expect(fieldMenus).toHaveCount(2);
   expect((await measureText(page, toolbars)).flatMap(violations)).toEqual([]);
 
   // With room again the tabs come back, each on one line.
@@ -152,4 +188,5 @@ test('zh plot toolbars in a narrow auto-layout row keep every tab and status on 
   await expect(fieldMenus).toHaveCount(0);
   await expect(page.getByTestId('plot-field-tab')).toHaveText(['位置', '速度', '力矩', '位置', '速度', '力矩']);
   expect((await measureText(page, toolbars)).flatMap(violations)).toEqual([]);
+  expect(resizeLoopErrors).toEqual([]);
 });

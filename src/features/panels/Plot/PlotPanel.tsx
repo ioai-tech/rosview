@@ -34,7 +34,6 @@ import { hasManualPlotViewport, usePlotChart, type PlotViewportState } from './u
 import { REMOTE_PLOT_WINDOW_SEC, usePlotPanelData } from './usePlotPanelData';
 import { usePlotTopicDetection } from './usePlotTopicDetection';
 import { timeToSec } from '@/core/analysis/timeSeries';
-import { useElementWidth } from '@/shared/hooks/useElementWidth';
 
 /** Stable empty array for activeTopics when no topics are configured. */
 const EMPTY_TOPICS: string[] = [];
@@ -52,12 +51,13 @@ const TOPIC_PICKER_MIN_WIDTH_PX = 120;
 const TOOLBAR_STATUS_RESERVE_PX = 48;
 /** The toolbar's `gap-2`. */
 const TOOLBAR_GAP_PX = 8;
+/** Toolbar width the field tabs leave to the topic picker and the status. */
+const TOOLBAR_FIELD_TABS_RESERVE_PX = TOPIC_PICKER_MIN_WIDTH_PX + 2 * TOOLBAR_GAP_PX + TOOLBAR_STATUS_RESERVE_PX;
 
 export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, setConfig }) => {
   const { formatMessage } = useIntl();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
-  const toolbarWidth = useElementWidth(toolbarRef);
   const autoTopicAppliedRef = useRef(false);
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const [viewportState, setViewportState] = useState<PlotViewportState>({ x: false, y: false });
@@ -267,8 +267,14 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
         className="@container/plottoolbar flex shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-muted px-2 py-1"
         data-testid="plot-toolbar"
       >
-        {/* The topic stays readable in a narrow panel: the window hint truncates first, then hides. */}
-        <div className="min-w-[7.5rem] flex-1 max-w-xs">
+        {/*
+          The topic stays readable in a narrow panel: the window hint truncates first, then hides.
+          Its 7.5rem floor gives way only to the folded field menu, in a toolbar too narrow for both
+          (6rem covers the gap and the widest menu label), so clipping never hides that menu.
+        */}
+        <div
+          className={`${showJointStateFields ? 'min-w-[max(1.5rem,min(7.5rem,100%_-_6rem))]' : 'min-w-[7.5rem]'} flex-1 max-w-xs`}
+        >
           <TopicQuickPicker
             value={primary?.topic ?? ''}
             onChange={updatePrimaryTopic}
@@ -282,11 +288,8 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
             fields={config.jointStateFields}
             fieldLabels={jointFieldLabels}
             onChange={handleJointStateFieldsChange}
-            availableWidth={
-              toolbarWidth === undefined
-                ? undefined
-                : toolbarWidth - TOPIC_PICKER_MIN_WIDTH_PX - 2 * TOOLBAR_GAP_PX - TOOLBAR_STATUS_RESERVE_PX
-            }
+            toolbarRef={toolbarRef}
+            reservedWidth={TOOLBAR_FIELD_TABS_RESERVE_PX}
           />
         )}
         {dataWindow && (
