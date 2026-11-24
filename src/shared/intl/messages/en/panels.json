@@ -2,6 +2,7 @@
   "panels.image.defaultTitle": "Image",
   "panels.plot.defaultTitle": "Plot",
   "panels.plot.toolbar.selectTopic": "Select topic…",
+  "panels.plot.toolbar.jointFields": "Joint fields",
   "panels.plot.toolbar.resetZoom": "Reset zoom",
   "panels.plot.toolbar.resetZoomAria": "Reset chart zoom",
   "panels.plot.status.detectingPaths": "Detecting paths…",

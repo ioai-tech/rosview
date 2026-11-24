@@ -2,6 +2,7 @@
   "panels.image.defaultTitle": "图像",
   "panels.plot.defaultTitle": "图表",
   "panels.plot.toolbar.selectTopic": "选择 Topic…",
+  "panels.plot.toolbar.jointFields": "关节字段",
   "panels.plot.toolbar.resetZoom": "重置缩放",
   "panels.plot.toolbar.resetZoomAria": "重置图表缩放",
   "panels.plot.status.detectingPaths": "检测路径…",

@@ -2,6 +2,7 @@
   "panels.image.defaultTitle": "画像",
   "panels.plot.defaultTitle": "プロット",
   "panels.plot.toolbar.selectTopic": "トピックを選択…",
+  "panels.plot.toolbar.jointFields": "関節フィールド",
   "panels.plot.toolbar.resetZoom": "ズームをリセット",
   "panels.plot.toolbar.resetZoomAria": "グラフのズームをリセット",
   "panels.plot.status.detectingPaths": "パスを検出中…",
