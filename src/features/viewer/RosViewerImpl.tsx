@@ -5,6 +5,7 @@ import type { PreferencePersistence } from '@/core/preferences/types';
 import { ROS_VIEW_LAYOUT_STORAGE_KEY } from '@/core/preferences/storageKeys';
 import { resolveEmbedChrome } from './embedChrome';
 import { RosViewerLayoutProvider } from './RosViewerLayoutContext';
+import { TopicLabelsProvider } from '@/shared/ros/topicLabels';
 import { RosViewerLandingScreen } from './RosViewerLandingScreen';
 import { useThemeLanguagePreferences } from './useThemeLanguagePreferences';
 import { useDatasetHistory } from './useDatasetHistory';
@@ -124,7 +125,7 @@ export const RosViewer: React.FC<RosViewerProps> = (props) => {
       layoutPersistence={resolvedLayoutPersistence}
       layoutStorageKey={layoutStorageKey}
     >
-      {children}
+      <TopicLabelsProvider labels={props.topicLabels}>{children}</TopicLabelsProvider>
     </RosViewerLayoutProvider>
   );
 

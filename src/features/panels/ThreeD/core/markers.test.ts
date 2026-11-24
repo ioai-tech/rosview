@@ -63,6 +63,20 @@ describe('markersToPrimitives', () => {
   it('drops line markers with fewer than two points', () => {
     expect(markersToPrimitives({ type: 4, points: pts([0, 0, 0]) }, '/m', '#fff').upserts).toEqual([]);
   });
+
+  it('gives LINE_STRIP and LINE_LIST their scale.x width in metres; an unset width is 0, not 20 cm', () => {
+    const line = (type: number, scale?: { x: number; y: number; z: number }) =>
+      markersToPrimitives({ type, scale, points: pts([0, 0, 0], [1, 0, 0]) }, '/m', '#fff').upserts[0] as Extract<
+        ScenePrimitive,
+        { kind: 'line' | 'segments' }
+      >;
+    expect(line(4, { x: 0.01, y: 0, z: 0 })).toMatchObject({ kind: 'line', width: 0.01 });
+    expect(line(5, { x: 0.05, y: 0, z: 0 })).toMatchObject({ kind: 'segments', width: 0.05 });
+    expect(line(4)).toMatchObject({ kind: 'line', width: 0 });
+    expect(line(4, { x: -1, y: 0, z: 0 }).width).toBe(0);
+    // ARROW keeps its one-pixel line.
+    expect(line(0, { x: 0.01, y: 0.02, z: 0 }).width).toBeUndefined();
+  });
 });
 
 describe('stampToNs', () => {

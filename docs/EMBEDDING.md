@@ -195,6 +195,18 @@ Plots draw while messages arrive. For remote range-backed recordings a Plot read
 <RosViewer messages={{ 'layout.viewerRegion': 'Recording viewer' }} />
 ```
 
+`topicLabels` gives topics the names your app already uses, keyed by the exact topic name. Where a topic has a label, RosView shows the label first and the topic as secondary text: in the panel topic bars (Image and the others; the topic also shows on hover), in the topic picker (which also finds topics by label), in the panel tab title of a panel that shows that one topic, and in the sidebar topic list and its filter. Panels that combine several topics (Plot, 3D, Pose) keep their title. Layouts, panel configs and exports keep the topic; unlabelled topics display exactly as without the prop.
+
+```tsx
+<RosViewer
+  url={url}
+  topicLabels={{
+    '/sensor/EgoCentric_Camera_0/image/compressed': 'Head left',
+    '/sensor/Left_Wrist_Camera_0/image/compressed': 'Left wrist',
+  }}
+/>
+```
+
 `layoutStorageKey` isolates the saved layout per host (use a key that includes your app name). `resetLayout()` is passed to `onPlayerReady({ player, hasSource, resetLayout })`; it forgets the saved layout under that key and restores `initialLayout` / `defaultPanel`, or the auto layout. The navbar Layout menu has the same "Reset layout" entry.
 
 ## Advanced: Navbar branding

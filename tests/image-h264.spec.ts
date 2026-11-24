@@ -138,3 +138,35 @@ test('a paused forward seek decodes from the keyframe before the new time, not o
   });
   expect(await page.getByText(/decode failed|could not be decoded/i).count()).toBe(0);
 });
+
+test('play after a long pause is not a stall', async ({ page }) => {
+  // The stall watchdog reports a panel that played 4 s without a new frame, and asks it for a
+  // keyframe repair. Time spent paused is not playing time: pressing play after a 5 s pause must
+  // not report every H.264 panel as stalled.
+  await page.addInitScript(() => {
+    const phases: string[] = [];
+    (window as unknown as { __h264Phases: string[] }).__h264Phases = phases;
+    const NativeWorker = window.Worker;
+    class RecordingWorker extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        this.addEventListener('message', (event: MessageEvent) => {
+          const data = event.data as { type?: string; status?: { phase?: string } };
+          if (data?.type === 'status' && data.status?.phase) phases.push(data.status.phase);
+        });
+      }
+    }
+    window.Worker = RecordingWorker;
+  });
+  await openFixtureByUrl(page, MCAP_H264_URL);
+  await expect(page.getByTestId('image-panel-status')).toHaveText(/\d+x\d+/, { timeout: 60_000 });
+  const pause = page.getByRole('button', { name: 'Pause playback' });
+  if (await pause.isVisible().catch(() => false)) await pause.click();
+  const phases = () => page.evaluate(() => (window as unknown as { __h264Phases: string[] }).__h264Phases);
+  await expect.poll(phases, { timeout: 30_000 }).toContain('ready');
+
+  await page.waitForTimeout(5_000);
+  await page.getByRole('button', { name: 'Play playback' }).click();
+  await page.waitForTimeout(1_500);
+  expect(await phases()).not.toContain('stalled');
+});

@@ -195,6 +195,18 @@ clearCache();
 <RosViewer messages={{ 'layout.viewerRegion': '录制查看器' }} />
 ```
 
+`topicLabels` 用宿主应用已有的名称命名话题，键为完整的话题名。有名称的话题先显示名称，话题作为次要文字：面板话题栏（图像及其他面板；悬停也显示话题）、话题选择器（也可按名称搜索）、只显示该话题的面板的标签页标题，以及侧栏话题列表及其过滤。组合多个话题的面板（曲线图、3D、位姿）保留原标题。布局、面板配置与导出仍使用话题名；没有名称的话题显示与不传该属性时完全相同。
+
+```tsx
+<RosViewer
+  url={url}
+  topicLabels={{
+    '/sensor/EgoCentric_Camera_0/image/compressed': '头部左相机',
+    '/sensor/Left_Wrist_Camera_0/image/compressed': '左手腕相机',
+  }}
+/>
+```
+
 `layoutStorageKey` 按宿主隔离已保存的布局（请带上应用名）。`resetLayout()` 通过 `onPlayerReady({ player, hasSource, resetLayout })` 传入；它清除该 key 下已保存的布局，并恢复 `initialLayout` / `defaultPanel` 或自动布局。导航栏「布局」菜单有同样的“重置布局”。
 
 ## 进阶：Navbar 品牌文案

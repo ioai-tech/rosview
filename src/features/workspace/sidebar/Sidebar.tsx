@@ -11,6 +11,7 @@ import { AlertTriangle, Database, Layers, Search, Settings2 } from 'lucide-react
 import { useSidebarStore } from '@/shared/hooks/useSidebarStore';
 import { PanelSettingsTab } from './PanelSettingsTab';
 import { TopicRow } from './topic-list/TopicRow';
+import { topicLabelOf, useTopicLabels } from '@/shared/ros/topicLabels';
 import { QualitySidebar } from './QualitySidebar';
 import type { PreferencePersistence } from '@/core/preferences/types';
 import { writePreferences } from '@/core/preferences/readWritePreferences';
@@ -107,13 +108,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const tabValue = !showDatasetsTab && activeTab === 'datasets' ? 'topics' : activeTab;
 
+  const topicLabels = useTopicLabels();
   const filteredTopics = useMemo(() => {
     if (!searchQuery.trim()) return topics;
     const lowerQ = searchQuery.toLowerCase();
     return topics.filter(
-      (t: TopicInfo) => t.name.toLowerCase().includes(lowerQ) || t.type.toLowerCase().includes(lowerQ),
+      (t: TopicInfo) =>
+        t.name.toLowerCase().includes(lowerQ) ||
+        t.type.toLowerCase().includes(lowerQ) ||
+        (topicLabelOf(topicLabels, t.name)?.toLowerCase().includes(lowerQ) ?? false),
     );
-  }, [topics, searchQuery]);
+  }, [topics, topicLabels, searchQuery]);
 
   useEffect(() => {
     if (topics.length === 0) {

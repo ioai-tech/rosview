@@ -88,6 +88,7 @@ import '@ioai/rosview/style.css';
 | `refreshUrls` | `(expired: string[]) => Promise<string[]>` | 预签名 URL 续期，每批至少一次最多一次调用。 |
 | `urlExpiresAt` | `string` | URL 过期时间（ISO 8601），到期前 60 秒续期。 |
 | `messages` | `Partial<Record<RosViewMessageKey, string>>` | 按 id 替换界面文案（ICU）。 |
+| `topicLabels` | `Readonly<Record<string, string>>` | 按完整话题名提供显示名称：在话题栏、话题选择器、单话题面板标签页与侧栏话题列表中先显示名称，话题作为次要文字（见 EMBEDDING）。配置、布局与导出仍使用话题名。 |
 | `onLayoutReady` | `({ panelCount }) => void` | Dockview 布局 hydration 完成时调用。 |
 | `onSourceLoadingChange` | `(loading: boolean) => void` | 远程/本地源正在初始化时通知宿主。 |
 | `extensions` | `RosViewExtension[]` | 可选宿主扩展：侧边栏 Tab、播放条/时间轴叠加层等。 |

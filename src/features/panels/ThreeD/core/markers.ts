@@ -27,8 +27,12 @@ export type ScenePrimitive =
       quaternion: [number, number, number, number];
       color: string;
     }
-  | { kind: 'line'; key: string; frameIndex?: number; points: Vec3[]; color: string }
-  | { kind: 'segments'; key: string; frameIndex?: number; points: Vec3[]; color: string }
+  /**
+   * `width`: LINE_STRIP / LINE_LIST line width in metres (`scale.x`, 0 when unset), drawn at that
+   * world width with a minimum on-screen width. Absent: a one-pixel line (arrows, BVH bones).
+   */
+  | { kind: 'line'; key: string; frameIndex?: number; points: Vec3[]; color: string; width?: number }
+  | { kind: 'segments'; key: string; frameIndex?: number; points: Vec3[]; color: string; width?: number }
   | { kind: 'instances'; key: string; frameIndex?: number; shape: 'sphere' | 'cube'; points: Vec3[]; scale: Vec3; color: string };
 
 export type MarkerUpdate = {
@@ -150,7 +154,10 @@ function markerToPrimitive(
 ): ScenePrimitive | null {
   const type = num(marker.type, 2);
   const color = colorToCss(marker.color, fallbackColor);
-  const scaleVec = readVec(marker.scale) ?? [0.2, 0.2, 0.2];
+  const rawScale = readVec(marker.scale);
+  const scaleVec = rawScale ?? [0.2, 0.2, 0.2];
+  // Lines take `scale.x` as given: an unset width is the thinnest visible line, not 20 cm.
+  const lineWidth = rawScale && Number.isFinite(rawScale[0]) && rawScale[0] > 0 ? rawScale[0] : 0;
   const scale: Vec3 = [scaleVec[0] > 0 ? scaleVec[0] : 0.2, scaleVec[1] > 0 ? scaleVec[1] : 0.2, scaleVec[2] > 0 ? scaleVec[2] : 0.2];
   const { frameId, stampNs } = headerFrame(marker);
   const frame = frameId && resolve ? resolve(frameId, stampNs ?? 0n) : undefined;
@@ -166,11 +173,13 @@ function markerToPrimitive(
 
   switch (type) {
     case 4:
-      return points.length >= 2 ? { kind: 'line', key, points, color } : null;
+      return points.length >= 2 ? { kind: 'line', key, points, color, width: lineWidth } : null;
     case 0:
       return points.length >= 2 ? { kind: 'line', key, points: points.slice(0, 2), color } : null;
     case 5:
-      return points.length >= 2 ? { kind: 'segments', key, points: points.slice(0, points.length - (points.length % 2)), color } : null;
+      return points.length >= 2
+        ? { kind: 'segments', key, points: points.slice(0, points.length - (points.length % 2)), color, width: lineWidth }
+        : null;
     case 6:
     case 7:
     case 8:

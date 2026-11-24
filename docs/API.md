@@ -88,6 +88,7 @@ All source props may be combined. Duplicates are deduplicated automatically. Fil
 | `refreshUrls` | `(expired: string[]) => Promise<string[]>` | Presigned-URL renewal, at most one call per batch. |
 | `urlExpiresAt` | `string` | ISO 8601 expiry of the URLs; renewal starts 60 s before. |
 | `messages` | `Partial<Record<RosViewMessageKey, string>>` | Replace viewer copy by id (ICU strings). |
+| `topicLabels` | `Readonly<Record<string, string>>` | Display names by exact topic name: shown first, with the topic as secondary text, in topic bars, the topic picker, single-topic panel tabs and the sidebar topic list (see EMBEDDING). Configs, layouts and exports keep the topic. |
 | `onLayoutReady` | `({ panelCount }) => void` | Fired after Dockview layout hydration. |
 | `onSourceLoadingChange` | `(loading: boolean) => void` | Notifies host while a source is initializing. |
 | `extensions` | `RosViewExtension[]` | Optional host contributions: sidebar tabs plus timeline/playback overlays. |

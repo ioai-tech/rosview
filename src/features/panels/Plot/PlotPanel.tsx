@@ -163,6 +163,15 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     setViewportState((prev) => (prev.x === state.x && prev.y === state.y ? prev : state));
   }, []);
 
+  const jointFieldLabels = useMemo(
+    (): Record<JointStateField, string> => ({
+      position: formatMessage({ id: 'panels.jointStatePlot.toolbar.field.position' }),
+      velocity: formatMessage({ id: 'panels.jointStatePlot.toolbar.field.velocity' }),
+      effort: formatMessage({ id: 'panels.jointStatePlot.toolbar.field.effort' }),
+    }),
+    [formatMessage],
+  );
+
   const { chartRef: uplotRef, resetViewport } = usePlotChart({
     containerRef,
     player,
@@ -174,6 +183,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     logStart: startTime,
     loading,
     onViewportStateChange: handleViewportStateChange,
+    seriesFieldLabels: jointFieldLabels,
   });
 
   useEffect(() => {
@@ -185,7 +195,10 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
   }, [player, panelId, activeTopics]);
 
   useEffect(() => {
-    const displayLabels = displaySeriesLabels(dataset.series.map((series) => series.label));
+    const displayLabels = displaySeriesLabels(
+      dataset.series.map((series) => series.label),
+      jointFieldLabels,
+    );
     const entries = dataset.series.map((series, index) => ({
       key: series.key,
       label: displayLabels[index] ?? series.label,
@@ -195,7 +208,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
 
     const keys = entries.map((entry) => entry.key);
     setConfig((prev) => pruneHiddenLegendKeysForDataset(prev, keys));
-  }, [dataset.series, panelId, setConfig]);
+  }, [dataset.series, jointFieldLabels, panelId, setConfig]);
 
   useEffect(() => () => clearPlotLegendEntries(panelId), [panelId]);
 
@@ -219,15 +232,6 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
   const handleJointStateFieldsChange = (fields: JointStateField[]) => {
     setConfig((prev) => applyJointStateFieldsToConfig(prev, topicByName, fields));
   };
-
-  const jointFieldLabels = useMemo(
-    (): Record<JointStateField, string> => ({
-      position: formatMessage({ id: 'panels.jointStatePlot.toolbar.field.position' }),
-      velocity: formatMessage({ id: 'panels.jointStatePlot.toolbar.field.velocity' }),
-      effort: formatMessage({ id: 'panels.jointStatePlot.toolbar.field.effort' }),
-    }),
-    [formatMessage],
-  );
 
   const primaryWarning = dataset.warnings[0];
   const warningText = primaryWarning

@@ -27,6 +27,15 @@ export interface RosViewerProps {
    * the built-in en / zh / ja catalogs. Unknown ids are ignored.
    */
   messages?: RosViewMessageOverrides;
+  /**
+   * Display names for topics, keyed by the exact topic name (for example
+   * `{ '/sensor/EgoCentric_Camera_0/image/compressed': 'Head left' }`). Where a label exists it is
+   * shown first, with the topic as secondary text: the panel topic bars (Image and the others), the
+   * topic picker, the panel tab title and the sidebar topic list. The picker and the sidebar filter
+   * also match it. Layouts, panel configs and exports keep the topic. Topics without a label, and
+   * empty labels, display exactly as without this prop.
+   */
+  topicLabels?: Readonly<Record<string, string>>;
   /** CSS class applied to the outermost container element. */
   className?: string;
   /** Inline styles applied to the outermost container element. */

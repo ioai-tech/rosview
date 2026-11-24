@@ -56,6 +56,7 @@ import {
 } from './core/renderables';
 import type { JointStateMsg, TFMessage } from './core/types';
 import { applyMarkerUpdate, headerFrame, markersToPrimitives, type FrameResolver, type MarkerUpdate, type ScenePrimitive } from './core/markers';
+import { createWorldWidthLine } from './core/markerLines';
 import { TransformTree } from './core/transformTree';
 import { scannedCloudPointSize } from './core/pointCloudSizing';
 
@@ -973,7 +974,48 @@ const MarkerInstancesPrimitiveView: React.FC<{ primitive: Extract<MarkerPrimitiv
 );
 MarkerInstancesPrimitiveView.displayName = 'MarkerInstancesPrimitiveView';
 
+/** LINE_STRIP / LINE_LIST markers with a width: screen-facing quads at `width` metres (min 1.5 px). */
+const MarkerWorldLinePrimitiveView: React.FC<{
+  primitive: Extract<MarkerPrimitive, { kind: 'line' | 'segments' }> & { width: number };
+}> = React.memo(({ primitive }) => {
+  const handle = useThreeCanvas();
+  const { invalidate } = handle;
+  const line = useMemo(
+    () =>
+      createWorldWidthLine({
+        points: primitive.points,
+        mode: primitive.kind === 'line' ? 'strip' : 'list',
+        color: primitive.color,
+        width: primitive.width,
+      }),
+    [primitive.points, primitive.kind, primitive.color, primitive.width],
+  );
+  // `LineSegments2.onBeforeRender` also copies the viewport into `resolution`; setting it here
+  // keeps the very first frame from drawing with LineMaterial's 1x1 default.
+  useLayoutEffect(() => {
+    const sync = (size: { width: number; height: number }) => {
+      line.material.resolution.set(Math.max(1, size.width), Math.max(1, size.height));
+    };
+    sync(handle.size);
+    return handle.onResize(sync);
+  }, [handle, line]);
+  useEffect(
+    () => () => {
+      line.geometry.dispose();
+      line.material.dispose();
+    },
+    [line],
+  );
+  useEffect(() => invalidate(), [invalidate, line]);
+  useSceneObject(line);
+  return null;
+});
+MarkerWorldLinePrimitiveView.displayName = 'MarkerWorldLinePrimitiveView';
+
 const MarkerPrimitiveView: React.FC<{ primitive: MarkerPrimitive }> = React.memo(({ primitive }) => {
+  if ((primitive.kind === 'line' || primitive.kind === 'segments') && primitive.width !== undefined) {
+    return <MarkerWorldLinePrimitiveView primitive={{ ...primitive, width: primitive.width }} />;
+  }
   if (primitive.kind === 'line') {
     return <MarkerLinePrimitiveView primitive={primitive} />;
   }
