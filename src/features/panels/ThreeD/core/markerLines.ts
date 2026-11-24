@@ -46,7 +46,10 @@ const FRAGMENT_PATCHES: ShaderPatch[] = [
   { find: 'float norm = len / linewidth;', replace: 'float norm = len / vLineWidth;' },
 ];
 
-/** Applies every patch exactly once; throws when three's shader no longer has the expected text. */
+/**
+ * Applies every patch exactly once; throws when three's shader no longer has the expected text.
+ * The unit tests patch the `three` this repo builds against, so an upgrade fails there first.
+ */
 export function patchShaderSource(source: string, patches: readonly ShaderPatch[]): string {
   let out = source;
   for (const { find, replace } of patches) {
@@ -61,20 +64,60 @@ export function patchShaderSource(source: string, patches: readonly ShaderPatch[
 
 export type WorldLineMaterial = LineMaterial & { uniforms: { minPixelWidth: { value: number } } };
 
-/** A LineMaterial whose `linewidth` is in world units, never drawn thinner than `minPixels`. */
+type LineShaders = { vertex: string; fragment: string };
+
+/** Last stock source seen and its patched form (null: three's shader no longer matches the patches). */
+let shaderCache: { vertex: string; fragment: string; patched: LineShaders | null } | undefined;
+
+/**
+ * The world-width shaders for three's stock LineMaterial sources, or null when three changed the
+ * patched lines. That is reported once with `console.warn`: the host's `three` is a peer
+ * dependency, so a newer release must not take the whole 3D panel down with it.
+ */
+export function worldWidthLineShaders(vertex: string, fragment: string): LineShaders | null {
+  if (shaderCache?.vertex === vertex && shaderCache.fragment === fragment) return shaderCache.patched;
+  let patched: LineShaders | null;
+  try {
+    patched = {
+      vertex: patchShaderSource(vertex, VERTEX_PATCHES),
+      fragment: patchShaderSource(fragment, FRAGMENT_PATCHES),
+    };
+  } catch (error) {
+    patched = null;
+    console.warn(
+      `ROS View 3D: ${error instanceof Error ? error.message : String(error)}. ` +
+        `LINE_STRIP / LINE_LIST markers draw ${MIN_LINE_PIXELS} px wide instead of their scale.x width.`,
+    );
+  }
+  shaderCache = { vertex, fragment, patched };
+  return patched;
+}
+
+/**
+ * A LineMaterial whose `linewidth` is in world units, never drawn thinner than `minPixels`.
+ * When three's shader cannot be patched (see {@link worldWidthLineShaders}) the material draws
+ * every line `minPixels` wide in screen space instead.
+ */
 export function createWorldLineMaterial(options: {
   color: THREE.ColorRepresentation;
   width: number;
   minPixels?: number;
 }): WorldLineMaterial {
+  const minPixels = options.minPixels ?? MIN_LINE_PIXELS;
   const material = new LineMaterial({
     color: options.color,
     linewidth: Math.max(0, options.width),
     worldUnits: true,
   }) as WorldLineMaterial;
-  material.uniforms.minPixelWidth = { value: options.minPixels ?? MIN_LINE_PIXELS };
-  material.vertexShader = patchShaderSource(material.vertexShader, VERTEX_PATCHES);
-  material.fragmentShader = patchShaderSource(material.fragmentShader, FRAGMENT_PATCHES);
+  material.uniforms.minPixelWidth = { value: minPixels };
+  const shaders = worldWidthLineShaders(material.vertexShader, material.fragmentShader);
+  if (shaders) {
+    material.vertexShader = shaders.vertex;
+    material.fragmentShader = shaders.fragment;
+  } else {
+    material.worldUnits = false;
+    material.linewidth = minPixels;
+  }
   return material;
 }
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createWorldLineMaterial,
@@ -9,6 +9,7 @@ import {
   lineSegmentPositions,
   MIN_LINE_PIXELS,
   patchShaderSource,
+  worldWidthLineShaders,
 } from './markerLines';
 import type { Vec3 } from './markers';
 
@@ -25,7 +26,7 @@ describe('createWorldLineMaterial', () => {
 
   it("patches three's LineMaterial shaders: width floor in the vertex shader, same width in the fragment", () => {
     const material = createWorldLineMaterial({ color: '#fff', width: 0 });
-    // If three changes these lines, creating the material throws instead of drawing 1 px lines.
+    // If three changes these lines, this test fails here; at runtime the material falls back.
     expect(material.vertexShader).toContain('uniform float minPixelWidth;');
     expect(material.vertexShader).toContain('float lineWidth = max( linewidth, minPixelWidth * pixelWorld );');
     expect(material.vertexShader).toContain('float hw = lineWidth * 0.5;');
@@ -42,6 +43,42 @@ describe('createWorldLineMaterial', () => {
   it('refuses a shader it cannot patch exactly once', () => {
     expect(() => patchShaderSource('void main() {}', [{ find: 'float hw', replace: 'x' }])).toThrow(/cannot patch/);
     expect(() => patchShaderSource('a a', [{ find: 'a', replace: 'b' }])).toThrow(/cannot patch/);
+  });
+});
+
+describe('worldWidthLineShaders', () => {
+  it("warns once and returns null when three's shader no longer matches, instead of throwing", () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(worldWidthLineShaders('void main() {}', 'void main() {}')).toBeNull();
+      expect(worldWidthLineShaders('void main() {}', 'void main() {}')).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toMatch(/cannot patch.*1\.5 px wide/);
+      // The stock sources still patch after a failure for other sources.
+      const stock = new LineMaterial();
+      expect(worldWidthLineShaders(stock.vertexShader, stock.fragmentShader)?.vertex).toContain('float hw = lineWidth * 0.5;');
+      stock.dispose();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('draws every line at the pixel floor when three changed its shader, instead of taking the panel down', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const line = THREE.ShaderLib.line as { vertexShader: string };
+    const stockVertex = line.vertexShader;
+    line.vertexShader = stockVertex.replace('float hw = linewidth * 0.5;', 'float hw = 0.5 * linewidth;');
+    try {
+      const material = createWorldLineMaterial({ color: '#fff', width: 0.01 });
+      expect(material.worldUnits).toBe(false);
+      expect(material.linewidth).toBe(MIN_LINE_PIXELS);
+      expect(material.vertexShader).not.toContain('minPixelWidth');
+      expect(warn).toHaveBeenCalledTimes(1);
+      material.dispose();
+    } finally {
+      line.vertexShader = stockVertex;
+      warn.mockRestore();
+    }
   });
 });
 
