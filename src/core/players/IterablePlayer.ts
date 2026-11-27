@@ -43,6 +43,10 @@ const RANGE_READ_BATCH_MESSAGES = 2048;
 /** Window range scans (Plot, Align, Timeline windows, CSV export) reading at once, all panels together. */
 const BACKGROUND_READ_SLOTS = 2;
 const RANGE_READ_BATCH_WALL_MS = 16;
+/** Tighter worker slice and inter-batch yield for background scans while playing video. */
+const RANGE_READ_PLAYING_BATCH_WALL_MS = 4;
+const RANGE_READ_PLAYING_YIELD_MS = 16;
+const PLAYBACK_PREFETCH_LOW_WATER = 64;
 const PLAYBACK_PREFETCH_AHEAD_MS = 250;
 const PLAYBACK_PREFETCH_MAX_MESSAGES = 512;
 const PLAYBACK_BUFFERING_DELAY_MS = 500;
@@ -373,10 +377,32 @@ export class IterablePlayer implements Player {
       .map(([id, consumer]) => `${id}\0${consumer.topic}\0${consumer.lane}\0${consumer.mode ?? "latest"}`)
       .sort()
       .join("\n");
+    this._syncBackgroundReadGate();
   }
 
   private _currentTopics(): string[] {
     return Array.from(new Set([...this._subscriberIdsByTopic.keys(), ...this._highFrequencyConsumersByTopic.keys()]));
+  }
+
+  private _hasOrderedVideoConsumers(): boolean {
+    for (const consumer of this._highFrequencyConsumersById.values()) {
+      if (consumer.mode === "all") return true;
+    }
+    return false;
+  }
+
+  private _syncBackgroundReadGate(): void {
+    const playingVideo = this._isPlaying && !this._pageSuspended && this._hasOrderedVideoConsumers();
+    this._backgroundReads.setPlaybackActive(playingVideo);
+    this._backgroundReads.setPlaybackPriority(
+      playingVideo &&
+        (this._isBuffering ||
+          (this._prefetchPromise != undefined && this._prefetchedMessages.length < PLAYBACK_PREFETCH_LOW_WATER)),
+    );
+  }
+
+  private _isOrderedHighFrequencyTopic(topic: string): boolean {
+    return this._highFrequencyConsumersByTopic.get(topic)?.some((consumer) => consumer.mode === "all") === true;
   }
 
   private _latestOnlyHighFrequencyTopics(): string[] {
@@ -737,6 +763,7 @@ export class IterablePlayer implements Player {
     this._sourceFailureCount = 0;
     this._setPlaybackProblem(undefined);
     this._playbackProblemIsTimeout = false;
+    this._syncBackgroundReadGate();
     this._emitState();
     this._scheduleNextTick();
   }
@@ -772,6 +799,7 @@ export class IterablePlayer implements Player {
     this._currentTime = this._clock.getTime(now);
     this._isPlaying = false;
     this._pageSuspended = false;
+    this._syncBackgroundReadGate();
     this._cancelRaf();
     this._stopLoadProgressPolling();
     void this._closePlaybackCursor();
@@ -941,6 +969,7 @@ export class IterablePlayer implements Player {
     this._clock.pause(performance.now());
     this._isPlaying = false;
     this._pageSuspended = false;
+    this._syncBackgroundReadGate();
     this._cancelRaf();
     this._detachPageLifecycleListeners();
     this._stopLoadProgressPolling();
@@ -1265,6 +1294,7 @@ export class IterablePlayer implements Player {
     this._currentTime = this._clock.getTime(now);
     this._lastTickWallMs = now;
     this._pageSuspended = true;
+    this._syncBackgroundReadGate();
     this._cancelRaf();
     this._notifyTimeSubscribers(this._currentTime);
     this._maybeEmitPipelineState();
@@ -1276,6 +1306,7 @@ export class IterablePlayer implements Player {
     this._clock.resume(now);
     this._lastTickWallMs = now;
     this._pageSuspended = false;
+    this._syncBackgroundReadGate();
     this._scheduleNextTick();
   }
 
@@ -1381,12 +1412,14 @@ export class IterablePlayer implements Player {
     this._prefetchStartedAtMs = performance.now();
     const promise = this._prefetchPlaybackBatch(epoch, requestId, endTime, durationMs);
     this._prefetchPromise = promise;
+    this._syncBackgroundReadGate();
     void promise.finally(() => {
       if (this._prefetchRequestId !== requestId) {
         return;
       }
       this._prefetchPromise = undefined;
       this._prefetchStartedAtMs = undefined;
+      this._syncBackgroundReadGate();
       this._scheduleNextTick();
     });
   }
@@ -1515,6 +1548,7 @@ export class IterablePlayer implements Player {
       return;
     }
     this._distributeMessages(this._prefetchedMessages.splice(0, count));
+    this._syncBackgroundReadGate();
   }
 
   private async _withSourceTimeout<T>(
@@ -1606,6 +1640,7 @@ export class IterablePlayer implements Player {
       return;
     }
     this._isBuffering = buffering;
+    this._syncBackgroundReadGate();
     this._state.progress = {
       ...this._state.progress,
       buffering,
@@ -1766,6 +1801,11 @@ export class IterablePlayer implements Player {
     }
     const nowNs = toNano(this._currentTime);
     const staleTopics = topics.filter((topic) => {
+      // Ordered video streams (H.264/H.265 with mode="all") require contiguous
+      // GOP delivery from the playback cursor. Injecting a single backfill frame
+      // during a brief read stall delivers a stray P-frame past a gap, breaking
+      // the decoder's reference chain and triggering a 6-panel bootstrap storm.
+      if (this._isOrderedHighFrequencyTopic(topic)) return false;
       const lastNs = this._topicLastMessageNs.get(topic);
       if (lastNs == null) return true;
       return nowNs - lastNs > this._staleThresholdNsForTopic(topic);
@@ -1882,11 +1922,20 @@ export class IterablePlayer implements Player {
         if (args.signal?.aborted || emitted >= maxMessages) {
           break;
         }
+        const isBackgroundScan = args.priority !== "frame";
+        if (isBackgroundScan && this._backgroundReads.playbackActive) {
+          const ok = await this._backgroundReads.waitForHeadroom(args.signal);
+          if (!ok || args.signal?.aborted) break;
+        }
+        const effectiveWallMs =
+          isBackgroundScan && this._backgroundReads.playbackActive
+            ? Math.min(batchWallTimeMs, RANGE_READ_PLAYING_BATCH_WALL_MS)
+            : batchWallTimeMs;
         // Waits for data: over a remote link the first chunk takes longer than a playback tick's
         // wait, and an empty batch must mean the range is exhausted, not "not read yet".
         const batch = await cursor.nextBatch(86_400_000, {
           maxMessages: Math.min(batchSize, maxMessages - emitted),
-          maxWallTimeMs: batchWallTimeMs,
+          maxWallTimeMs: effectiveWallMs,
           waitForData: true,
         });
         if (batch.length === 0) {
@@ -1907,6 +1956,19 @@ export class IterablePlayer implements Player {
         }
         if (out.length > 0) {
           yield out;
+        }
+        if (isBackgroundScan && this._backgroundReads.playbackActive && !args.signal?.aborted) {
+          await new Promise<void>((resolve) => {
+            const onAbort = (): void => {
+              clearTimeout(timer);
+              resolve();
+            };
+            const timer = globalThis.setTimeout(() => {
+              args.signal?.removeEventListener("abort", onAbort);
+              resolve();
+            }, RANGE_READ_PLAYING_YIELD_MS);
+            args.signal?.addEventListener("abort", onAbort, { once: true });
+          });
         }
       }
     } finally {

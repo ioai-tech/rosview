@@ -19,6 +19,13 @@ export interface H264PressureObservation {
  */
 export const H264_MAX_PENDING_FRAMES = 120;
 export const H264_MAX_PENDING_SPAN_MS = 4_000;
+/**
+ * Soft-pressure GOP trim thresholds while in `degraded` mode. Must stay above a
+ * typical 1 s GOP (30 frames) plus prefetch jitter so steady degraded playback
+ * does not destroy and rebuild the decoder on every keyframe boundary.
+ */
+export const H264_DEGRADED_TRIM_FRAMES = 60;
+export const H264_DEGRADED_TRIM_SPAN_MS = 1_200;
 export const H264_DECODE_QUEUE_HIGH_WATER = 4;
 export const H264_RENDER_INTERVAL_MS = 1000 / 60;
 export const H264_PRESSURED_RENDER_INTERVAL_MS = 1000 / 30;
@@ -57,7 +64,6 @@ const RELAPSE = {
   spanMs: 250,
   decodeMs: 45,
   decodeQueueSize: H264_DECODE_QUEUE_HIGH_WATER + 2,
-  mediaLagMs: 1_000,
 };
 const RECOVERY_SAMPLES = 12;
 
@@ -88,12 +94,14 @@ export function updateH264Pressure(
     observation.queueSpanMs <= ENTER_RECOVERY.spanMs &&
     observation.decodeMs <= ENTER_RECOVERY.decodeMs &&
     observation.decodeQueueSize <= ENTER_RECOVERY.decodeQueueSize;
+  // Relapse deliberately mirrors ENTER_RECOVERY and omits `mediaLagMs`: checking
+  // media lag on relapse while omitting it from recovery caused 30 Hz
+  // degraded <-> recovery oscillation whenever seek or pipeline lag exceeded 1 s.
   const relapsed =
     observation.queueFrames >= RELAPSE.frames ||
     observation.queueSpanMs >= RELAPSE.spanMs ||
     observation.decodeMs >= RELAPSE.decodeMs ||
-    observation.decodeQueueSize >= RELAPSE.decodeQueueSize ||
-    observation.mediaLagMs >= RELAPSE.mediaLagMs;
+    observation.decodeQueueSize >= RELAPSE.decodeQueueSize;
 
   if (state.mode === 'normal') {
     return overloaded ? { mode: 'degraded', healthySamples: 0 } : state;

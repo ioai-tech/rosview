@@ -18,6 +18,8 @@ import { readPlotRangeIncremental, type PlotRangeReadProgress } from './rangeRea
 import type { PlotDatasetWarning } from './plotWarnings';
 
 const MIN_DATASET_FLUSH_MS = 150;
+/** Coarser chart rebuild interval while playing so Plot updates never jank multi-camera video. */
+const MIN_PLAYING_DATASET_FLUSH_MS = 400;
 
 /** Remote range-backed sources: how much recording around the playhead a Plot reads. */
 export const REMOTE_PLOT_WINDOW_SEC = 30;
@@ -138,6 +140,11 @@ export function usePlotPanelData({
   const datasetFrameRef = useRef<number | null>(null);
   const datasetTimeoutRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const lastDatasetFlushMsRef = useRef(0);
+  const lastQueryIdentityRef = useRef<{
+    player: Player;
+    topicsKey: string;
+    dataConfigKey: string;
+  } | null>(null);
 
   const flushProgress = useCallback(() => {
     progressFrameRef.current = null;
@@ -168,6 +175,7 @@ export function usePlotPanelData({
 
   useEffect(() => {
     if (!startTime || !endTime || activeTopics.length === 0 || !hasPlotPaths || (windowed && !windowRange)) {
+      lastQueryIdentityRef.current = null;
       setDataset(EMPTY_DATASET);
       setLoading(false);
       setProgress(null);
@@ -176,7 +184,21 @@ export function usePlotPanelData({
     }
 
     const controller = new AbortController();
-    setDataset(EMPTY_DATASET);
+    // On windowed recenters for the same recording/topic/config, keep the previous
+    // chart visible until the new window streams in rather than flashing blank.
+    // Switching topic, series config, or recording still clears immediately.
+    const topicsKey = activeTopics.join('\n');
+    const prevIdentity = lastQueryIdentityRef.current;
+    const isWindowRecenterOnly =
+      windowed &&
+      prevIdentity != null &&
+      prevIdentity.player === player &&
+      prevIdentity.topicsKey === topicsKey &&
+      prevIdentity.dataConfigKey === dataConfigKey;
+    lastQueryIdentityRef.current = { player, topicsKey, dataConfigKey };
+    if (!isWindowRecenterOnly) {
+      setDataset(EMPTY_DATASET);
+    }
     setLoading(true);
     setProgress(null);
     setError(null);
@@ -205,8 +227,10 @@ export function usePlotPanelData({
 
     const scheduleDatasetFlush = () => {
       if (datasetFrameRef.current != null || datasetTimeoutRef.current != null) return;
+      const isPlaying = useMessagePipelineStore.getState().playerState.activeData?.isPlaying === true;
+      const minIntervalMs = isPlaying ? MIN_PLAYING_DATASET_FLUSH_MS : MIN_DATASET_FLUSH_MS;
       const elapsedMs = performance.now() - lastDatasetFlushMsRef.current;
-      const delayMs = Math.max(0, MIN_DATASET_FLUSH_MS - elapsedMs);
+      const delayMs = Math.max(0, minIntervalMs - elapsedMs);
       datasetTimeoutRef.current = globalThis.setTimeout(() => {
         datasetTimeoutRef.current = null;
         datasetFrameRef.current = requestAnimationFrame(flushDataset);

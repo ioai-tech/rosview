@@ -21,6 +21,7 @@ import { McapIndexedIterableSource } from '@/infra/sources/McapIndexedIterableSo
 import { McapUnindexedIterableSource } from '@/infra/sources/McapUnindexedIterableSource';
 import { createIndexedDbMcapIndexCache } from '@/infra/sources/mcapIndexCache';
 import { withBuiltinTopicAdapters } from '@/infra/sources/adapters';
+import { createCachedDecompressHandlers } from '@/infra/sources/decompressedChunkCache';
 import { loadDecompressHandlers } from '@/infra/sources/decompressHandlers';
 import { MessageCursor } from "./MessageCursor";
 import { RemoteRangeFile, isMessagePort } from '@/infra/range/rangeHandle';
@@ -118,20 +119,28 @@ export class McapWorkerImpl implements IWorkerSerializedSourceWorker {
         );
       }
 
-      const decompressHandlers = await workerPerf.timeAsync(
+      const baseDecompressHandlers = await workerPerf.timeAsync(
         "initialize.loadDecompressHandlers",
         () => loadDecompressHandlers({ wasmBinary: zstdWasmBinary }),
       );
-      
+      const chunkKeyByBuffer = new WeakMap<ArrayBufferLike, string>();
+      const decompressHandlers = createCachedDecompressHandlers(baseDecompressHandlers, {
+        lookupChunkKey: (buffer) => chunkKeyByBuffer.get(buffer.buffer),
+      });
+
       const mcapReadable = {
         size: async () => await rawReadable.size(),
         read: async (offset: bigint, length: bigint) => {
           const byteLength = Number(length);
-          return await workerPerf.timeAsync<Uint8Array>(
+          const bytes = await workerPerf.timeAsync<Uint8Array>(
             "mcapReadable.read",
             async () => await rawReadable.read(offset, length),
             byteLength,
           );
+          if (bytes.byteLength > 0) {
+            chunkKeyByBuffer.set(bytes.buffer, `${offset}:${length}`);
+          }
+          return bytes;
         }
       };
 
@@ -231,10 +240,18 @@ export class McapWorkerImpl implements IWorkerSerializedSourceWorker {
       this._scheduleTimePrefixPrefetch();
     }
     const iterator = this._source.messageIterator(args);
+    const isRangeScan = args.endTime != undefined;
+    // Bounded range scans (H.264 bootstrap, Plot windows) must never write into
+    // the live playback SharedPayloadRing, or they can wrap its 24 slots and
+    // evict in-flight playback keyframes.
+    const transportConfig =
+      isRangeScan && this._transportConfig.mode === "sab"
+        ? { ...this._transportConfig, mode: "transfer" as const, payloadRing: undefined }
+        : this._transportConfig;
     const cursorOptions = {
-      ...this._transportConfig,
+      ...transportConfig,
       latestOnlyTopics: args.latestOnlyTopics,
-      ...(args.endTime == undefined ? { maxBufferDurationMs: PLAYBACK_CURSOR_BUFFER_AHEAD_MS } : {}),
+      ...(!isRangeScan ? { maxBufferDurationMs: PLAYBACK_CURSOR_BUFFER_AHEAD_MS } : {}),
     };
     return Promise.resolve(Comlink.proxy(new MessageCursor(iterator, cursorOptions)));
   }

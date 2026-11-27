@@ -270,7 +270,7 @@ export class MessageCursor implements IMessageCursor<unknown> {
 
   private _transferMessage(message: MessageEvent): IteratorResult<MessageEvent> {
     message = this._prepareMessageForTransport(message);
-    if (this._transportConfig.mode === "transfer") {
+    if (this._transportConfig.mode === "transfer" || this._transportConfig.mode === "sab") {
       const transferables = workerPerf.time("cursor.collectTransferables", () => collectTransferables([message]));
       if (transferables.length > 0) {
         return Comlink.transfer(
@@ -284,7 +284,7 @@ export class MessageCursor implements IMessageCursor<unknown> {
 
   private _transferBatch(messages: MessageEvent[]): MessageEvent[] {
     messages = messages.map((message) => this._prepareMessageForTransport(message));
-    if (this._transportConfig.mode === "transfer") {
+    if (this._transportConfig.mode === "transfer" || this._transportConfig.mode === "sab") {
       const transferables = workerPerf.time("cursor.collectTransferables", () => collectTransferables(messages));
       if (transferables.length > 0) {
         return Comlink.transfer(messages, transferables);
@@ -331,9 +331,6 @@ export class MessageCursor implements IMessageCursor<unknown> {
   }
 
   private _prepareMessageForTransport(event: MessageEvent): MessageEvent {
-    if (this._transportConfig.mode !== "sab" || !this._sharedRing) {
-      return event;
-    }
     const message = event.message;
     if (!message || typeof message !== "object") {
       return event;
@@ -344,28 +341,54 @@ export class MessageCursor implements IMessageCursor<unknown> {
     if (!(dataField instanceof Uint8Array)) {
       return event;
     }
-    if (dataField.byteLength < this._transportConfig.binaryPayloadThresholdBytes) {
-      return event;
+
+    if (
+      this._transportConfig.mode === "sab" &&
+      this._sharedRing &&
+      dataField.byteLength >= this._transportConfig.binaryPayloadThresholdBytes
+    ) {
+      const sharedRef = workerPerf.time(
+        "cursor.sharedRing.write",
+        () => this._sharedRing!.write(dataField),
+        dataField.byteLength,
+      );
+      if (sharedRef) {
+        return {
+          ...event,
+          payloadKind: "hybrid-sab",
+          sizeInBytes: dataField.byteLength,
+          message: {
+            ...messageRecord,
+            data: sharedRef,
+          },
+        };
+      }
     }
 
-    const sharedRef = workerPerf.time(
-      "cursor.sharedRing.write",
-      () => this._sharedRing!.write(dataField),
-      dataField.byteLength,
-    );
-    if (!sharedRef) {
-      return event;
+    // CDR deserializers return zero-copy subarrays backed by the entire
+    // decompressed MCAP chunk (~779 KiB+). Without compacting, `collectTransferables`
+    // rejects the shared chunk buffer and `postMessage` clones the full chunk per
+    // batch, and the Image panel copies it again before transferring to its render
+    // worker. Compacting once here enables end-to-end zero-copy transfers and keeps
+    // cached chunk buffers completely unshared.
+    if (
+      (this._transportConfig.mode === "transfer" || this._transportConfig.mode === "sab") &&
+      dataField.byteLength > 0 &&
+      dataField.buffer instanceof ArrayBuffer &&
+      (dataField.byteOffset !== 0 || dataField.byteLength !== dataField.buffer.byteLength) &&
+      dataField.buffer.byteLength > dataField.byteLength * 2
+    ) {
+      return {
+        ...event,
+        sizeInBytes: dataField.byteLength,
+        message: {
+          ...messageRecord,
+          data: dataField.slice(),
+        },
+      };
     }
 
-    return {
-      ...event,
-      payloadKind: "hybrid-sab",
-      sizeInBytes: dataField.byteLength,
-      message: {
-        ...messageRecord,
-        data: sharedRef,
-      },
-    };
+    return event;
   }
 
   private _estimateMessageBytes(event: MessageEvent): number {

@@ -322,6 +322,14 @@ export class WorkerSerializedSource implements ISourceHandle {
     const resolved = mode === "view" ? this._ringReader?.view(ref) : this._ringReader?.read(ref);
     if (!resolved) {
       this._stalePayloadRefs += 1;
+      if (this._stalePayloadRefs === 1 || this._stalePayloadRefs % 10 === 0) {
+        console.warn("WorkerSerializedSource: SharedPayloadRing slot overwritten before read", {
+          topic: messageEvent.topic,
+          seq: ref.seq,
+          slot: ref.slot,
+          stalePayloadRefs: this._stalePayloadRefs,
+        });
+      }
       return undefined;
     }
     return resolved;
