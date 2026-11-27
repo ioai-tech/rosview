@@ -2408,4 +2408,61 @@ describe('IterablePlayer frame-priority reads and the window gate', () => {
       player.close();
     }
   });
+
+  it('does not inject single-frame stale backfills into ordered (mode="all") video consumers', async () => {
+    let now = 0;
+    let nextRafId = 1;
+    const oldPerformanceNow = performance.now;
+    const oldRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const oldCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    const rafCallbacks = new Map<number, FrameRequestCallback>();
+    Object.defineProperty(performance, 'now', { configurable: true, value: () => now });
+    globalThis.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
+      const id = nextRafId++;
+      rafCallbacks.set(id, cb);
+      return id;
+    });
+    globalThis.cancelAnimationFrame = vi.fn((id: number) => {
+      rafCallbacks.delete(id);
+    });
+
+    const source = makeSource([]);
+    vi.mocked(source.getMessageCursor).mockResolvedValue({
+      nextBatch: vi.fn(async () => []),
+      end: vi.fn(async () => undefined),
+    } as never);
+    const backfillMock = vi.mocked(source.getBackfillMessages);
+    backfillMock.mockClear();
+
+    const player = new IterablePlayer(source);
+    const onMessageBatch = vi.fn();
+    try {
+      await player.initialize({});
+      player.registerHighFrequencyConsumer('Image!1:image-main', {
+        topic: TOPIC,
+        panelId: 'Image!1',
+        lane: 'video',
+        mode: 'all',
+        onMessageBatch,
+      });
+      await flushAsyncWork();
+      backfillMock.mockClear();
+
+      player.play();
+      now = 2_000;
+      const id = Math.min(...rafCallbacks.keys());
+      const cb = rafCallbacks.get(id);
+      rafCallbacks.delete(id);
+      cb?.(now);
+      await flushAsyncWork();
+
+      expect(backfillMock).not.toHaveBeenCalled();
+      expect(onMessageBatch).not.toHaveBeenCalled();
+    } finally {
+      player.close();
+      Object.defineProperty(performance, 'now', { configurable: true, value: oldPerformanceNow });
+      globalThis.requestAnimationFrame = oldRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = oldCancelAnimationFrame;
+    }
+  });
 });

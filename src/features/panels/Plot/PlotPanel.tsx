@@ -97,6 +97,19 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     endTime,
   });
 
+  const localLargeRecording = useMemo(() => {
+    if (remoteRangeBacked === true || !startTime || !endTime || activeTopics.length === 0) {
+      return false;
+    }
+    const durationSec = timeToSec(endTime) - timeToSec(startTime);
+    if (durationSec <= 120) return false;
+    let activeMessages = 0;
+    for (const name of activeTopics) {
+      activeMessages += topicByName.get(name)?.messageCount ?? 0;
+    }
+    return activeMessages > 100_000;
+  }, [activeTopics, endTime, remoteRangeBacked, startTime, topicByName]);
+
   const { dataset: rawDataset, loading, progress, error, errorKind, window: dataWindow } = usePlotPanelData({
     player,
     config,
@@ -105,7 +118,7 @@ export const PlotPanel: React.FC<PlotPanelProps> = ({ player, panelId, config, s
     startTime,
     endTime,
     randomAccessByTopic,
-    windowed: remoteRangeBacked === true,
+    windowed: remoteRangeBacked === true || localLargeRecording,
   });
 
   const xRange = useMemo(() => {

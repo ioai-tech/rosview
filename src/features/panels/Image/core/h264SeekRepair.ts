@@ -2,7 +2,7 @@ import type { Player } from '@/core/types/player';
 import type { MessageEvent as RosMessageEvent, Time } from '@/core/types/ros';
 import { withTimeout } from '@/shared/utils/asyncTimeout';
 import { addMs, toNano } from '@/shared/utils/time';
-import { containsH264IdrNal } from './h264';
+import { containsH264IdrNal, parseH264SpsCodec } from './h264';
 import { selectLatestCompleteH264Gop } from './h264Queue';
 import type { ImageRenderWorkerRequest, ImageWorkerFrameEnvelope } from './imageWorkerProtocol';
 import { getH264MessagePayload, isH264MessageEvent, toWorkerFrame } from './messageFrameAdapter';
@@ -21,6 +21,8 @@ export const H264_SEEK_WINDOWS_MS = [2000, 5000, 10_000, 30_000] as const;
 export const H264_SEEK_MAX_FRAMES = 600;
 
 /** Forward read when bootstrapping at/before the file's first IDR. */
+/** Small forward slack on the initial lookback window for file-start IDRs (e.g. +19..33ms). */
+const H264_BOOTSTRAP_INITIAL_FORWARD_MS = 200;
 export const H264_BOOTSTRAP_FORWARD_MS = 2_000;
 export const H264_BOOTSTRAP_DEADLINE_MS = 15_000;
 export const H264_BOOTSTRAP_WINDOW_TIMEOUT_MS = 5_000;
@@ -166,6 +168,55 @@ export function dedupeH264MessageEventsByReceiveTime(
   return deduped;
 }
 
+/**
+ * Check whether live frames buffered during an in-flight playback bootstrap
+ * already provide a complete decodable random-access point at or after
+ * `targetTime`. When true, the panel can cancel the backward range scan and
+ * resume immediately from the live IDR instead of blocking for seconds on
+ * historical chunks that would be discarded anyway.
+ */
+export function trySelectLiveH264BootstrapFrames(
+  liveEvents: readonly RosMessageEvent[],
+  targetTime: Time,
+  options: { requireSps?: boolean } = {},
+): RosMessageEvent[] {
+  const targetNs = toNano(targetTime);
+  const h264Events = dedupeH264MessageEventsByReceiveTime(
+    sortByReceiveTime(liveEvents.filter(isH264MessageEvent)),
+  );
+  const hasEligibleIdr = h264Events.some((event) => {
+    if (toNano(event.receiveTime) < targetNs) {
+      return false;
+    }
+    const payload = getH264MessagePayload(event);
+    return payload != null && containsH264IdrNal(payload);
+  });
+  if (!hasEligibleIdr) {
+    return [];
+  }
+
+  const candidates = h264Events.flatMap((event) => {
+    const data = getH264MessagePayload(event);
+    return data ? [{ event, data }] : [];
+  });
+  const selected = limitH264SeekRepairFrames(selectLatestCompleteH264Gop(candidates).frames).map(
+    ({ event }) => event,
+  );
+  if (selected.length === 0) {
+    return [];
+  }
+  if (options.requireSps) {
+    const hasSps = selected.some((event) => {
+      const payload = getH264MessagePayload(event);
+      return payload != null && parseH264SpsCodec(payload) != null;
+    });
+    if (!hasSps) {
+      return [];
+    }
+  }
+  return selected;
+}
+
 export function mergeH264BootstrapWithLiveFrames(
   bootstrapEvents: RosMessageEvent[],
   liveEvents: RosMessageEvent[],
@@ -203,14 +254,21 @@ export async function fetchH264BootstrapFrames(
   }
 
   const coverageEnd = options.coverageEndTime ?? targetTime;
-  const queryEnd = addMs(coverageEnd, H264_BOOTSTRAP_FORWARD_MS);
   const deadline = Date.now() + H264_BOOTSTRAP_DEADLINE_MS;
 
-  for (const windowMs of H264_SEEK_WINDOWS_MS) {
+  for (let windowIndex = 0; windowIndex < H264_SEEK_WINDOWS_MS.length; windowIndex += 1) {
+    const windowMs = H264_SEEK_WINDOWS_MS[windowIndex];
     if (options.signal?.aborted || Date.now() >= deadline) {
       return [];
     }
     const start = addMs(targetTime, -windowMs);
+    // Avoid reading 2 s of future chunks on the common first window when a
+    // preceding IDR is already within 2 s; keep 200 ms slack for file-start IDRs
+    // and fall back to the full 2 s forward reach on wider windows.
+    const queryEnd = addMs(
+      coverageEnd,
+      windowIndex === 0 ? H264_BOOTSTRAP_INITIAL_FORWARD_MS : H264_BOOTSTRAP_FORWARD_MS,
+    );
     const remainingMs = Math.max(1, deadline - Date.now());
     // Each window's read has its own abort: a read the repair stopped waiting for (timeout,
     // abort, error) must stop too. As a frame-priority read it holds back every panel's
@@ -309,7 +367,24 @@ export async function executeH264Bootstrap(args: ExecuteH264BootstrapArgs): Prom
     return false;
   }
 
-  const mergedEvents = mergeH264BootstrapWithLiveFrames(bootstrapEvents, liveEvents);
+  const mergedRaw = mergeH264BootstrapWithLiveFrames(bootstrapEvents, liveEvents);
+  if (mergedRaw.length === 0) {
+    return false;
+  }
+  // If newer live frames already brought a complete IDR GOP while bootstrap was
+  // in flight, start from that latest complete GOP instead of decoding a stale
+  // prefix or bridging across frames dropped by the live buffer cap.
+  const latestLiveIdrIndex = findLatestH264KeyFrameIndex(liveEvents);
+  const mergedCandidates = mergedRaw.flatMap((event) => {
+    const data = getH264MessagePayload(event);
+    return data ? [{ event, data }] : [];
+  });
+  const mergedEvents =
+    latestLiveIdrIndex >= 0
+      ? limitH264SeekRepairFrames(selectLatestCompleteH264Gop(mergedCandidates).frames).map(
+          ({ event }) => event,
+        )
+      : mergedRaw;
   if (mergedEvents.length === 0) {
     return false;
   }

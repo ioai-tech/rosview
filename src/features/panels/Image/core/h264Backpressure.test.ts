@@ -118,6 +118,21 @@ describe('H.264 adaptive backpressure', () => {
     expect(state.mode).toBe('normal');
   });
 
+  it('does not oscillate degraded <-> recovery when media lag stays above 1 s while queues are healthy', () => {
+    let state: ReturnType<typeof updateH264Pressure> = {
+      mode: 'degraded',
+      healthySamples: 0,
+    };
+    const highLagIdle = { ...healthy, mediaLagMs: 5_000 };
+    const modes: string[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      state = updateH264Pressure(state, highLagIdle);
+      modes.push(state.mode);
+    }
+    expect(modes.slice(0, 11).every((mode) => mode === 'recovery')).toBe(true);
+    expect(modes[11]).toBe('normal');
+  });
+
   it('never discards a decoded frame that nothing newer supersedes', () => {
     // Regression: an absolute output deadline discarded every frame once the
     // pipeline's fixed latency exceeded it, freezing the canvas with no error.

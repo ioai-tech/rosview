@@ -6,13 +6,20 @@ import type { WorkerTransport } from "./BaseWorkerTransport";
 
 const DEFAULT_RING_BYTES = 384 * 1024 * 1024;
 const DEFAULT_SLOT_BYTES = 16 * 1024 * 1024;
+/**
+ * Reserve the fixed 24-slot 16 MiB SAB ring for truly large payloads (raw
+ * images, PointCloud2). Smaller binary payloads such as compressed H.264 IDR
+ * frames (70-200 KiB) travel via zero-copy Transferable without risking ring
+ * wraparound when multiple cameras emit keyframes or run bootstrap scans.
+ */
+const DEFAULT_SAB_THRESHOLD_BYTES = 512 * 1024;
 
 export class SabTransport implements WorkerTransport {
   private readonly _ringConfig: SharedPayloadRingConfig;
   private readonly _thresholdBytes: number;
 
   constructor(
-    thresholdBytes = 64 * 1024,
+    thresholdBytes = DEFAULT_SAB_THRESHOLD_BYTES,
     totalRingBytes = DEFAULT_RING_BYTES,
     slotBytes = DEFAULT_SLOT_BYTES,
   ) {

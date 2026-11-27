@@ -43,4 +43,32 @@ describe('BackgroundReadGate', () => {
     // The aborted wait took no slot.
     expect(await gate.acquire()).toBeDefined();
   });
+
+  it('caps background scans to one slot while playback is active and yields during playback priority', async () => {
+    const gate = new BackgroundReadGate(2);
+    gate.setPlaybackActive(true);
+    const first = await gate.acquire();
+    let second: (() => void) | undefined;
+    void gate.acquire().then((release) => (second = release));
+    await tick();
+    expect(second).toBeUndefined();
+
+    gate.setPlaybackPriority(true);
+    let headroomReady = false;
+    void gate.waitForHeadroom().then((ok) => {
+      headroomReady = ok;
+    });
+    await tick();
+    expect(headroomReady).toBe(false);
+
+    gate.setPlaybackPriority(false);
+    await tick();
+    expect(headroomReady).toBe(true);
+
+    first!();
+    await tick();
+    expect(second).toBeDefined();
+    second!();
+    gate.setPlaybackActive(false);
+  });
 });

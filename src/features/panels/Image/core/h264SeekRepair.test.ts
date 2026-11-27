@@ -12,6 +12,7 @@ import {
   repairH264Seek,
   selectH264BootstrapFrames,
   selectH264SeekRepairFrames,
+  trySelectLiveH264BootstrapFrames,
 } from './h264SeekRepair';
 
 const keyChunk = new Uint8Array([0, 0, 0, 1, 0x67, 1, 2, 0, 0, 1, 0x65, 3, 4]);
@@ -297,6 +298,62 @@ describe('h264SeekRepair', () => {
     ).resolves.toBe(true);
     expect(posts).toHaveLength(1);
     expect((posts[0] as { frames?: unknown[] }).frames).toHaveLength(2);
+  });
+
+  it('executeH264Bootstrap jumps cleanly to a newer live IDR GOP when live frames overtook bootstrap', async () => {
+    const posts: unknown[] = [];
+    const worker = {
+      postMessage(request: unknown) {
+        posts.push(request);
+      },
+    } as unknown as Worker;
+    const player = {
+      getMessagesInTimeRange: async () => [makeEvent(1, keyChunk), makeEvent(2, deltaChunk)],
+    } as unknown as Player;
+
+    await expect(
+      executeH264Bootstrap({
+        player,
+        worker,
+        topic: '/camera/video',
+        targetTime: { sec: 2, nsec: 0 },
+        liveEvents: [makeEvent(5, keyChunk), makeEvent(6, deltaChunk)],
+      }),
+    ).resolves.toBe(true);
+    expect(posts).toHaveLength(1);
+    const frames = (posts[0] as { frames?: Array<{ receiveTime: { sec: number } }> }).frames ?? [];
+    expect(frames.map((frame) => frame.receiveTime.sec)).toEqual([5, 6]);
+  });
+
+  it('trySelectLiveH264BootstrapFrames short-circuits on a live IDR at or after targetTime', () => {
+    // Pre-target IDR must be ignored so stale pre-seek frames cannot cancel recovery.
+    expect(
+      trySelectLiveH264BootstrapFrames([makeEvent(9, keyChunk)], { sec: 10, nsec: 0 }),
+    ).toEqual([]);
+
+    // P-frames alone cannot short-circuit bootstrap.
+    expect(
+      trySelectLiveH264BootstrapFrames([makeEvent(10, deltaChunk), makeEvent(11, deltaChunk)], {
+        sec: 10,
+        nsec: 0,
+      }),
+    ).toEqual([]);
+
+    // Live IDR at/after targetTime returns the decodable GOP (including preceding split SPS/PPS).
+    const selected = trySelectLiveH264BootstrapFrames(
+      [makeEvent(10, deltaChunk), makeEvent(11, spsChunk), makeEvent(12, ppsChunk), makeEvent(13, idrChunk)],
+      { sec: 10, nsec: 0 },
+      { requireSps: true },
+    );
+    expect(selected.map((event) => event.receiveTime.sec)).toEqual([11, 12, 13]);
+
+    // Bare IDR without SPS is rejected when requireSps is true, accepted when decoder already has config.
+    expect(
+      trySelectLiveH264BootstrapFrames([makeEvent(11, idrChunk)], { sec: 10, nsec: 0 }, { requireSps: true }),
+    ).toEqual([]);
+    expect(
+      trySelectLiveH264BootstrapFrames([makeEvent(11, idrChunk)], { sec: 10, nsec: 0 }, { requireSps: false }),
+    ).toHaveLength(1);
   });
 });
 

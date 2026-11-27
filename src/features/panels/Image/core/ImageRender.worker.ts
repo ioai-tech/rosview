@@ -13,6 +13,8 @@ import {
 } from './h264';
 import {
   H264_DECODE_QUEUE_HIGH_WATER,
+  H264_DEGRADED_TRIM_FRAMES,
+  H264_DEGRADED_TRIM_SPAN_MS,
   H264_PRESSURED_RENDER_INTERVAL_MS,
   H264_RENDER_INTERVAL_MS,
   decodedFrameLatenessMs,
@@ -85,7 +87,8 @@ const DEFAULT_VIEWPORT: ImageViewport = {
 const OUTPUT_TIMEOUT_MS = 5000;
 const WECODECS_CONFIG_TIMEOUT_MS = 3000;
 const METRICS_INTERVAL_MS = 1000;
-const H264_RESYNC_COOLDOWN_MS = 200;
+const H264_RESYNC_COOLDOWN_MS = 1000;
+const H264_BITMAP_CACHE_INTERVAL_MS = 1000;
 /** Minimum spacing between bootstrap requests sent to the panel. */
 const H264_BOOTSTRAP_REQUEST_COOLDOWN_MS = 1500;
 /**
@@ -104,6 +107,11 @@ class WorkerH264Decoder {
   #lastTimestampUs = -1;
   #configuredCodec: string | null = null;
   #streamCodec: string | null = null;
+  #activeConfig: VideoDecoderConfig | null = null;
+  #configCache = new Map<string, VideoDecoderConfig>();
+  #preferSoftware = false;
+  #consecutiveHardwareErrors = 0;
+  #hasProducedOutput = false;
   #generation = 0;
   #submitted = new Map<number, {
     frame: ImageWorkerFrameEnvelope;
@@ -137,6 +145,10 @@ class WorkerH264Decoder {
 
   public dispose(): void {
     this.reset();
+    this.#configCache.clear();
+    this.#preferSoftware = false;
+    this.#consecutiveHardwareErrors = 0;
+    this.#hasProducedOutput = false;
     this.#lastTimestampUs = -1;
   }
 
@@ -148,7 +160,48 @@ class WorkerH264Decoder {
     this.#decoder = null;
     this.#configuredCodec = null;
     this.#streamCodec = null;
+    this.#activeConfig = null;
     this.#submitted.clear();
+  }
+
+  /**
+   * Flush and reconfigure the existing VideoDecoder in place without destroying
+   * the underlying OS/GPU hardware decode session. Falls back to full `reset()`
+   * if the decoder is closed or rejects in-place reconfiguration.
+   */
+  public softReset(): void {
+    this.#generation += 1;
+    this.#submitted.clear();
+    if (!this.#decoder || this.#decoder.state !== 'configured' || !this.#activeConfig) {
+      this.reset();
+      return;
+    }
+    try {
+      this.#decoder.reset();
+      this.#decoder.configure(this.#activeConfig);
+    } catch {
+      this.reset();
+    }
+  }
+
+  /**
+   * Record a decoder error/timeout. On multi-camera high-resolution streams,
+   * consumer GPUs can exhaust concurrent hardware decode sessions or output
+   * pools; after repeated hardware failures, switch this panel to software
+   * decoding rather than looping forever on a broken hardware session.
+   */
+  public noteError(): void {
+    if (this.#preferSoftware) {
+      return;
+    }
+    if (this.#activeConfig?.hardwareAcceleration !== 'prefer-hardware') {
+      return;
+    }
+    this.#consecutiveHardwareErrors += 1;
+    if (this.#consecutiveHardwareErrors >= 2 || !this.#hasProducedOutput) {
+      this.#preferSoftware = true;
+      this.#configCache.clear();
+    }
   }
 
   public get codec(): string | undefined {
@@ -228,29 +281,39 @@ class WorkerH264Decoder {
       return;
     }
 
-    let supportedConfig: VideoDecoderConfig | null = null;
-    for (const codec of getH264CodecCandidates(data)) {
-      const candidates: VideoDecoderConfig[] = [
-        { codec, hardwareAcceleration: 'prefer-hardware', optimizeForLatency: true },
-        { codec, hardwareAcceleration: 'no-preference', optimizeForLatency: true },
-      ];
-      for (const candidate of candidates) {
-        try {
-          const support = await withTimeout(
-            VideoDecoder.isConfigSupported(candidate),
-            WECODECS_CONFIG_TIMEOUT_MS,
-            'VideoDecoder.isConfigSupported timed out',
-          );
-          if (support.supported) {
-            supportedConfig = support.config ?? candidate;
-            break;
+    const cacheKey = `${parsedCodec ?? 'fallback'}:${this.#preferSoftware ? 'sw' : 'hw'}`;
+    let supportedConfig: VideoDecoderConfig | null = this.#configCache.get(cacheKey) ?? null;
+    if (!supportedConfig) {
+      const accelOrder: HardwareAcceleration[] = this.#preferSoftware
+        ? ['prefer-software', 'no-preference']
+        : ['prefer-hardware', 'no-preference'];
+      for (const codec of getH264CodecCandidates(data)) {
+        for (const hardwareAcceleration of accelOrder) {
+          const candidate: VideoDecoderConfig = {
+            codec,
+            hardwareAcceleration,
+            optimizeForLatency: true,
+          };
+          try {
+            const support = await withTimeout(
+              VideoDecoder.isConfigSupported(candidate),
+              WECODECS_CONFIG_TIMEOUT_MS,
+              'VideoDecoder.isConfigSupported timed out',
+            );
+            if (support.supported) {
+              supportedConfig = support.config ?? candidate;
+              break;
+            }
+          } catch {
+            // Some implementations throw for an unsupported acceleration mode.
           }
-        } catch {
-          // Some implementations throw for an unsupported acceleration mode.
+        }
+        if (supportedConfig) {
+          break;
         }
       }
       if (supportedConfig) {
-        break;
+        this.#configCache.set(cacheKey, supportedConfig);
       }
     }
     if (!supportedConfig) {
@@ -266,6 +329,8 @@ class WorkerH264Decoder {
           frame.close();
           return;
         }
+        this.#consecutiveHardwareErrors = 0;
+        this.#hasProducedOutput = true;
         this.#callbacks.output({
           videoFrame: frame,
           sourceFrame: submitted.frame,
@@ -285,10 +350,12 @@ class WorkerH264Decoder {
       this.#decoder.configure(supportedConfig);
       this.#configuredCodec = supportedConfig.codec;
       this.#streamCodec = parsedCodec;
+      this.#activeConfig = supportedConfig;
     } catch (error) {
       this.#decoder.close();
       this.#decoder = null;
       this.#configuredCodec = null;
+      this.#activeConfig = null;
       throw error;
     }
   }
@@ -348,6 +415,7 @@ class ImageRenderWorkerRuntime {
     sourceFrame: ImageWorkerFrameEnvelope;
   } | null = null;
   #h264RenderTimer: ReturnType<typeof setTimeout> | null = null;
+  #isRenderingH264 = false;
   #lastPostedUiPhase: ImageSurfaceStatus['phase'] = 'idle';
   #haltUntilReset = false;
   /** Reused RGBA buffer for raw frames; resized as needed. */
@@ -406,9 +474,11 @@ class ImageRenderWorkerRuntime {
     switch (message.type) {
       case 'init':
         this.#canvas = message.canvas;
+        // Keep double-buffered compositor synchronization (avoid `desynchronized: true`),
+        // which causes front-buffer black flashes on macOS Metal / Windows D3D when
+        // drawing hardware-decoded VideoFrames across multiple concurrent panels.
         this.#ctx = message.canvas.getContext('2d', {
           alpha: false,
-          desynchronized: true,
         });
         if (!this.#ctx) {
           throw new Error('Canvas 2D context is unavailable in worker');
@@ -501,7 +571,11 @@ class ImageRenderWorkerRuntime {
     this.#disposePendingH264Output();
     this.#haltUntilReset = false;
     this.#resetH264RuntimeState();
-    this.#decoder.reset();
+    if (preserveFrame) {
+      this.#decoder.softReset();
+    } else {
+      this.#decoder.reset();
+    }
     if (!preserveFrame) {
       this.#disposeCachedBitmap();
       this.#cachedFrame = null;
@@ -681,7 +755,8 @@ class ImageRenderWorkerRuntime {
     );
     const pressureTrim =
       this.#h264Pressure.mode === 'degraded' &&
-      (this.#pendingH264Frames.length > 36 || queueSpanMs > 250);
+      (this.#pendingH264Frames.length > H264_DEGRADED_TRIM_FRAMES ||
+        queueSpanMs > H264_DEGRADED_TRIM_SPAN_MS);
     if (!hardLimitExceeded && !pressureTrim) {
       return;
     }
@@ -932,7 +1007,7 @@ class ImageRenderWorkerRuntime {
   }
 
   #scheduleH264Render(): void {
-    if (this.#h264RenderTimer != null || !this.#pendingDecodedH264) {
+    if (this.#isRenderingH264 || this.#h264RenderTimer != null || !this.#pendingDecodedH264) {
       return;
     }
     const renderIntervalMs =
@@ -954,11 +1029,15 @@ class ImageRenderWorkerRuntime {
   }
 
   async #renderPendingH264Output(): Promise<void> {
+    if (this.#isRenderingH264) {
+      return;
+    }
     const pending = this.#pendingDecodedH264;
     this.#pendingDecodedH264 = null;
     if (!pending) {
       return;
     }
+    this.#isRenderingH264 = true;
     const { videoFrame, sourceFrame } = pending;
     const epoch = this.#epoch;
     const now = performance.now();
@@ -977,7 +1056,11 @@ class ImageRenderWorkerRuntime {
         receiveTime: sourceFrame.receiveTime,
       });
 
-      if (this.#h264Pressure.mode === 'normal' && now - this.#lastH264BitmapAt >= 500) {
+      const shouldCacheBitmap =
+        !this.#cachedFrame ||
+        (this.#h264Pressure.mode === 'normal' &&
+          now - this.#lastH264BitmapAt >= H264_BITMAP_CACHE_INTERVAL_MS);
+      if (shouldCacheBitmap) {
         try {
           const bitmap = await createImageBitmap(videoFrame);
           if (discardStaleAsyncResult(bitmap, epoch, this.#epoch)) {
@@ -997,6 +1080,7 @@ class ImageRenderWorkerRuntime {
       }
     } finally {
       videoFrame.close();
+      this.#isRenderingH264 = false;
       this.#emitMetricsIfDue();
       if (this.#pendingDecodedH264) {
         this.#scheduleH264Render();
@@ -1006,7 +1090,8 @@ class ImageRenderWorkerRuntime {
 
   #handleH264DecoderError(error: Error): void {
     console.warn('ImageRenderWorker: H.264 decode failed', error);
-    this.#resyncH264Decoder();
+    this.#decoder.noteError();
+    this.#resyncH264Decoder(true);
     const recovery = selectLatestCompleteH264Gop(
       this.#pendingH264Frames,
       this.#h264RecentConfig,
@@ -1033,8 +1118,12 @@ class ImageRenderWorkerRuntime {
     this.#emitMetricsIfDue(true);
   }
 
-  #resyncH264Decoder(): void {
-    this.#decoder.reset();
+  #resyncH264Decoder(hard = false): void {
+    if (hard) {
+      this.#decoder.reset();
+    } else {
+      this.#decoder.softReset();
+    }
     this.#disposePendingH264Output();
     this.#h264NeedsResync = false;
     this.#h264ResyncCount += 1;
@@ -1052,8 +1141,10 @@ class ImageRenderWorkerRuntime {
 
   #updateH264Pressure(): void {
     const previousMode = this.#h264Pressure.mode;
+    // While waiting for a keyframe (e.g. right after a forward seek), the last
+    // decoded timestamp is from before the jump and does not indicate decoder overload.
     const mediaLagMs =
-      !this.#isPlaying || this.#lastDecodedH264TimeNs == null
+      !this.#isPlaying || this.#h264WaitingForIdr || this.#lastDecodedH264TimeNs == null
         ? 0
         : decodedFrameLatenessMs(this.#playbackTimeNs, this.#lastDecodedH264TimeNs);
     this.#h264Pressure = updateH264Pressure(this.#h264Pressure, {
@@ -1217,7 +1308,11 @@ class ImageRenderWorkerRuntime {
   #redrawCachedFrame(): void {
     const cached = this.#cachedFrame;
     if (!cached) {
-      this.#clearCanvas();
+      // Never wipe an already-rendered video canvas to solid black if the
+      // optional resize bitmap cache has not been populated yet.
+      if (this.#renderedH264Frames === 0 && this.#lastPostedUiPhase === 'idle') {
+        this.#clearCanvas();
+      }
       return;
     }
     if (cached.kind === 'raw') {
@@ -1324,9 +1419,23 @@ class ImageRenderWorkerRuntime {
     ctx.save();
     const renderDpr = this.#renderDevicePixelRatio();
     ctx.setTransform(renderDpr, 0, 0, renderDpr, 0, 0);
-    ctx.clearRect(0, 0, viewportWidth, viewportHeight);
     ctx.fillStyle = this.#renderOptions.backgroundColor;
-    ctx.fillRect(0, 0, viewportWidth, viewportHeight);
+    if (rotDeg === 0) {
+      // Paint only letterbox/pillarbox margins so the active video rectangle is
+      // never transiently overwritten with solid black before `drawImage`.
+      const left = (viewportWidth - drawWidth) / 2;
+      const top = (viewportHeight - drawHeight) / 2;
+      if (left > 0.5) {
+        ctx.fillRect(0, 0, Math.ceil(left), viewportHeight);
+        ctx.fillRect(Math.floor(left + drawWidth), 0, Math.ceil(viewportWidth - (left + drawWidth)), viewportHeight);
+      }
+      if (top > 0.5) {
+        ctx.fillRect(0, 0, viewportWidth, Math.ceil(top));
+        ctx.fillRect(0, Math.floor(top + drawHeight), viewportWidth, Math.ceil(viewportHeight - (top + drawHeight)));
+      }
+    } else {
+      ctx.fillRect(0, 0, viewportWidth, viewportHeight);
+    }
     ctx.imageSmoothingEnabled = this.#renderOptions.smoothing;
     ctx.imageSmoothingQuality =
       this.#renderOptions.smoothing && this.#h264Pressure.mode === 'normal' ? 'high' : 'low';
@@ -1353,8 +1462,10 @@ class ImageRenderWorkerRuntime {
   }
 
   #renderDevicePixelRatio(): number {
-    const dpr = Math.max(1, this.#viewport.devicePixelRatio);
-    return this.#h264Pressure.mode === 'normal' ? dpr : Math.min(dpr, 1);
+    // Keep the backing store DPR stable across pressure transitions: mutating
+    // canvas.width/height mid-playback destroys and reallocates the GPU surface
+    // on every transition, causing stalls and black flashes on HiDPI displays.
+    return Math.min(2, Math.max(1, this.#viewport.devicePixelRatio));
   }
 
   #clearCanvas(): void {

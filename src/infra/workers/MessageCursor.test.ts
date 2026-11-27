@@ -190,6 +190,40 @@ describe('MessageCursor', () => {
 
     await cursor.end();
   });
+
+  it('compacts sliced binary payloads backed by a large shared chunk buffer for zero-copy transfer', async () => {
+    const sharedChunk = new Uint8Array(64 * 1024);
+    sharedChunk.set([10, 20, 30, 40], 1024);
+    const slice = new Uint8Array(sharedChunk.buffer, 1024, 4);
+    let sent = false;
+    const iterator: AsyncIterableIterator<MessageEvent> = {
+      async next() {
+        if (sent) return { done: true, value: undefined };
+        sent = true;
+        return { done: false, value: imageMessage(0, slice) };
+      },
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    };
+
+    const cursor = new MessageCursor(iterator, {
+      mode: 'transfer',
+      binaryPayloadThresholdBytes: 64 * 1024,
+    });
+    await flushAsyncWork();
+
+    const batch = await cursor.nextBatch(10_000);
+    expect(batch).toHaveLength(1);
+    const data = (batch[0].message as { data: Uint8Array }).data;
+    expect(data).toBeInstanceOf(Uint8Array);
+    expect(Array.from(data)).toEqual([10, 20, 30, 40]);
+    expect(data.byteOffset).toBe(0);
+    expect(data.buffer.byteLength).toBe(4);
+    expect(data.buffer).not.toBe(sharedChunk.buffer);
+
+    await cursor.end();
+  });
 });
 
 describe('MessageCursor range scans', () => {

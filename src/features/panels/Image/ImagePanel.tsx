@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import type { Player } from '@/core/types/player';
 import { useMessagePipeline } from '@/core/pipeline/useMessagePipeline';
-import type { MessageEvent as RosMessageEvent } from '@/core/types/ros';
+import type { MessageEvent as RosMessageEvent, Time } from '@/core/types/ros';
 import { scheduleFrame } from '@/shared/utils/rafScheduler';
 import { toNano } from '@/shared/utils/time';
 import type { RawImageDecodeOptions } from './core/imageColorMode';
@@ -17,7 +17,12 @@ import {
   topicNeedsOrderedVideoFrames,
   type ImageSurfaceStatus,
 } from './core/imageTypes';
-import { executeH264Bootstrap } from './core/h264SeekRepair';
+import {
+  executeH264Bootstrap,
+  postH264Bootstrap,
+  toWorkerFramesFromEvents,
+  trySelectLiveH264BootstrapFrames,
+} from './core/h264SeekRepair';
 import { pushH264LiveEvent } from './core/h264LiveBuffer';
 import { isH264MessageEvent, toWorkerFrame } from './core/messageFrameAdapter';
 import { applyDepthTopicPreset } from './core/depthColorDefaults';
@@ -84,8 +89,14 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
   const lastUiStatusRef = useRef<ImageSurfaceStatus>({ phase: 'idle' });
   const h264OrderedModeRef = useRef(false);
   const h264BootstrapInFlightRef = useRef(false);
+  const h264BootstrapTargetTimeRef = useRef<Time | null>(null);
+  const h264BootstrapPreserveFrameRef = useRef(false);
   const h264BootstrapGenerationRef = useRef(0);
   const h264BufferedLiveRef = useRef<RosMessageEvent[]>([]);
+  const isPlayingRef = useRef(isPlaying);
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
   const consumerModeRef = useRef<'latest' | 'all'>('latest');
   /** Set by the subscription effect so worker-driven bootstrap requests can reuse it. */
   const requestH264BootstrapRef = useRef<(() => void) | null>(null);
@@ -146,6 +157,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       h264SeekRepairAbortRef.current?.abort();
       h264BufferedLiveRef.current = [];
       h264BootstrapInFlightRef.current = false;
+      h264BootstrapTargetTimeRef.current = null;
       const nextStatus: ImageSurfaceStatus = { phase: 'error', message };
       lastUiStatusRef.current = nextStatus;
       setStatus(nextStatus);
@@ -250,6 +262,8 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
 
     h264OrderedModeRef.current = false;
     h264BootstrapInFlightRef.current = false;
+    h264BootstrapTargetTimeRef.current = null;
+    h264BootstrapPreserveFrameRef.current = false;
     h264BootstrapGenerationRef.current += 1;
     h264BufferedLiveRef.current = [];
     consumerModeRef.current = 'latest';
@@ -265,6 +279,30 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
     const handleH264Frame = (event: RosMessageEvent) => {
       if (h264BootstrapInFlightRef.current) {
         pushH264LiveEvent(h264BufferedLiveRef.current, event);
+        const targetTime = h264BootstrapTargetTimeRef.current;
+        if (isPlayingRef.current && targetTime) {
+          const liveGop = trySelectLiveH264BootstrapFrames(
+            h264BufferedLiveRef.current,
+            targetTime,
+            { requireSps: !h264BootstrapPreserveFrameRef.current },
+          );
+          if (liveGop.length > 0) {
+            const prepared = toWorkerFramesFromEvents(liveGop, { transferOwnership: true });
+            if (
+              postH264Bootstrap(worker, prepared.frames, {
+                preserveFrame: h264BootstrapPreserveFrameRef.current,
+                transfer: prepared.transfer,
+              })
+            ) {
+              h264BootstrapGenerationRef.current += 1;
+              h264BootstrapInFlightRef.current = false;
+              h264BootstrapTargetTimeRef.current = null;
+              h264BufferedLiveRef.current = [];
+              h264SeekRepairAbortRef.current?.abort();
+              h264SeekRepairAbortRef.current = null;
+            }
+          }
+        }
         return;
       }
       postImageFrame(worker, event);
@@ -289,6 +327,8 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       }
       const generation = h264BootstrapGenerationRef.current;
       h264BootstrapInFlightRef.current = true;
+      h264BootstrapTargetTimeRef.current = targetTime;
+      h264BootstrapPreserveFrameRef.current = preserveFrame;
       h264SeekRepairAbortRef.current?.abort();
       const controller = new AbortController();
       h264SeekRepairAbortRef.current = controller;
@@ -317,6 +357,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       } finally {
         if (generation === h264BootstrapGenerationRef.current) {
           h264BootstrapInFlightRef.current = false;
+          h264BootstrapTargetTimeRef.current = null;
           h264BufferedLiveRef.current = [];
         }
         // The repair is over (done or given up): nothing it started may keep reading.
@@ -369,7 +410,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
 
       const currentTime = player.getCurrentTime();
       if (currentTime) {
-        await runBootstrap(currentTime, false);
+        await runBootstrap(currentTime, true);
       }
     };
 
@@ -422,6 +463,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       h264SeekRepairAbortRef.current = null;
       h264BufferedLiveRef.current = [];
       h264BootstrapInFlightRef.current = false;
+      h264BootstrapTargetTimeRef.current = null;
       requestH264BootstrapRef.current = null;
       player.unregisterHighFrequencyConsumer(imageConsumerId);
       worker.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
@@ -446,12 +488,23 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
       } satisfies ImageRenderWorkerRequest);
       const nowNs = toNano(time);
       const previousNs = lastPlaybackTimeNsRef.current;
-      if (previousNs != null && nowNs + 5_000_000n < previousNs) {
+      if (previousNs != null && nowNs > previousNs + 1_000_000_000n && h264BootstrapInFlightRef.current) {
+        // A forward seek supersedes any still-running bootstrap from before the jump
+        // so it cannot keep swallowing live frames or block a new seek's recovery.
+        h264BootstrapGenerationRef.current += 1;
+        h264BootstrapInFlightRef.current = false;
+        h264BootstrapTargetTimeRef.current = null;
+        h264BufferedLiveRef.current = [];
+        h264SeekRepairAbortRef.current?.abort();
+        h264SeekRepairAbortRef.current = null;
+      } else if (previousNs != null && nowNs + 5_000_000n < previousNs) {
         h264SeekRepairAbortRef.current?.abort();
         h264SeekRepairAbortRef.current = null;
         const worker = workerRef.current;
         if (worker && topic && h264OrderedModeRef.current) {
           h264BootstrapInFlightRef.current = true;
+          h264BootstrapTargetTimeRef.current = time;
+          h264BootstrapPreserveFrameRef.current = true;
           h264BufferedLiveRef.current = [];
           const generation = h264BootstrapGenerationRef.current;
           const controller = new AbortController();
@@ -474,6 +527,7 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
             } finally {
               if (generation === h264BootstrapGenerationRef.current) {
                 h264BootstrapInFlightRef.current = false;
+                h264BootstrapTargetTimeRef.current = null;
                 h264BufferedLiveRef.current = [];
               }
               // The repair is over (done or given up): nothing it started may keep reading.
@@ -484,7 +538,12 @@ export const ImagePanel: React.FC<ImagePanelProps> = (props) => {
             }
           })();
         } else {
-          workerRef.current?.postMessage({ type: 'reset' } satisfies ImageRenderWorkerRequest);
+          // Keep the last rendered JPEG/PNG/raw frame visible while the rewind
+          // backfill decodes, avoiding a black flash on every seek or step-back.
+          workerRef.current?.postMessage({
+            type: 'reset',
+            preserveFrame: true,
+          } satisfies ImageRenderWorkerRequest);
         }
       }
       lastPlaybackTimeNsRef.current = nowNs;

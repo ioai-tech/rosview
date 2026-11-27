@@ -23,6 +23,19 @@
 /** Largest view must cover at least this share of its buffer for the buffer to be transferred. */
 const MIN_VIEW_COVERAGE = 0.5;
 
+/**
+ * Buffers pinned by worker-side caches (e.g. decompressed MCAP chunks). They
+ * must never be listed as transferables, because transferring detaches them and
+ * corrupts subsequent cache hits.
+ */
+const pinnedBuffers = new WeakSet<ArrayBuffer>();
+
+export function pinTransferableBuffer(buffer: ArrayBufferLike): void {
+  if (buffer instanceof ArrayBuffer) {
+    pinnedBuffers.add(buffer);
+  }
+}
+
 interface BufferUsage {
   owner: number;
   sharedAcrossOwners: boolean;
@@ -99,7 +112,7 @@ export function collectTransferables(messages: readonly unknown[]): Transferable
 
   const out: Transferable[] = [];
   for (const [buffer, entry] of usage) {
-    if (entry.sharedAcrossOwners || isDetached(buffer)) continue;
+    if (entry.sharedAcrossOwners || isDetached(buffer) || pinnedBuffers.has(buffer)) continue;
     if (entry.largestView < buffer.byteLength * MIN_VIEW_COVERAGE) continue;
     out.push(buffer);
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectTransferables } from "./transferables";
+import { collectTransferables, pinTransferableBuffer } from "./transferables";
 
 /** `structuredClone` enforces the same transfer-list rules as `postMessage`. */
 function postLike(messages: unknown[]): unknown[] {
@@ -65,5 +65,14 @@ describe("collectTransferables", () => {
   it("batches of multi-view messages post without DataCloneError", () => {
     const batch = Array.from({ length: 50 }, () => multiViewMessage().message);
     expect(() => postLike(batch)).not.toThrow();
+  });
+
+  it("never transfers a pinned cache buffer", () => {
+    const buffer = new ArrayBuffer(1024);
+    pinTransferableBuffer(buffer);
+    const message = { data: new Uint8Array(buffer) };
+    expect(collectTransferables([message])).toEqual([]);
+    postLike([message]);
+    expect(buffer.byteLength).toBe(1024);
   });
 });
